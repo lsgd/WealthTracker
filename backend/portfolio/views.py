@@ -123,7 +123,19 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 return {'status': 'error', 'error': auth_result.error_message}
 
         # Auth successful — fetch balance
-        balance_info = integration.get_balance(account.account_identifier)
+        from brokers.integrations.base import NoNewDataError
+        try:
+            balance_info = integration.get_balance(account.account_identifier)
+        except NoNewDataError as e:
+            # Nothing new to record (e.g. EBICS 090005 on a quiet day). Not an error:
+            # keep the account active and its last snapshot, advance last_sync_at.
+            account.status = 'active'
+            account.last_sync_at = timezone.now()
+            account.last_sync_error = ''
+            account.pending_auth_state = None
+            account.save()
+            logger.info("Sync: no new data for account %s (%s)", account.id, e)
+            return {'status': 'success', 'message': 'No new data', 'snapshot': None}
 
         existing = AccountSnapshot.objects.filter(
             account=account,
@@ -238,7 +250,20 @@ def _sync_all_accounts(*, account_creds, base_currency):
                         })
                         continue
 
-                balance_info = integration.get_balance(account.account_identifier)
+                from brokers.integrations.base import NoNewDataError
+                try:
+                    balance_info = integration.get_balance(account.account_identifier)
+                except NoNewDataError:
+                    # Routine "nothing new" (e.g. EBICS 090005) — a skip, not an error.
+                    account.status = 'active'
+                    account.last_sync_at = timezone.now()
+                    account.last_sync_error = ''
+                    account.pending_auth_state = None
+                    account.save()
+                    results['skipped'].append({
+                        'id': account.id, 'name': account.name, 'reason': 'No new data',
+                    })
+                    continue
 
                 existing = AccountSnapshot.objects.filter(
                     account=account,

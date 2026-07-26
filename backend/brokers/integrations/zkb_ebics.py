@@ -22,9 +22,38 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List
 
-from .base import AccountInfo, AuthResult, BalanceInfo, BrokerIntegrationBase
+from .base import (
+    AccountInfo,
+    AuthResult,
+    BalanceInfo,
+    BrokerIntegrationBase,
+    NoNewDataError,
+)
 
 logger = logging.getLogger(__name__)
+
+# EBICS return code the bank sends when there is simply no statement to download
+# (weekend/holiday, or a period whose camt.053 was already fetched — EBICS marks
+# delivered data as received). It is a NORMAL empty result, never a failure.
+_EBICS_NO_DOWNLOAD_DATA_AVAILABLE = '090005'
+
+
+def _download_statements_or_empty(client):
+    """``client.download_statements()``, but map "no data available" (090005) to ``[]``.
+
+    ebicsclient raises ``ReturnCodeError(code="090005")`` when nothing is waiting. That
+    is routine, so we return an empty list instead of letting it surface as an error.
+    Any other return code (a genuine failure) propagates unchanged.
+    """
+    from ebicsclient import ReturnCodeError
+
+    try:
+        return client.download_statements()
+    except ReturnCodeError as e:
+        if getattr(e, 'code', None) == _EBICS_NO_DOWNLOAD_DATA_AVAILABLE:
+            logger.info('EBICS: no statement to download (090005) — treating as empty')
+            return []
+        raise
 
 
 class ZKBEbicsIntegration(BrokerIntegrationBase):
@@ -72,7 +101,7 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
             self._client = self._build_client()
         # Fetch and pin the bank's public keys, then pull the statements.
         self._client.hpb(pinned=self._pinned_hashes())
-        self._statements = self._client.download_statements()
+        self._statements = _download_statements_or_empty(self._client)
         return self._statements
 
     # ---- BrokerIntegrationBase ----------------------------------------------
@@ -110,6 +139,14 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
 
     def get_balance(self, account_identifier: str) -> BalanceInfo:
         statements = self._get_statements()
+
+        # No statement delivered at all (EBICS 090005) is a routine "nothing new"
+        # condition, not a failure — signal a benign no-op so the sync keeps the
+        # account active and its last snapshot instead of marking it errored.
+        if not statements:
+            raise NoNewDataError(
+                f'No EBICS statement available to download for {account_identifier}'
+            )
 
         matches = [s for s in statements if s.iban == account_identifier]
         if not matches:
@@ -262,7 +299,7 @@ def fetch_bank_keys_and_statements(cred, blob):
     client = _client_for(cred, blob)
     bank_keys = client.hpb(pinned=_pinned_for(cred))
     hashes = bank_key_hashes(bank_keys)
-    statements = client.download_statements()
+    statements = _download_statements_or_empty(client)
     return (
         {'auth': hashes.authentication.hex(), 'enc': hashes.encryption.hex()},
         statements,

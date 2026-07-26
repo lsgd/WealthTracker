@@ -11,16 +11,19 @@ from ebicsclient import (
     Balance,
     CreditDebit,
     InitializationState,
+    ReturnCodeError,
     Statement,
 )
 from rest_framework.test import APITestCase
 
 from brokers.integrations import get_broker_integration
 from brokers.integrations.base import AccountInfo, BalanceInfo
+from brokers.integrations.base import NoNewDataError
 from brokers.integrations.zkb_ebics import (
     EbicsSubscriberBlockedError,
     ZKBEbicsIntegration,
     _client_for,
+    _download_statements_or_empty,
     generate_keyring_blob,
     submit_keys_and_letter,
 )
@@ -148,6 +151,13 @@ class ZKBEbicsBalanceTests(TestCase):
         self.integration._statements = [old, new]
         self.assertEqual(self.integration.get_balance('CH1').balance, Decimal('900'))
 
+    def test_get_balance_empty_delivery_raises_no_new_data(self):
+        # An empty delivery (EBICS 090005) is "nothing new", not a failure: get_balance
+        # must raise NoNewDataError (a benign no-op), NOT the unknown-IBAN ValueError.
+        self.integration._statements = []
+        with self.assertRaises(NoNewDataError):
+            self.integration.get_balance('CH1')
+
     def test_get_accounts_maps_statements(self):
         self.integration._statements = [
             make_statement('CH1', make_balance('1', currency='CHF')),
@@ -161,6 +171,27 @@ class ZKBEbicsBalanceTests(TestCase):
         self.assertEqual(by_id['CH1'].currency, 'CHF')
         self.assertEqual(by_id['CH2'].currency, 'EUR')
         self.assertEqual(by_id['CH1'].account_type, 'checking')
+
+
+class DownloadStatementsNoDataTests(TestCase):
+    """`_download_statements_or_empty` maps EBICS 090005 (no data available) to an empty
+    list — a routine quiet-day condition — while any other return code stays an error."""
+
+    def test_no_download_data_available_maps_to_empty(self):
+        client = MagicMock()
+        client.download_statements.side_effect = ReturnCodeError('090005', 'no data')
+        self.assertEqual(_download_statements_or_empty(client), [])
+
+    def test_other_return_code_propagates(self):
+        client = MagicMock()
+        client.download_statements.side_effect = ReturnCodeError('091005', 'bad order id')
+        with self.assertRaises(ReturnCodeError):
+            _download_statements_or_empty(client)
+
+    def test_success_passes_statements_through(self):
+        client = MagicMock()
+        client.download_statements.return_value = ['stmt']
+        self.assertEqual(_download_statements_or_empty(client), ['stmt'])
 
 
 class BrokerFactoryTests(TestCase):

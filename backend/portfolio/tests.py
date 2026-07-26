@@ -295,6 +295,33 @@ class SyncWorkerLogicTests(TestCase):
 
     @patch('django.db.connections.close_all')
     @patch('brokers.integrations.get_broker_integration')
+    def test_sync_no_new_data_is_noop_not_error(self, m_factory, _m_close):
+        # A broker reporting "no new data" (e.g. EBICS 090005) must be a benign no-op:
+        # keep the account active with its prior snapshot, record no error, no new snapshot.
+        from brokers.integrations.base import NoNewDataError
+        from portfolio.views import _sync_single_account
+        AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('50'), currency='CHF',
+            snapshot_date=date(2026, 5, 1),
+        )
+        integ = self._fake_integration()
+        integ.get_balance.side_effect = NoNewDataError('nothing new')
+        m_factory.return_value = integ
+
+        result = _sync_single_account(
+            account_id=self.account.id, credentials={'u': 'x'}, base_currency='CHF',
+        )
+        self.assertEqual(result['status'], 'success')
+        self.assertIsNone(result['snapshot'])
+        # No new snapshot created; the prior one is preserved.
+        self.assertEqual(AccountSnapshot.objects.filter(account=self.account).count(), 1)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.status, 'active')
+        self.assertEqual(self.account.last_sync_error, '')
+        self.assertIsNotNone(self.account.last_sync_at)
+
+    @patch('django.db.connections.close_all')
+    @patch('brokers.integrations.get_broker_integration')
     def test_sync_converts_to_base_currency(self, m_factory, _m_close):
         from portfolio.views import _sync_single_account
         ExchangeRate.objects.create(

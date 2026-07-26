@@ -8,6 +8,17 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 
+class NoNewDataError(Exception):
+    """The broker has no new data to report right now — a benign no-op, not a failure.
+
+    Raised by ``get_balance`` when there is simply nothing new to record (e.g. EBICS
+    ``090005 EBICS_NO_DOWNLOAD_DATA_AVAILABLE`` on a quiet day, a weekend, or a period
+    whose statement was already fetched). The sync worker treats this as "no change":
+    the account stays ``active`` with its last snapshot, ``last_sync_at`` advances, and
+    no error is recorded. It must never be surfaced as a sync failure.
+    """
+
+
 @dataclass
 class AccountInfo:
     """Standardized account information returned by brokers."""
