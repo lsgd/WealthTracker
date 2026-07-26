@@ -56,6 +56,7 @@ export default function EbicsPage() {
   const [busy, setBusy] = useState<Record<number, string>>({}); // id -> action label
   const [discovered, setDiscovered] = useState<Record<number, EbicsDiscoveredAccount[]>>({});
   const [addedIbans, setAddedIbans] = useState<Record<string, boolean>>({});
+  const [pendingDelete, setPendingDelete] = useState<EbicsCredential | null>(null);
 
   async function load() {
     try {
@@ -169,8 +170,10 @@ export default function EbicsPage() {
     }
   }
 
-  async function handleDelete(cred: EbicsCredential) {
-    if (!window.confirm(`Delete EBICS credential "${cred.label}"? This cannot be undone.`)) return;
+  async function confirmDelete() {
+    const cred = pendingDelete;
+    if (!cred) return;
+    setPendingDelete(null);
     withBusy(cred.id, 'Deleting...');
     try {
       await deleteEbicsCredential(cred.id);
@@ -230,7 +233,7 @@ export default function EbicsPage() {
       </p>
 
       {error && <div className="form-error">{error}</div>}
-      {message && <div className="form-message success">{message}</div>}
+      {message && <div className="form-success">{message}</div>}
 
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
@@ -314,6 +317,26 @@ export default function EbicsPage() {
         </div>
       )}
 
+      {pendingDelete && (
+        <div className="modal-overlay" onClick={() => setPendingDelete(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Delete credential</h3>
+              <button className="btn btn-ghost" onClick={() => setPendingDelete(null)}><X size={18} /></button>
+            </div>
+            <p className="form-hint">
+              Delete EBICS credential <strong>{pendingDelete.label}</strong>? This permanently
+              removes its keys and cannot be undone. You would need a fresh key exchange with the
+              bank to reconnect.
+            </p>
+            <div className="form-actions">
+              <button className="btn btn-ghost" onClick={() => setPendingDelete(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDelete}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {credentials.length === 0 && !showForm && (
         <div className="empty-state">
           {brokers.length === 0
@@ -369,7 +392,7 @@ export default function EbicsPage() {
                 )}
                 <button className="btn btn-ghost btn-sm" disabled={!!busyLabel || cred.account_count > 0}
                   title={cred.account_count > 0 ? 'Remove its accounts first' : 'Delete credential'}
-                  onClick={() => handleDelete(cred)}>
+                  onClick={() => setPendingDelete(cred)}>
                   <Trash2 size={15} /> Delete
                 </button>
                 {busyLabel && <span className="ebics-busy"><Loader size={14} className="spin" /> {busyLabel}</span>}
