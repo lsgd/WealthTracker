@@ -683,11 +683,12 @@ export async function createEbicsCredential(fields: {
   return data;
 }
 
-// Link an existing account to this EBICS credential (convert it to EBICS auto-sync).
-export async function linkEbicsAccount(credentialId: number, accountId: number) {
+// Link (adopt) an existing account into this EBICS credential for the given IBAN —
+// converts a manual/other-broker account in place, keeping its history.
+export async function linkEbicsAccount(credentialId: number, accountId: number, iban: string) {
   const res = await fetchWithAuth(`/api/ebics/credentials/${credentialId}/link-account/`, {
     method: 'POST',
-    body: JSON.stringify({ account_id: accountId }),
+    body: JSON.stringify({ account_id: accountId, iban }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to link account');

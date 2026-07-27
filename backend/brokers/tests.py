@@ -751,34 +751,39 @@ class EbicsTestConnectionTests(EbicsEndpointTestBase):
 class EbicsLinkAccountTests(EbicsEndpointTestBase):
     """Linking an existing account to an EBICS credential (adopt, don't duplicate)."""
 
-    def test_link_existing_account_converts_to_ebics_autosync(self):
+    def test_link_adopts_manual_account_stamping_iban_and_broker(self):
+        # A manual account (no IBAN, possibly a different broker) is converted in place:
+        # broker + account_identifier are stamped so EBICS sync can match it.
         from portfolio.models import FinancialAccount
         cred = self._create_cred()
         acct = FinancialAccount.objects.create(
-            user=self.user, broker=self.broker, name='ZKB Giro',
-            account_identifier='CH98', is_manual=True, sync_enabled=False,
+            user=self.user, broker=self.non_ebics, name='ZKB Lukas',
+            account_identifier='', is_manual=True, sync_enabled=False,
         )
         resp = self.client.post(
             reverse('ebics_credential_link_account', args=[cred.pk]),
-            {'account_id': acct.id}, format='json',
+            {'account_id': acct.id, 'iban': 'CH98 0070 0114 9013 55206'}, format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.data)
         acct.refresh_from_db()
         self.assertEqual(acct.ebics_credential_id, cred.id)
+        self.assertEqual(acct.broker_id, cred.broker_id)  # adopted the EBICS broker
+        self.assertEqual(acct.account_identifier, 'CH9800700114901355206')  # spaces stripped
         self.assertFalse(acct.is_manual)
         self.assertTrue(acct.sync_enabled)
 
-    def test_link_wrong_broker_rejected(self):
+    def test_link_requires_iban(self):
         from portfolio.models import FinancialAccount
         cred = self._create_cred()
         acct = FinancialAccount.objects.create(
-            user=self.user, broker=self.non_ebics, name='VIAC', account_identifier='X',
+            user=self.user, broker=self.broker, name='X', account_identifier='',
         )
         resp = self.client.post(
             reverse('ebics_credential_link_account', args=[cred.pk]),
             {'account_id': acct.id}, format='json',
         )
         self.assertEqual(resp.status_code, 400)
+        self.assertIn('IBAN', resp.data['error'])
         acct.refresh_from_db()
         self.assertIsNone(acct.ebics_credential_id)
 

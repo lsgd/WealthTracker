@@ -32,14 +32,16 @@ interface ExistingAccount {
   name: string;
   account_identifier: string | null;
   broker_code: string;
+  ebicsLinked: boolean;
 }
 
-// A pending "add account" awaiting confirmation. `existing` is set when the user
-// already has an account for this IBAN (→ offer to link instead of duplicate).
+// A pending "add account" awaiting confirmation. `linkTargetId` is the id of an
+// existing account to convert instead of creating a new one (auto-selected when an
+// account already matches this IBAN, or chosen by the user from the picker).
 interface PendingAdd {
   cred: EbicsCredential;
   acct: EbicsDiscoveredAccount;
-  existing: ExistingAccount | null;
+  linkTargetId: number | null;
 }
 
 const STATE_LABEL: Record<EbicsCredential['state'], string> = {
@@ -87,9 +89,9 @@ export default function EbicsPage() {
       setBrokers(brk.filter((b) => b.integration_type === 'ebics'));
       // getAccounts is paginated; normalise to a flat list of what we need.
       const list = Array.isArray(accts) ? accts : (accts?.results ?? []);
-      setAccounts(list.map((a: { id: number; name: string; account_identifier: string | null; broker?: { code?: string } }) => ({
+      setAccounts(list.map((a: { id: number; name: string; account_identifier: string | null; broker?: { code?: string }; ebics_credential?: unknown }) => ({
         id: a.id, name: a.name, account_identifier: a.account_identifier,
-        broker_code: a.broker?.code ?? '',
+        broker_code: a.broker?.code ?? '', ebicsLinked: a.ebics_credential != null,
       })));
     } catch (err) {
       console.error('Failed to load EBICS credentials:', err);
@@ -213,30 +215,31 @@ export default function EbicsPage() {
     }
   }
 
-  // Open a confirmation dialog. If an account for this IBAN already exists, offer to
-  // link it (avoid a duplicate); otherwise confirm creating a new one.
+  // Open a confirmation dialog. Pre-select an existing account if one already carries
+  // this IBAN; otherwise the user can pick one to convert, or create a new account.
   function handleAddAccount(cred: EbicsCredential, acct: EbicsDiscoveredAccount) {
-    const existing = accounts.find(
-      (a) => a.account_identifier === acct.iban && a.broker_code === cred.broker_code,
-    ) ?? null;
+    const match = accounts.find(
+      (a) => a.account_identifier === acct.iban && !a.ebicsLinked,
+    );
     setError('');
     setMessage('');
-    setPendingAdd({ cred, acct, existing });
+    setPendingAdd({ cred, acct, linkTargetId: match?.id ?? null });
   }
 
   async function confirmAdd() {
     const p = pendingAdd;
     if (!p) return;
     setPendingAdd(null);
-    const { cred, acct, existing } = p;
-    withBusy(cred.id, existing ? `Linking ${acct.iban}...` : `Adding ${acct.iban}...`);
+    const { cred, acct, linkTargetId } = p;
+    const linkTarget = linkTargetId != null ? accounts.find((a) => a.id === linkTargetId) : null;
+    withBusy(cred.id, linkTarget ? `Linking ${acct.iban}...` : `Adding ${acct.iban}...`);
     try {
       let accountId: number;
       let baseMsg: string;
-      if (existing) {
-        await linkEbicsAccount(cred.id, existing.id);
-        accountId = existing.id;
-        baseMsg = `Linked "${existing.name}" (${acct.iban}) to this EBICS credential — it now auto-syncs.`;
+      if (linkTarget) {
+        await linkEbicsAccount(cred.id, linkTarget.id, acct.iban);
+        accountId = linkTarget.id;
+        baseMsg = `Linked "${linkTarget.name}" to ${acct.iban} — it now auto-syncs via EBICS.`;
       } else {
         const created = await createAccount({
           name: acct.iban,
@@ -399,36 +402,59 @@ export default function EbicsPage() {
         </div>
       )}
 
-      {pendingAdd && (
-        <div className="modal-overlay" onClick={() => setPendingAdd(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{pendingAdd.existing ? 'Link existing account' : 'Add account'}</h3>
-              <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}><X size={18} /></button>
-            </div>
-            {pendingAdd.existing ? (
-              <p className="form-hint">
-                You already have an account <strong>{pendingAdd.existing.name}</strong> for
-                IBAN <code>{pendingAdd.acct.iban}</code>. Link it to this EBICS credential so it
-                auto-syncs from the bank? Its stored credentials (if any) are removed and it
-                switches to EBICS as the source of truth. No duplicate account is created.
-              </p>
-            ) : (
-              <p className="form-hint">
-                Add a new account for IBAN <code>{pendingAdd.acct.iban}</code>
-                {' '}({pendingAdd.acct.balance.toLocaleString()} {pendingAdd.acct.currency})? It
-                will sync via this EBICS credential.
-              </p>
-            )}
-            <div className="form-actions">
-              <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={confirmAdd}>
-                {pendingAdd.existing ? 'Link account' : 'Add account'}
-              </button>
+      {pendingAdd && (() => {
+        const linkable = accounts.filter((a) => !a.ebicsLinked);
+        const target = pendingAdd.linkTargetId != null
+          ? accounts.find((a) => a.id === pendingAdd.linkTargetId) : null;
+        return (
+          <div className="modal-overlay" onClick={() => setPendingAdd(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>{target ? 'Convert existing account' : 'Add account'}</h3>
+                <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}><X size={18} /></button>
+              </div>
+              {target ? (
+                <p className="form-hint">
+                  Convert <strong>{target.name}</strong> into the EBICS account for
+                  IBAN <code>{pendingAdd.acct.iban}</code>? It keeps its existing history,
+                  switches to EBICS auto-sync, and no duplicate account is created.
+                </p>
+              ) : (
+                <p className="form-hint">
+                  Add a new account for IBAN <code>{pendingAdd.acct.iban}</code>
+                  {' '}({pendingAdd.acct.balance.toLocaleString()} {pendingAdd.acct.currency})? It
+                  will sync via this EBICS credential.
+                </p>
+              )}
+              {linkable.length > 0 && (
+                <div className="form-group">
+                  <label>Or convert an existing account instead</label>
+                  <select
+                    value={pendingAdd.linkTargetId ?? ''}
+                    onChange={(e) => setPendingAdd({
+                      ...pendingAdd,
+                      linkTargetId: e.target.value ? Number(e.target.value) : null,
+                    })}
+                  >
+                    <option value="">— Create a new account —</option>
+                    {linkable.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}{a.account_identifier ? ` (${a.account_identifier})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="form-actions">
+                <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={confirmAdd}>
+                  {target ? 'Convert account' : 'Add account'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {credentials.length === 0 && !showForm && (
         <div className="empty-state">

@@ -344,21 +344,31 @@ class EbicsCredentialLinkAccountView(APIView):
         except (FinancialAccount.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if account.broker_id != cred.broker_id:
-            return Response(
-                {'error': 'That account belongs to a different broker.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        iban = (request.data.get('iban') or '').replace(' ', '').strip()
+        if not iban:
+            return Response({'error': 'An IBAN is required to link the account.'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        # Convert to EBICS auto-sync. The secret lives on the shared credential, so drop
-        # any stored per-account credentials.
+        # Adopt the account into this EBICS credential in place: it becomes an EBICS-synced
+        # account for `iban` (a manual or other-broker account is converted, keeping its
+        # existing snapshot history). The secret lives on the shared credential, so drop
+        # any stored per-account credentials, and set the broker/identifier so sync can
+        # match the camt.053 statements.
+        account.broker = cred.broker
+        account.account_identifier = iban
         account.ebics_credential = cred
         account.is_manual = False
         account.sync_enabled = True
         account.encrypted_credentials = None
         account.status = 'active'
         account.last_sync_error = ''
-        account.save()
+        try:
+            account.save()
+        except IntegrityError:
+            return Response(
+                {'error': 'You already have an account for this IBAN at this bank.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(FinancialAccountSerializer(account).data)
 
 
