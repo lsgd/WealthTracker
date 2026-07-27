@@ -287,7 +287,10 @@ class EbicsCredentialTestView(KEKAuthenticationMixin, APIView):
         cred.last_error = ''
         cred.save()
 
-        accounts = []
+        # A camt.053 delivery can carry many daily statements per IBAN (a backlog of
+        # end-of-day balances). Discovery lists ACCOUNTS, so collapse to one row per
+        # IBAN, keeping the most recent closing balance.
+        latest_by_iban = {}
         for stmt in statements:
             if not stmt.iban:
                 continue
@@ -295,12 +298,19 @@ class EbicsCredentialTestView(KEKAuthenticationMixin, APIView):
             if bal is None:
                 continue
             amount, currency, bal_date = _signed_balance(bal)
-            accounts.append({
-                'iban': stmt.iban,
-                'currency': currency,
-                'balance': float(amount),
-                'date': bal_date.isoformat(),
-            })
+            prev = latest_by_iban.get(stmt.iban)
+            if prev is None or bal_date > prev['_date']:
+                latest_by_iban[stmt.iban] = {
+                    'iban': stmt.iban,
+                    'currency': currency,
+                    'balance': float(amount),
+                    'date': bal_date.isoformat(),
+                    '_date': bal_date,  # sort/compare key, stripped before returning
+                }
+        accounts = [
+            {k: v for k, v in a.items() if k != '_date'}
+            for a in sorted(latest_by_iban.values(), key=lambda a: a['iban'])
+        ]
 
         return Response({
             'status': 'active',

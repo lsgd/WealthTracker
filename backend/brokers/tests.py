@@ -594,6 +594,29 @@ class EbicsTestConnectionTests(EbicsEndpointTestBase):
         self.assertEqual(cred.bank_hash_auth, 'aa11')
 
     @patch('brokers.integrations.zkb_ebics.fetch_bank_keys_and_statements')
+    def test_test_connection_dedupes_ibans_to_latest_balance(self, m_fetch):
+        # A camt.053 delivery carries many daily statements per IBAN; discovery must
+        # list each account once, with its most recent closing balance.
+        cred = self._create_cred()
+        stmts = [
+            make_statement('CH-A', make_balance('100', bal_date=date(2026, 6, 23))),
+            make_statement('CH-A', make_balance('300', bal_date=date(2026, 6, 30))),  # latest A
+            make_statement('CH-A', make_balance('200', bal_date=date(2026, 6, 25))),
+            make_statement('CH-B', make_balance('50', bal_date=date(2026, 6, 24))),
+        ]
+        m_fetch.return_value = ({'auth': 'a', 'enc': 'b'}, stmts)
+        resp = self.client.post(reverse('ebics_credential_test', args=[cred.pk]))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        accounts = resp.data['accounts']
+        self.assertEqual(len(accounts), 2)  # one row per IBAN, not per statement
+        by_iban = {a['iban']: a for a in accounts}
+        self.assertEqual(by_iban['CH-A']['balance'], 300.0)      # most recent kept
+        self.assertEqual(by_iban['CH-A']['date'], '2026-06-30')
+        self.assertEqual(by_iban['CH-B']['balance'], 50.0)
+        # Internal sort key must not leak into the response.
+        self.assertNotIn('_date', accounts[0])
+
+    @patch('brokers.integrations.zkb_ebics.fetch_bank_keys_and_statements')
     def test_test_connection_debit_balance_is_negative(self, m_fetch):
         cred = self._create_cred()
         stmt = make_statement('CH9', make_balance('300.00', CreditDebit.DEBIT))
