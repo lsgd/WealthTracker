@@ -232,8 +232,8 @@ export default function EbicsPage() {
         connection once they activate your access.
       </p>
 
-      {error && <div className="form-error">{error}</div>}
-      {message && <div className="form-success">{message}</div>}
+      {error && <div className="form-error" style={{ marginTop: 16 }}>{error}</div>}
+      {message && <div className="form-success" style={{ marginTop: 16 }}>{message}</div>}
 
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
