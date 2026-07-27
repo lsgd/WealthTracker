@@ -270,6 +270,27 @@ class EbicsNonConsumingFetchTests(TestCase):
         )
 
     @patch('brokers.integrations.zkb_ebics._client_for')
+    def test_discovery_falls_back_to_dated_range_when_nothing_pending(self, m_client_for):
+        from ebicsclient import ReceiptPolicy
+        from brokers.integrations.zkb_ebics import fetch_bank_keys_and_statements
+        client = MagicMock()
+        # Pending peek -> empty; dated fallback -> a statement (accounts still discoverable).
+        client.download_statements.side_effect = [
+            [], [make_statement('CH1', make_balance('42'))],
+        ]
+        m_client_for.return_value = client
+        with patch('ebicsclient.bank_key_hashes', return_value=SimpleNamespace(
+                authentication=b'\x01', encryption=b'\x02')):
+            _hashes, statements = fetch_bank_keys_and_statements(
+                self._cred(), {'keyring_pem': 'x', 'keyring_passphrase': 'p'},
+            )
+        self.assertEqual(len(statements), 1)
+        self.assertEqual(client.download_statements.call_count, 2)
+        fallback_kwargs = client.download_statements.call_args_list[1].kwargs
+        self.assertIn('date_range', fallback_kwargs)
+        self.assertEqual(fallback_kwargs['receipt_policy'], ReceiptPolicy.KEEP)
+
+    @patch('brokers.integrations.zkb_ebics._client_for')
     def test_range_fetch_uses_daterange_and_keep(self, m_client_for):
         from ebicsclient import ReceiptPolicy
         from brokers.integrations.zkb_ebics import fetch_statements_for_range

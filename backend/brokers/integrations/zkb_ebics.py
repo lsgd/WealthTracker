@@ -18,7 +18,7 @@ the EBICS credential endpoints, not here — see brokers/views.py.
 """
 import base64
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List
 
@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 # (weekend/holiday, or a period whose camt.053 was already fetched — EBICS marks
 # delivered data as received). It is a NORMAL empty result, never a failure.
 _EBICS_NO_DOWNLOAD_DATA_AVAILABLE = '090005'
+
+# When "Test connection" finds no pending statement (e.g. the backlog was already
+# collected), look back this many days over a dated download so accounts can still be
+# discovered from historical statements.
+_DISCOVERY_FALLBACK_DAYS = 365
 
 
 def _download_statements_or_empty(client, *, date_range=None, receipt_policy=None):
@@ -334,12 +339,27 @@ def fetch_bank_keys_and_statements(cred, blob):
     first real sync to capture. Raises the underlying ebicsclient error if the bank has
     not activated the subscriber yet or the pinned hashes do not match.
     """
-    from ebicsclient import ReceiptPolicy, bank_key_hashes
+    from ebicsclient import DateRange, DateRangeMismatchError, ReceiptPolicy, bank_key_hashes
 
     client = _client_for(cred, blob)
     bank_keys = client.hpb(pinned=_pinned_for(cred))
     hashes = bank_key_hashes(bank_keys)
     statements = _download_statements_or_empty(client, receipt_policy=ReceiptPolicy.KEEP)
+
+    if not statements:
+        # Nothing pending (e.g. the backlog was already collected). Look back over a
+        # window with a dated, non-consuming download so we can still discover the
+        # accounts from historical statements. Whether the bank re-serves a past range
+        # is bank-specific — an empty result here just means no accounts were found.
+        end = date.today()
+        start = end - timedelta(days=_DISCOVERY_FALLBACK_DAYS)
+        try:
+            statements = _download_statements_or_empty(
+                client, date_range=DateRange(start, end), receipt_policy=ReceiptPolicy.KEEP,
+            )
+        except DateRangeMismatchError:
+            logger.warning('EBICS discovery: bank ignored the fallback date range')
+
     return (
         {'auth': hashes.authentication.hex(), 'enc': hashes.encryption.hex()},
         statements,
