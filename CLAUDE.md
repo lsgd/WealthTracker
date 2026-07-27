@@ -43,6 +43,12 @@ cd frontend && npm run dev
 - Swiss 3a retirement platform
 - Requires: username + password
 
+### ZKB (Zürcher Kantonalbank)
+- Uses the EBICS 3.0 (H005) protocol; read-only camt.053 statement download
+- Subscriber-level: one RSA keyring shared across all ZKB accounts
+- Requires a one-time paper handshake (generate keys, submit INI/HIA, mail a signed letter)
+- See full setup: [docs/ZKB_EBICS_SETUP.md](docs/ZKB_EBICS_SETUP.md)
+
 ## Common Issues & Solutions
 
 ### Morgan Stanley 500 Error on GraphQL
