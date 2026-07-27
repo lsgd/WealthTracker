@@ -319,3 +319,44 @@ class EbicsCredentialTestView(KEKAuthenticationMixin, APIView):
             'accounts': accounts,
             'message': 'Connection verified. You can now add accounts for the discovered IBANs.',
         })
+
+
+class EbicsCredentialLinkAccountView(APIView):
+    """Link an EXISTING financial account to this EBICS credential (convert it to
+    EBICS auto-sync). Used when discovery finds an IBAN the user already tracks
+    manually, so we adopt that account instead of creating a duplicate.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from portfolio.models import FinancialAccount
+        from portfolio.serializers import FinancialAccountSerializer
+
+        try:
+            cred = EbicsCredential.objects.get(pk=pk, user=request.user)
+        except EbicsCredential.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            account = FinancialAccount.objects.get(
+                pk=request.data.get('account_id'), user=request.user,
+            )
+        except (FinancialAccount.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if account.broker_id != cred.broker_id:
+            return Response(
+                {'error': 'That account belongs to a different broker.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Convert to EBICS auto-sync. The secret lives on the shared credential, so drop
+        # any stored per-account credentials.
+        account.ebics_credential = cred
+        account.is_manual = False
+        account.sync_enabled = True
+        account.encrypted_credentials = None
+        account.status = 'active'
+        account.last_sync_error = ''
+        account.save()
+        return Response(FinancialAccountSerializer(account).data)

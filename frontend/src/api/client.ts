@@ -683,6 +683,17 @@ export async function createEbicsCredential(fields: {
   return data;
 }
 
+// Link an existing account to this EBICS credential (convert it to EBICS auto-sync).
+export async function linkEbicsAccount(credentialId: number, accountId: number) {
+  const res = await fetchWithAuth(`/api/ebics/credentials/${credentialId}/link-account/`, {
+    method: 'POST',
+    body: JSON.stringify({ account_id: accountId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to link account');
+  return data;
+}
+
 export async function deleteEbicsCredential(id: number): Promise<void> {
   const res = await fetchWithAuth(`/api/ebics/credentials/${id}/`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) {

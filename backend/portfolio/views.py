@@ -307,6 +307,11 @@ def _sync_all_accounts(*, account_creds, base_currency):
                         'currency': balance_info.currency,
                     })
 
+                # Snapshot every other day the broker delivered too (e.g. an EBICS
+                # camt.053 backlog), not just the latest — otherwise those are lost.
+                if integration.supports_historical_data():
+                    _backfill_historical(account, integration, base_currency)
+
                 account.status = 'active'
                 account.last_sync_at = timezone.now()
                 account.last_sync_error = ''
@@ -394,35 +399,14 @@ def _backfill_historical(account, integration, base_currency):
         if not historical:
             return 0
 
+        from .snapshot_writer import upsert_daily_snapshot
+
         created_count = 0
         for bal_info in historical:
             if bal_info.balance_date in existing_dates:
                 continue
-
-            snapshot = AccountSnapshot.objects.create(
-                account=account,
-                balance=bal_info.balance,
-                currency=bal_info.currency,
-                snapshot_date=bal_info.balance_date,
-                snapshot_source='auto',
-                raw_data=bal_info.raw_data,
-            )
-
-            if bal_info.currency != base_currency:
-                from exchange_rates.services import ExchangeRateService
-                rate = ExchangeRateService.get_rate(
-                    bal_info.currency, base_currency, bal_info.balance_date
-                )
-                if rate and rate != Decimal('1.0'):
-                    snapshot.balance_base_currency = bal_info.balance * rate
-                    snapshot.base_currency = base_currency
-                    snapshot.exchange_rate_used = rate
-                    snapshot.save()
-            else:
-                snapshot.balance_base_currency = bal_info.balance
-                snapshot.base_currency = base_currency
-                snapshot.save()
-
+            # Gap-fill only: never clobber an existing snapshot for that date here.
+            upsert_daily_snapshot(account, bal_info, base_currency)
             created_count += 1
             existing_dates.add(bal_info.balance_date)
 

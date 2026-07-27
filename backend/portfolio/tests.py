@@ -322,6 +322,32 @@ class SyncWorkerLogicTests(TestCase):
 
     @patch('django.db.connections.close_all')
     @patch('brokers.integrations.get_broker_integration')
+    def test_sync_all_backfills_every_delivered_day(self, m_factory, _m_close):
+        # A broker that delivers multiple days (e.g. an EBICS camt.053 backlog) must
+        # snapshot ALL of them on sync-all, not just the latest.
+        from portfolio.views import _sync_all_accounts
+        integ = self._fake_integration(balance=BalanceInfo(
+            balance=Decimal('300'), currency='CHF', balance_date=date(2026, 6, 3), raw_data=None,
+        ))
+        integ.supports_historical_data.return_value = True
+        integ.historical_data_requires_extra_request.return_value = False
+        integ.get_historical_balances.return_value = [
+            BalanceInfo(balance=Decimal('100'), currency='CHF', balance_date=date(2026, 6, 1), raw_data=None),
+            BalanceInfo(balance=Decimal('200'), currency='CHF', balance_date=date(2026, 6, 2), raw_data=None),
+            BalanceInfo(balance=Decimal('300'), currency='CHF', balance_date=date(2026, 6, 3), raw_data=None),
+        ]
+        m_factory.return_value = integ
+        _sync_all_accounts(
+            account_creds=[(self.account.id, {'u': 'x'})], base_currency='CHF',
+        )
+        dates = set(
+            AccountSnapshot.objects.filter(account=self.account)
+            .values_list('snapshot_date', flat=True)
+        )
+        self.assertEqual(dates, {date(2026, 6, 1), date(2026, 6, 2), date(2026, 6, 3)})
+
+    @patch('django.db.connections.close_all')
+    @patch('brokers.integrations.get_broker_integration')
     def test_sync_converts_to_base_currency(self, m_factory, _m_close):
         from portfolio.views import _sync_single_account
         ExchangeRate.objects.create(
@@ -373,6 +399,65 @@ class ExchangeRateModelTests(TestCase):
 
     def test_missing_rate_returns_none(self):
         self.assertIsNone(ExchangeRate.get_rate('JPY', 'CHF', date(2026, 6, 1)))
+
+
+class SnapshotWriterTests(TestCase):
+    """upsert_daily_snapshot: gap-fill by default, overwrite when the source is authoritative."""
+
+    def setUp(self):
+        self.user, _, _ = make_kek_user(base_currency='CHF')
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='A', currency='CHF',
+        )
+
+    def _bal(self, amount, d, currency='CHF'):
+        return BalanceInfo(
+            balance=Decimal(amount), currency=currency, balance_date=d, raw_data={'s': 1},
+        )
+
+    def test_creates_when_absent(self):
+        from portfolio.snapshot_writer import upsert_daily_snapshot
+        snap, changed = upsert_daily_snapshot(self.account, self._bal('100', date(2026, 6, 1)), 'CHF')
+        self.assertTrue(changed)
+        self.assertEqual(snap.balance, Decimal('100'))
+
+    def test_gap_fill_skips_existing(self):
+        from portfolio.snapshot_writer import upsert_daily_snapshot
+        AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('50'), currency='CHF',
+            snapshot_date=date(2026, 6, 1), snapshot_source='manual',
+        )
+        snap, changed = upsert_daily_snapshot(self.account, self._bal('100', date(2026, 6, 1)), 'CHF')
+        self.assertFalse(changed)
+        self.assertEqual(snap.balance, Decimal('50'))  # left untouched
+        self.assertEqual(AccountSnapshot.objects.filter(account=self.account).count(), 1)
+
+    def test_overwrite_replaces_in_place(self):
+        from portfolio.snapshot_writer import upsert_daily_snapshot
+        AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('50'), currency='CHF',
+            snapshot_date=date(2026, 6, 1), snapshot_source='manual',
+        )
+        snap, changed = upsert_daily_snapshot(
+            self.account, self._bal('100', date(2026, 6, 1)), 'CHF', overwrite=True,
+        )
+        self.assertTrue(changed)
+        snap.refresh_from_db()
+        self.assertEqual(snap.balance, Decimal('100'))
+        self.assertEqual(snap.snapshot_source, 'auto')
+        self.assertEqual(AccountSnapshot.objects.filter(account=self.account).count(), 1)  # no dup
+
+    def test_currency_conversion_applied(self):
+        from portfolio.snapshot_writer import upsert_daily_snapshot
+        ExchangeRate.objects.create(
+            from_currency='USD', to_currency='CHF', rate=Decimal('0.9'), rate_date=date(2026, 6, 1),
+        )
+        snap, _ = upsert_daily_snapshot(
+            self.account, self._bal('100', date(2026, 6, 1), 'USD'), 'CHF',
+        )
+        self.assertEqual(snap.balance_base_currency, Decimal('90.0'))
+        self.assertEqual(snap.exchange_rate_used, Decimal('0.9'))
 
 
 class EbicsAccountFallbackTests(APITestCase):

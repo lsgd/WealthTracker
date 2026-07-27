@@ -158,6 +158,33 @@ class ZKBEbicsBalanceTests(TestCase):
         with self.assertRaises(NoNewDataError):
             self.integration.get_balance('CH1')
 
+    def test_supports_historical_data(self):
+        self.assertTrue(self.integration.supports_historical_data())
+        # Statements come with the same download — no extra request needed.
+        self.assertFalse(self.integration.historical_data_requires_extra_request())
+
+    def test_get_historical_balances_returns_all_days_for_iban(self):
+        self.integration._statements = [
+            make_statement('CH1', make_balance('100', bal_date=date(2026, 6, 1))),
+            make_statement('CH1', make_balance('200', bal_date=date(2026, 6, 2))),
+            make_statement('CH2', make_balance('999', bal_date=date(2026, 6, 2))),  # other IBAN
+        ]
+        hist = self.integration.get_historical_balances(
+            'CH1', date(2026, 6, 1), date(2026, 6, 30),
+        )
+        self.assertEqual({h.balance_date for h in hist}, {date(2026, 6, 1), date(2026, 6, 2)})
+        self.assertEqual({h.balance for h in hist}, {Decimal('100'), Decimal('200')})
+
+    def test_get_historical_balances_filters_by_range(self):
+        self.integration._statements = [
+            make_statement('CH1', make_balance('100', bal_date=date(2026, 6, 1))),
+            make_statement('CH1', make_balance('200', bal_date=date(2026, 7, 1))),
+        ]
+        hist = self.integration.get_historical_balances(
+            'CH1', date(2026, 6, 15), date(2026, 7, 31),
+        )
+        self.assertEqual([h.balance_date for h in hist], [date(2026, 7, 1)])
+
     def test_get_accounts_maps_statements(self):
         self.integration._statements = [
             make_statement('CH1', make_balance('1', currency='CHF')),
@@ -633,3 +660,51 @@ class EbicsTestConnectionTests(EbicsEndpointTestBase):
         cred.refresh_from_db()
         self.assertEqual(cred.state, 'new')
         self.assertIn('subscriber not activated', cred.last_error)
+
+
+class EbicsLinkAccountTests(EbicsEndpointTestBase):
+    """Linking an existing account to an EBICS credential (adopt, don't duplicate)."""
+
+    def test_link_existing_account_converts_to_ebics_autosync(self):
+        from portfolio.models import FinancialAccount
+        cred = self._create_cred()
+        acct = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='ZKB Giro',
+            account_identifier='CH98', is_manual=True, sync_enabled=False,
+        )
+        resp = self.client.post(
+            reverse('ebics_credential_link_account', args=[cred.pk]),
+            {'account_id': acct.id}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        acct.refresh_from_db()
+        self.assertEqual(acct.ebics_credential_id, cred.id)
+        self.assertFalse(acct.is_manual)
+        self.assertTrue(acct.sync_enabled)
+
+    def test_link_wrong_broker_rejected(self):
+        from portfolio.models import FinancialAccount
+        cred = self._create_cred()
+        acct = FinancialAccount.objects.create(
+            user=self.user, broker=self.non_ebics, name='VIAC', account_identifier='X',
+        )
+        resp = self.client.post(
+            reverse('ebics_credential_link_account', args=[cred.pk]),
+            {'account_id': acct.id}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        acct.refresh_from_db()
+        self.assertIsNone(acct.ebics_credential_id)
+
+    def test_link_other_users_account_404(self):
+        from portfolio.models import FinancialAccount
+        cred = self._create_cred()
+        other, _, _ = make_kek_user(username='bob')
+        acct = FinancialAccount.objects.create(
+            user=other, broker=self.broker, name='Bob', account_identifier='Y',
+        )
+        resp = self.client.post(
+            reverse('ebics_credential_link_account', args=[cred.pk]),
+            {'account_id': acct.id}, format='json',
+        )
+        self.assertEqual(resp.status_code, 404)

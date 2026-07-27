@@ -56,6 +56,29 @@ def _download_statements_or_empty(client):
         raise
 
 
+def _statement_to_balance(stmt, bal) -> BalanceInfo:
+    """Map an ebicsclient Statement + closing Balance to a signed BalanceInfo.
+
+    camt.053 reports the amount as a magnitude plus a CRDT/DBIT indicator; we fold
+    that into a signed Decimal (debit balances are negative).
+    """
+    from ebicsclient import CreditDebit
+
+    signed = bal.amount if bal.credit_debit == CreditDebit.CREDIT else -bal.amount
+    return BalanceInfo(
+        balance=Decimal(signed),
+        currency=bal.currency,
+        balance_date=bal.date,
+        raw_data={
+            'iban': stmt.iban,
+            'balance_code': bal.code,
+            'credit_debit': bal.credit_debit.value,
+            'entries': len(stmt.entries),
+            'source': 'ebics_camt053',
+        },
+    )
+
+
 class ZKBEbicsIntegration(BrokerIntegrationBase):
     """Download-only EBICS integration (camt.053 statements)."""
 
@@ -165,21 +188,31 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
         if bal is None:
             raise ValueError(f'Statement for IBAN {account_identifier} has no closing balance')
 
-        from ebicsclient import CreditDebit
-        signed = bal.amount if bal.credit_debit == CreditDebit.CREDIT else -bal.amount
+        return _statement_to_balance(stmt, bal)
 
-        return BalanceInfo(
-            balance=Decimal(signed),
-            currency=bal.currency,
-            balance_date=bal.date,
-            raw_data={
-                'iban': stmt.iban,
-                'balance_code': bal.code,
-                'credit_debit': bal.credit_debit.value,
-                'entries': len(stmt.entries),
-                'source': 'ebics_camt053',
-            },
-        )
+    # ---- historical backfill --------------------------------------------------
+    # A camt.053 delivery carries a run of daily end-of-day statements. Expose them
+    # as historical balances so the sync worker snapshots EVERY delivered day (not
+    # just the latest) — nothing gets thrown away. No network beyond the statements
+    # already fetched for this sync.
+
+    def supports_historical_data(self) -> bool:
+        return True
+
+    def historical_data_requires_extra_request(self) -> bool:
+        # The daily statements come with the same camt.053 download — no extra call.
+        return False
+
+    def get_historical_balances(self, account_identifier, start_date, end_date):
+        out = []
+        for stmt in self._get_statements():
+            if stmt.iban != account_identifier:
+                continue
+            bal = stmt.closing_balance
+            if bal is None or not (start_date <= bal.date <= end_date):
+                continue
+            out.append(_statement_to_balance(stmt, bal))
+        return out
 
 
 # ---------------------------------------------------------------------------

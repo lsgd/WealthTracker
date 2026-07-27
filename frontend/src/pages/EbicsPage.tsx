@@ -13,6 +13,8 @@ import {
   testEbicsCredential,
   downloadEbicsLetter,
   createAccount,
+  getAccounts,
+  linkEbicsAccount,
   type EbicsCredential,
   type EbicsDiscoveredAccount,
 } from '../api/client';
@@ -22,6 +24,21 @@ interface Broker {
   name: string;
   integration_type: string;
   api_base_url?: string;
+}
+
+interface ExistingAccount {
+  id: number;
+  name: string;
+  account_identifier: string | null;
+  broker_code: string;
+}
+
+// A pending "add account" awaiting confirmation. `existing` is set when the user
+// already has an account for this IBAN (→ offer to link instead of duplicate).
+interface PendingAdd {
+  cred: EbicsCredential;
+  acct: EbicsDiscoveredAccount;
+  existing: ExistingAccount | null;
 }
 
 const STATE_LABEL: Record<EbicsCredential['state'], string> = {
@@ -57,12 +74,22 @@ export default function EbicsPage() {
   const [discovered, setDiscovered] = useState<Record<number, EbicsDiscoveredAccount[]>>({});
   const [addedIbans, setAddedIbans] = useState<Record<string, boolean>>({});
   const [pendingDelete, setPendingDelete] = useState<EbicsCredential | null>(null);
+  const [accounts, setAccounts] = useState<ExistingAccount[]>([]);
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
 
   async function load() {
     try {
-      const [creds, brk] = await Promise.all([getEbicsCredentials(), getBrokersList<Broker>()]);
+      const [creds, brk, accts] = await Promise.all([
+        getEbicsCredentials(), getBrokersList<Broker>(), getAccounts(),
+      ]);
       setCredentials(creds);
       setBrokers(brk.filter((b) => b.integration_type === 'ebics'));
+      // getAccounts is paginated; normalise to a flat list of what we need.
+      const list = Array.isArray(accts) ? accts : (accts?.results ?? []);
+      setAccounts(list.map((a: { id: number; name: string; account_identifier: string | null; broker?: { code?: string } }) => ({
+        id: a.id, name: a.name, account_identifier: a.account_identifier,
+        broker_code: a.broker?.code ?? '',
+      })));
     } catch (err) {
       console.error('Failed to load EBICS credentials:', err);
       setError(err instanceof Error ? err.message : 'Failed to load');
@@ -185,20 +212,40 @@ export default function EbicsPage() {
     }
   }
 
-  async function handleAddAccount(cred: EbicsCredential, acct: EbicsDiscoveredAccount) {
-    withBusy(cred.id, `Adding ${acct.iban}...`);
+  // Open a confirmation dialog. If an account for this IBAN already exists, offer to
+  // link it (avoid a duplicate); otherwise confirm creating a new one.
+  function handleAddAccount(cred: EbicsCredential, acct: EbicsDiscoveredAccount) {
+    const existing = accounts.find(
+      (a) => a.account_identifier === acct.iban && a.broker_code === cred.broker_code,
+    ) ?? null;
+    setError('');
+    setMessage('');
+    setPendingAdd({ cred, acct, existing });
+  }
+
+  async function confirmAdd() {
+    const p = pendingAdd;
+    if (!p) return;
+    setPendingAdd(null);
+    const { cred, acct, existing } = p;
+    withBusy(cred.id, existing ? `Linking ${acct.iban}...` : `Adding ${acct.iban}...`);
     try {
-      await createAccount({
-        name: acct.iban,
-        broker_code: cred.broker_code,
-        account_identifier: acct.iban,
-        account_type: 'checking',
-        currency: acct.currency,
-        is_manual: false,
-        ebics_credential_id: cred.id,
-      });
+      if (existing) {
+        await linkEbicsAccount(cred.id, existing.id);
+        setMessage(`Linked "${existing.name}" (${acct.iban}) to this EBICS credential — it now auto-syncs.`);
+      } else {
+        await createAccount({
+          name: acct.iban,
+          broker_code: cred.broker_code,
+          account_identifier: acct.iban,
+          account_type: 'checking',
+          currency: acct.currency,
+          is_manual: false,
+          ebics_credential_id: cred.id,
+        });
+        setMessage(`Account ${acct.iban} added. It will sync via this EBICS credential.`);
+      }
       setAddedIbans((a) => ({ ...a, [acct.iban]: true }));
-      setMessage(`Account ${acct.iban} added. It will sync via this EBICS credential.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add account');
@@ -332,6 +379,37 @@ export default function EbicsPage() {
             <div className="form-actions">
               <button className="btn btn-ghost" onClick={() => setPendingDelete(null)}>Cancel</button>
               <button className="btn btn-danger" onClick={confirmDelete}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingAdd && (
+        <div className="modal-overlay" onClick={() => setPendingAdd(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{pendingAdd.existing ? 'Link existing account' : 'Add account'}</h3>
+              <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}><X size={18} /></button>
+            </div>
+            {pendingAdd.existing ? (
+              <p className="form-hint">
+                You already have an account <strong>{pendingAdd.existing.name}</strong> for
+                IBAN <code>{pendingAdd.acct.iban}</code>. Link it to this EBICS credential so it
+                auto-syncs from the bank? Its stored credentials (if any) are removed and it
+                switches to EBICS as the source of truth. No duplicate account is created.
+              </p>
+            ) : (
+              <p className="form-hint">
+                Add a new account for IBAN <code>{pendingAdd.acct.iban}</code>
+                {' '}({pendingAdd.acct.balance.toLocaleString()} {pendingAdd.acct.currency})? It
+                will sync via this EBICS credential.
+              </p>
+            )}
+            <div className="form-actions">
+              <button className="btn btn-ghost" onClick={() => setPendingAdd(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={confirmAdd}>
+                {pendingAdd.existing ? 'Link account' : 'Add account'}
+              </button>
             </div>
           </div>
         </div>
