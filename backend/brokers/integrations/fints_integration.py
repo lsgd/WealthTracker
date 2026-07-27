@@ -4,8 +4,9 @@ FinTS integration for German banks (DKB, Commerzbank).
 import logging
 import os
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from time import sleep
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from fints.client import FinTS3PinTanClient, NeedTANResponse
@@ -18,6 +19,69 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tolerant balance parsing.
+#
+# python-fints maps a HISAL (balance) response to a typed segment only for the
+# versions it knows (5/6/7). Some banks (observed with DKB) return a HISAL whose
+# version isn't registered, so it falls back to a generic FinTS3Segment with no
+# `.balance_booked` attribute — and the stock client crashes with
+# "'FinTS3Segment' object has no attribute 'balance_booked'".
+#
+# The generic segment still keeps the raw data elements in `_additional_data`, in
+# the standard HISAL order: [account, product, currency, balance_booked, ...] where
+# balance_booked is [credit_debit(C/D), amount, currency, date, time?]. We read the
+# booked balance from there instead of crashing.
+# ---------------------------------------------------------------------------
+
+def _balance_from_generic_hisal(additional_data):
+    """Extract (Decimal amount, currency) from a generic HISAL segment's raw data.
+
+    Returns None if the shape isn't recognisable. Debit balances are negative.
+    """
+    if not additional_data or len(additional_data) < 4:
+        return None
+    booked = additional_data[3]
+    if not isinstance(booked, (list, tuple)) or len(booked) < 3:
+        return None
+    credit_debit, amount_str, currency = booked[0], booked[1], booked[2]
+    try:
+        amount = Decimal(str(amount_str).replace(',', '.'))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if str(credit_debit).upper().startswith('D'):
+        amount = -amount
+    return amount, (currency or 'EUR')
+
+
+def _tolerant_get_balance(self, command_seg, response):
+    """Drop-in for ``FinTS3PinTanClient._get_balance`` that tolerates an unmapped
+    HISAL segment version by reading the booked balance from the raw data elements."""
+    for resp in response.response_segments(command_seg, 'HISAL'):
+        booked = getattr(resp, 'balance_booked', None)
+        if booked is not None:
+            return booked.as_mt940_Balance()
+        extracted = _balance_from_generic_hisal(getattr(resp, '_additional_data', None))
+        if extracted is not None:
+            amount, currency = extracted
+            logger.warning(
+                'FinTS: bank returned an unmapped HISAL segment version; read balance '
+                'from raw data (%s %s).', amount, currency,
+            )
+            return SimpleNamespace(
+                amount=SimpleNamespace(amount=amount, currency=currency),
+                currency=currency, date=date.today(),
+            )
+    return None
+
+
+# Patch the library once: only the unmapped-segment path changes; the typed path
+# behaves exactly as before.
+if not getattr(FinTS3PinTanClient, '_wt_tolerant_balance_patch', False):
+    FinTS3PinTanClient._get_balance = _tolerant_get_balance
+    FinTS3PinTanClient._wt_tolerant_balance_patch = True
 
 # FinTS/HBCI error code translations
 FINTS_ERROR_MESSAGES = {

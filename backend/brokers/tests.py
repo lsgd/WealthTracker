@@ -854,3 +854,46 @@ class EbicsBackfillTests(EbicsEndpointTestBase):
         )
         self.assertEqual(resp.status_code, 502)
         self.assertIn('date range', resp.data['error'].lower())
+
+
+class FinTSBalanceParsingTests(TestCase):
+    """Tolerate a HISAL segment version python-fints can't map (observed with DKB):
+    read the booked balance from the generic segment's raw data instead of crashing."""
+
+    def test_generic_hisal_credit_balance(self):
+        from brokers.integrations.fints_integration import _balance_from_generic_hisal
+        raw = [['DE12', 'BIC', '280', '50010517'], 'Girokonto', 'EUR',
+               ['C', '1234,56', 'EUR', '20260727']]
+        amount, currency = _balance_from_generic_hisal(raw)
+        self.assertEqual(amount, Decimal('1234.56'))
+        self.assertEqual(currency, 'EUR')
+
+    def test_generic_hisal_debit_is_negative(self):
+        from brokers.integrations.fints_integration import _balance_from_generic_hisal
+        raw = [['DE12'], 'Giro', 'EUR', ['D', '50,00', 'EUR', '20260727']]
+        amount, _currency = _balance_from_generic_hisal(raw)
+        self.assertEqual(amount, Decimal('-50.00'))
+
+    def test_generic_hisal_bad_shape_returns_none(self):
+        from brokers.integrations.fints_integration import _balance_from_generic_hisal
+        self.assertIsNone(_balance_from_generic_hisal(None))
+        self.assertIsNone(_balance_from_generic_hisal([['x'], 'y']))
+        self.assertIsNone(_balance_from_generic_hisal([['a'], 'b', 'c', 'not-a-list']))
+
+    def test_tolerant_get_balance_reads_generic_segment(self):
+        from brokers.integrations.fints_integration import _tolerant_get_balance
+        generic = SimpleNamespace(_additional_data=[
+            ['DE12'], 'Giro', 'EUR', ['C', '999,99', 'EUR', '20260727'],
+        ])  # note: no `balance_booked` attribute
+        response = SimpleNamespace(response_segments=lambda cmd, name: [generic])
+        bal = _tolerant_get_balance(None, 'HKSAL', response)
+        self.assertEqual(bal.amount.amount, Decimal('999.99'))
+        self.assertEqual(bal.currency, 'EUR')
+
+    def test_tolerant_get_balance_uses_typed_segment_when_available(self):
+        from brokers.integrations.fints_integration import _tolerant_get_balance
+        typed = SimpleNamespace(
+            balance_booked=SimpleNamespace(as_mt940_Balance=lambda: 'MT940BAL'),
+        )
+        response = SimpleNamespace(response_segments=lambda cmd, name: [typed])
+        self.assertEqual(_tolerant_get_balance(None, 'HKSAL', response), 'MT940BAL')
