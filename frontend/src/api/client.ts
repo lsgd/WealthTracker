@@ -572,6 +572,7 @@ export async function updateAccount(
     account_identifier?: string;
     account_type?: string;
     currency?: string;
+    notes?: string;
   },
 ) {
   const res = await fetchWithAuth(`/api/accounts/${accountId}/`, {

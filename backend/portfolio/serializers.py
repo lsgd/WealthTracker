@@ -56,7 +56,7 @@ class FinancialAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'broker', 'broker_code', 'account_identifier',
             'account_type', 'currency', 'is_manual', 'status',
-            'sync_enabled', 'last_sync_at', 'last_sync_error',
+            'sync_enabled', 'last_sync_at', 'last_sync_error', 'notes',
             'latest_snapshot', 'ebics_credential', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'status', 'last_sync_at', 'last_sync_error',
@@ -117,7 +117,7 @@ class FinancialAccountCreateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'broker_code', 'account_identifier', 'account_type',
             'currency', 'is_manual', 'sync_enabled', 'credentials',
-            'ebics_credential_id'
+            'ebics_credential_id', 'notes'
         ]
 
     def create(self, validated_data):

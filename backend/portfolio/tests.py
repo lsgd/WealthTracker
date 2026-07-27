@@ -123,6 +123,19 @@ class AccountEndpointTests(APITestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(FinancialAccount.objects.filter(pk=account.pk).exists())
 
+    def test_notes_are_editable(self):
+        account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Cash', is_manual=True,
+        )
+        resp = self.client.patch(
+            reverse('account_detail', args=[account.pk]),
+            {'notes': 'IBAN CH..\nrainy-day fund'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['notes'], 'IBAN CH..\nrainy-day fund')
+        account.refresh_from_db()
+        self.assertEqual(account.notes, 'IBAN CH..\nrainy-day fund')
+
     def test_cannot_access_other_users_account(self):
         other, _, _ = make_kek_user(username='bob')
         account = FinancialAccount.objects.create(

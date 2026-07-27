@@ -27,6 +27,7 @@ export interface Account {
   status: string;
   last_sync_at: string | null;
   last_sync_error: string;
+  notes?: string;
   latest_snapshot: {
     balance: string;
     currency: string;
@@ -175,6 +176,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
   const [credentialsError, setCredentialsError] = useState('');
   const [settingsAccountName, setSettingsAccountName] = useState('');
   const [settingsSyncEnabled, setSettingsSyncEnabled] = useState(true);
+  const [settingsNotes, setSettingsNotes] = useState('');
 
   // Change-account-type (migration) workflow
   const [migrateAccount, setMigrateAccount] = useState<Account | null>(null);
@@ -220,6 +222,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
     setCredentialsError(errorMsg);
     setSettingsAccountName(account.name);
     setSettingsSyncEnabled(account.sync_enabled);
+    setSettingsNotes(account.notes ?? '');
 
     if (account.is_manual) {
       // Manual accounts don't have credentials
@@ -250,12 +253,15 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
     const accountName = credentialsAccount.name;
     try {
       // Save name and sync_enabled if changed
-      const updates: { name?: string; sync_enabled?: boolean } = {};
+      const updates: { name?: string; sync_enabled?: boolean; notes?: string } = {};
       if (settingsAccountName.trim() && settingsAccountName !== credentialsAccount.name) {
         updates.name = settingsAccountName.trim();
       }
       if (settingsSyncEnabled !== credentialsAccount.sync_enabled) {
         updates.sync_enabled = settingsSyncEnabled;
+      }
+      if (settingsNotes !== (credentialsAccount.notes ?? '')) {
+        updates.notes = settingsNotes;
       }
       if (Object.keys(updates).length > 0) {
         await updateAccount(accountId, updates);
@@ -793,6 +799,16 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                     onChange={(e) => setSettingsAccountName(e.target.value)}
                   />
                 </div>
+                <div className="form-group">
+                  <label htmlFor="settings-notes">Notes</label>
+                  <textarea
+                    id="settings-notes"
+                    rows={3}
+                    value={settingsNotes}
+                    onChange={(e) => setSettingsNotes(e.target.value)}
+                    placeholder="Optional — context, IBAN, etc."
+                  />
+                </div>
                 {Object.entries(credentialSchema.properties).map(([key, field]) => (
                   field.type === 'boolean' ? (
                     <div className="form-group" key={key}>
@@ -918,6 +934,16 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                     type="text"
                     value={settingsAccountName}
                     onChange={(e) => setSettingsAccountName(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="settings-notes-manual">Notes</label>
+                  <textarea
+                    id="settings-notes-manual"
+                    rows={3}
+                    value={settingsNotes}
+                    onChange={(e) => setSettingsNotes(e.target.value)}
+                    placeholder="Optional — context, IBAN, etc."
                   />
                 </div>
                 <div className="form-actions">

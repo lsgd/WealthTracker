@@ -86,6 +86,9 @@ class FinancialAccount(models.Model):
     last_sync_error = models.TextField(blank=True)
     sync_enabled = models.BooleanField(default=True)
 
+    # Free-text notes the user can add for context (e.g. an IBAN, what the account is for).
+    notes = models.TextField(blank=True, default='')
+
     # Temporary state for multi-step auth flows
     pending_auth_state = models.JSONField(null=True, blank=True)
 
