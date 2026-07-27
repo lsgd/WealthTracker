@@ -544,6 +544,37 @@ a:hover {
   margin-bottom: 16px;
 }
 
+/* Portal tooltip (see components/Tooltip.tsx). Bubble is position:fixed in body. */
+.tt-trigger {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tt-bubble {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 8px));
+  z-index: 3000;
+  max-width: 260px;
+  padding: 7px 10px;
+  background: var(--color-card);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
+  pointer-events: none;
+  animation: tt-fade 0.12s ease-out;
+}
+
+@keyframes tt-fade {
+  from { opacity: 0; transform: translate(-50%, calc(-100% - 4px)); }
+  to { opacity: 1; transform: translate(-50%, calc(-100% - 8px)); }
+}
+
 /* Boxed success banner (counterpart to .form-error). For inline status text
    next to a control, use .form-message.success instead. */
 .form-success {

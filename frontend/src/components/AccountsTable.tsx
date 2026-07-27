@@ -6,6 +6,7 @@ import AddAccountModal from './AddAccountModal';
 import MigrateAccountModal from './MigrateAccountModal';
 import SnapshotsModal from './SnapshotsModal';
 import ImportModal from './ImportModal';
+import Tooltip from './Tooltip';
 import ExportModal from './ExportModal';
 import Toast from './Toast';
 
@@ -82,42 +83,40 @@ function daysSince(dateStr: string | null | undefined): number | null {
 function StatusIcon({ status, isManual, lastSyncAt, onClick }: { status: string; isManual?: boolean; lastSyncAt?: string | null; onClick?: () => void }) {
   if (isManual) {
     return (
-      <span className="status-tip" title="Manual account — values are entered by hand and not synced automatically">
+      <Tooltip label="Manual account — values are entered by hand and not synced automatically">
         <MinusCircle size={14} className="status-na" />
-      </span>
+      </Tooltip>
     );
   }
   switch (status) {
     case 'error':
       return (
-        <button
-          className="btn-status-error"
-          onClick={onClick}
-          title="Sync failed — click to see the error details"
-        >
-          <AlertCircle size={14} className="status-error" />
-        </button>
+        <Tooltip label="Sync failed — click to see the error details">
+          <button className="btn-status-error" onClick={onClick}>
+            <AlertCircle size={14} className="status-error" />
+          </button>
+        </Tooltip>
       );
     case 'pending_auth':
       return (
-        <span className="status-tip" title="Action needed — finish authentication (enter a 2FA code or re-add credentials) before this account can sync">
+        <Tooltip label="Action needed — finish authentication (enter a 2FA code or re-add credentials) before this account can sync">
           <Clock size={14} className="status-pending" />
-        </span>
+        </Tooltip>
       );
     default: {
       // Active — but flag amber if the last successful sync is getting old.
       const age = daysSince(lastSyncAt);
       if (age !== null && age >= STALE_SYNC_DAYS) {
         return (
-          <span className="status-tip" title={`Synced, but ${age} days ago — data may be out of date`}>
+          <Tooltip label={`Synced, but ${age} days ago — data may be out of date`}>
             <CheckCircle2 size={14} className="status-stale" />
-          </span>
+          </Tooltip>
         );
       }
       return (
-        <span className="status-tip" title="Active — the last sync succeeded recently">
+        <Tooltip label="Active — the last sync succeeded recently">
           <CheckCircle2 size={14} className="status-active" />
-        </span>
+        </Tooltip>
       );
     }
   }
