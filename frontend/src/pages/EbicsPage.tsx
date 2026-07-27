@@ -15,6 +15,7 @@ import {
   createAccount,
   getAccounts,
   linkEbicsAccount,
+  backfillEbicsCredential,
   type EbicsCredential,
   type EbicsDiscoveredAccount,
 } from '../api/client';
@@ -230,11 +231,14 @@ export default function EbicsPage() {
     const { cred, acct, existing } = p;
     withBusy(cred.id, existing ? `Linking ${acct.iban}...` : `Adding ${acct.iban}...`);
     try {
+      let accountId: number;
+      let baseMsg: string;
       if (existing) {
         await linkEbicsAccount(cred.id, existing.id);
-        setMessage(`Linked "${existing.name}" (${acct.iban}) to this EBICS credential — it now auto-syncs.`);
+        accountId = existing.id;
+        baseMsg = `Linked "${existing.name}" (${acct.iban}) to this EBICS credential — it now auto-syncs.`;
       } else {
-        await createAccount({
+        const created = await createAccount({
           name: acct.iban,
           broker_code: cred.broker_code,
           account_identifier: acct.iban,
@@ -243,9 +247,20 @@ export default function EbicsPage() {
           is_manual: false,
           ebics_credential_id: cred.id,
         });
-        setMessage(`Account ${acct.iban} added. It will sync via this EBICS credential.`);
+        accountId = created.id;
+        baseMsg = `Account ${acct.iban} added. It will sync via this EBICS credential.`;
       }
       setAddedIbans((a) => ({ ...a, [acct.iban]: true }));
+
+      // Best-effort historical backfill (the bank may not re-serve past data).
+      setBusy((b) => ({ ...b, [cred.id]: 'Backfilling history...' }));
+      try {
+        const bf = await backfillEbicsCredential(cred.id, { accountId });
+        setMessage(bf.backfilled > 0 ? `${baseMsg} ${bf.message}` : baseMsg);
+      } catch (bfErr) {
+        console.warn('EBICS backfill failed:', bfErr);
+        setMessage(`${baseMsg} (Historical backfill was unavailable.)`);
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add account');

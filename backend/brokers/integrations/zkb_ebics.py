@@ -38,17 +38,21 @@ logger = logging.getLogger(__name__)
 _EBICS_NO_DOWNLOAD_DATA_AVAILABLE = '090005'
 
 
-def _download_statements_or_empty(client):
-    """``client.download_statements()``, but map "no data available" (090005) to ``[]``.
+def _download_statements_or_empty(client, *, date_range=None, receipt_policy=None):
+    """``client.download_statements(...)``, mapping "no data available" (090005) to ``[]``.
 
-    ebicsclient raises ``ReturnCodeError(code="090005")`` when nothing is waiting. That
-    is routine, so we return an empty list instead of letting it surface as an error.
-    Any other return code (a genuine failure) propagates unchanged.
+    Optional ``date_range`` requests a specific reporting period (dated download) and
+    ``receipt_policy`` controls consumption (``ReceiptPolicy.KEEP`` = non-consuming peek).
+    ebicsclient raises ``ReturnCodeError(code="090005")`` when nothing is waiting — routine,
+    so we return an empty list. Any other return code (a genuine failure) propagates.
     """
-    from ebicsclient import ReturnCodeError
+    from ebicsclient import ReceiptPolicy, ReturnCodeError
 
+    kwargs = {'receipt_policy': receipt_policy or ReceiptPolicy.ACKNOWLEDGE}
+    if date_range is not None:
+        kwargs['date_range'] = date_range
     try:
-        return client.download_statements()
+        return client.download_statements(**kwargs)
     except ReturnCodeError as e:
         if getattr(e, 'code', None) == _EBICS_NO_DOWNLOAD_DATA_AVAILABLE:
             logger.info('EBICS: no statement to download (090005) — treating as empty')
@@ -320,20 +324,41 @@ def render_letter(cred, blob):
 
 
 def fetch_bank_keys_and_statements(cred, blob):
-    """HPB (pinning) + camt.053 download. Returns ``(bank_key_hashes_hex, statements)``.
+    """HPB (pinning) + a NON-CONSUMING camt.053 peek. Returns ``(bank_key_hashes_hex, statements)``.
 
     ``bank_key_hashes_hex`` is ``{'auth': hex, 'enc': hex}`` computed from the keys the
     bank returned — for trust-on-first-use display/verification against the letter.
-    Raises the underlying ebicsclient error if the bank has not activated the
-    subscriber yet or the pinned hashes do not match.
+
+    The statement read uses ``ReceiptPolicy.KEEP`` (a negative receipt) so discovery /
+    "Test connection" does NOT consume the pending data — it stays available for the
+    first real sync to capture. Raises the underlying ebicsclient error if the bank has
+    not activated the subscriber yet or the pinned hashes do not match.
     """
-    from ebicsclient import bank_key_hashes
+    from ebicsclient import ReceiptPolicy, bank_key_hashes
 
     client = _client_for(cred, blob)
     bank_keys = client.hpb(pinned=_pinned_for(cred))
     hashes = bank_key_hashes(bank_keys)
-    statements = _download_statements_or_empty(client)
+    statements = _download_statements_or_empty(client, receipt_policy=ReceiptPolicy.KEEP)
     return (
         {'auth': hashes.authentication.hex(), 'enc': hashes.encryption.hex()},
         statements,
+    )
+
+
+def fetch_statements_for_range(cred, blob, start, end):
+    """HPB + a dated, NON-CONSUMING camt.053 download for the inclusive ``[start, end]``.
+
+    Used for historical backfill: requests a specific reporting period via ``DateRange``
+    and reads it with ``ReceiptPolicy.KEEP`` so nothing is consumed. Returns the parsed
+    statements (``[]`` if the bank reports no data). ``DateRangeMismatchError`` propagates
+    if the bank ignored the range (fail closed). Whether a bank re-serves already-delivered
+    data for a past range is bank-specific.
+    """
+    from ebicsclient import DateRange, ReceiptPolicy
+
+    client = _client_for(cred, blob)
+    client.hpb(pinned=_pinned_for(cred))
+    return _download_statements_or_empty(
+        client, date_range=DateRange(start, end), receipt_policy=ReceiptPolicy.KEEP,
     )

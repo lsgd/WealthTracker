@@ -694,6 +694,21 @@ export async function linkEbicsAccount(credentialId: number, accountId: number) 
   return data;
 }
 
+// Backfill historical daily snapshots for a credential's account(s) via a dated,
+// non-consuming EBICS download. Best-effort — the bank may not re-serve past data.
+export async function backfillEbicsCredential(
+  credentialId: number,
+  opts: { accountId?: number; days?: number } = {},
+): Promise<{ status: string; backfilled: number; message: string }> {
+  const res = await fetchWithAuth(`/api/ebics/credentials/${credentialId}/backfill/`, {
+    method: 'POST',
+    body: JSON.stringify({ account_id: opts.accountId, days: opts.days }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Backfill failed');
+  return data;
+}
+
 export async function deleteEbicsCredential(id: number): Promise<void> {
   const res = await fetchWithAuth(`/api/ebics/credentials/${id}/`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) {

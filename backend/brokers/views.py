@@ -360,3 +360,90 @@ class EbicsCredentialLinkAccountView(APIView):
         account.last_sync_error = ''
         account.save()
         return Response(FinancialAccountSerializer(account).data)
+
+
+class EbicsCredentialBackfillView(KEKAuthenticationMixin, APIView):
+    """Backfill historical daily snapshots for this credential's accounts via a dated,
+    non-consuming EBICS download (ReceiptPolicy.KEEP + DateRange). EBICS is authoritative
+    for the days it returns, so existing snapshots on those dates are overwritten.
+
+    Body: ``{"days": <int, default 365>, "account_id": <optional, restrict to one>}``.
+    Best-effort: whether the bank re-serves already-delivered data for a past range is
+    bank-specific, so an empty result is a normal outcome, not an error.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from datetime import date, timedelta
+
+        from portfolio.models import FinancialAccount
+        from portfolio.snapshot_writer import upsert_daily_snapshot
+
+        from .integrations.zkb_ebics import _statement_to_balance, fetch_statements_for_range
+
+        try:
+            cred = EbicsCredential.objects.get(pk=pk, user=request.user)
+        except EbicsCredential.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not cred.encrypted_keyring:
+            return Response({'error': 'Credential has no keyring'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            days = int(request.data.get('days') or 365)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid days'}, status=status.HTTP_400_BAD_REQUEST)
+        days = max(1, min(days, 3650))
+
+        accounts = FinancialAccount.objects.filter(user=request.user, ebics_credential=cred)
+        account_id = request.data.get('account_id')
+        if account_id is not None:
+            accounts = accounts.filter(pk=account_id)
+        accounts = list(accounts)
+        if not accounts:
+            return Response({'error': 'No linked accounts to backfill'}, status=status.HTTP_400_BAD_REQUEST)
+
+        blob = self.decrypt_blob(request, cred.encrypted_keyring)
+        end = date.today()
+        start = end - timedelta(days=days)
+        try:
+            statements = fetch_statements_for_range(cred, blob, start, end)
+        except Exception as e:
+            from ebicsclient import DateRangeMismatchError
+            logger.warning('EBICS backfill failed for credential %s: %s', cred.id, e)
+            if isinstance(e, DateRangeMismatchError):
+                return Response(
+                    {'error': 'The bank did not honour the requested date range, so no '
+                              'historical data was returned (it may not re-serve past periods).'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response({'error': f'Backfill failed: {e}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        base_currency = request.user.profile.base_currency
+        per_account = {}
+        for account in accounts:
+            count = 0
+            for stmt in statements:
+                if stmt.iban != account.account_identifier or stmt.closing_balance is None:
+                    continue
+                _snap, changed = upsert_daily_snapshot(
+                    account,
+                    _statement_to_balance(stmt, stmt.closing_balance),
+                    base_currency,
+                    overwrite=True,
+                )
+                if changed:
+                    count += 1
+            per_account[account.id] = count
+
+        total = sum(per_account.values())
+        return Response({
+            'status': 'ok',
+            'backfilled': total,
+            'per_account': per_account,
+            'range': {'start': start.isoformat(), 'end': end.isoformat()},
+            'message': (
+                f'Backfilled {total} day(s) of history.' if total else
+                'No historical statements were returned for that range '
+                '(the bank may not re-serve already-delivered data).'
+            ),
+        })

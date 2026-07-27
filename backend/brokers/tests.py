@@ -220,6 +220,71 @@ class DownloadStatementsNoDataTests(TestCase):
         client.download_statements.return_value = ['stmt']
         self.assertEqual(_download_statements_or_empty(client), ['stmt'])
 
+    def test_defaults_to_acknowledge_receipt(self):
+        from ebicsclient import ReceiptPolicy
+        client = MagicMock()
+        client.download_statements.return_value = []
+        _download_statements_or_empty(client)
+        self.assertEqual(
+            client.download_statements.call_args.kwargs['receipt_policy'],
+            ReceiptPolicy.ACKNOWLEDGE,
+        )
+
+    def test_keep_and_daterange_passthrough(self):
+        from ebicsclient import DateRange, ReceiptPolicy
+        client = MagicMock()
+        client.download_statements.return_value = []
+        dr = DateRange(date(2026, 6, 1), date(2026, 6, 30))
+        _download_statements_or_empty(client, date_range=dr, receipt_policy=ReceiptPolicy.KEEP)
+        kwargs = client.download_statements.call_args.kwargs
+        self.assertEqual(kwargs['receipt_policy'], ReceiptPolicy.KEEP)
+        self.assertEqual(kwargs['date_range'], dr)
+
+
+class EbicsNonConsumingFetchTests(TestCase):
+    """Discovery peeks without consuming (KEEP); range fetch uses DateRange + KEEP."""
+
+    def _cred(self):
+        user, _, _ = make_kek_user()
+        broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        return EbicsCredential.objects.create(
+            user=user, broker=broker, label='ZKB',
+            host_id='H', partner_id='P', subscriber_id='S', url='https://x/ebics',
+        )
+
+    @patch('brokers.integrations.zkb_ebics._client_for')
+    def test_discovery_uses_keep(self, m_client_for):
+        from ebicsclient import ReceiptPolicy
+        from brokers.integrations.zkb_ebics import fetch_bank_keys_and_statements
+        client = MagicMock()
+        client.download_statements.return_value = []
+        m_client_for.return_value = client
+        with patch('ebicsclient.bank_key_hashes', return_value=SimpleNamespace(
+                authentication=b'\x01', encryption=b'\x02')):
+            fetch_bank_keys_and_statements(
+                self._cred(), {'keyring_pem': 'x', 'keyring_passphrase': 'p'},
+            )
+        self.assertEqual(
+            client.download_statements.call_args.kwargs['receipt_policy'],
+            ReceiptPolicy.KEEP,
+        )
+
+    @patch('brokers.integrations.zkb_ebics._client_for')
+    def test_range_fetch_uses_daterange_and_keep(self, m_client_for):
+        from ebicsclient import ReceiptPolicy
+        from brokers.integrations.zkb_ebics import fetch_statements_for_range
+        client = MagicMock()
+        client.download_statements.return_value = []
+        m_client_for.return_value = client
+        fetch_statements_for_range(
+            self._cred(), {'keyring_pem': 'x', 'keyring_passphrase': 'p'},
+            date(2026, 6, 1), date(2026, 6, 30),
+        )
+        kwargs = client.download_statements.call_args.kwargs
+        self.assertEqual(kwargs['receipt_policy'], ReceiptPolicy.KEEP)
+        self.assertEqual(kwargs['date_range'].start, date(2026, 6, 1))
+        self.assertEqual(kwargs['date_range'].end, date(2026, 6, 30))
+
 
 class BrokerFactoryTests(TestCase):
     def test_factory_returns_zkb_ebics_for_ebics_broker(self):
@@ -708,3 +773,58 @@ class EbicsLinkAccountTests(EbicsEndpointTestBase):
             {'account_id': acct.id}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
+
+
+class EbicsBackfillTests(EbicsEndpointTestBase):
+    """Dated, non-consuming historical backfill (EBICS authoritative → overwrite)."""
+
+    def _linked_account(self, cred, iban='CH1'):
+        from portfolio.models import FinancialAccount
+        return FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name=iban,
+            account_identifier=iban, ebics_credential=cred, is_manual=False,
+        )
+
+    @patch('brokers.integrations.zkb_ebics.fetch_statements_for_range')
+    def test_backfill_overwrites_and_creates_per_iban(self, m_fetch):
+        from portfolio.models import AccountSnapshot
+        cred = self._create_cred()
+        acct = self._linked_account(cred, 'CH1')
+        # A pre-existing manual snapshot that EBICS should overwrite.
+        AccountSnapshot.objects.create(
+            account=acct, balance=Decimal('1'), currency='CHF',
+            snapshot_date=date(2026, 6, 1), snapshot_source='manual',
+        )
+        m_fetch.return_value = [
+            make_statement('CH1', make_balance('100', bal_date=date(2026, 6, 1))),
+            make_statement('CH1', make_balance('200', bal_date=date(2026, 6, 2))),
+            make_statement('CH2', make_balance('999', bal_date=date(2026, 6, 2))),  # other IBAN
+        ]
+        resp = self.client.post(
+            reverse('ebics_credential_backfill', args=[cred.pk]), {'days': 90}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['backfilled'], 2)
+        snaps = {s.snapshot_date: s for s in AccountSnapshot.objects.filter(account=acct)}
+        self.assertEqual(len(snaps), 2)  # 6-1 overwritten in place, 6-2 created
+        self.assertEqual(snaps[date(2026, 6, 1)].balance, Decimal('100'))
+        self.assertEqual(snaps[date(2026, 6, 1)].snapshot_source, 'auto')
+
+    def test_backfill_no_linked_accounts_400(self):
+        cred = self._create_cred()
+        resp = self.client.post(
+            reverse('ebics_credential_backfill', args=[cred.pk]), {}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    @patch('brokers.integrations.zkb_ebics.fetch_statements_for_range')
+    def test_backfill_date_range_mismatch_502(self, m_fetch):
+        from ebicsclient import DateRangeMismatchError
+        cred = self._create_cred()
+        self._linked_account(cred, 'CH1')
+        m_fetch.side_effect = DateRangeMismatchError('served data outside the range')
+        resp = self.client.post(
+            reverse('ebics_credential_backfill', args=[cred.pk]), {}, format='json',
+        )
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn('date range', resp.data['error'].lower())

@@ -14,5 +14,6 @@ urlpatterns = [
     path('ebics/credentials/<int:pk>/letter/', views.EbicsCredentialLetterView.as_view(), name='ebics_credential_letter'),
     path('ebics/credentials/<int:pk>/test/', views.EbicsCredentialTestView.as_view(), name='ebics_credential_test'),
     path('ebics/credentials/<int:pk>/link-account/', views.EbicsCredentialLinkAccountView.as_view(), name='ebics_credential_link_account'),
+    path('ebics/credentials/<int:pk>/backfill/', views.EbicsCredentialBackfillView.as_view(), name='ebics_credential_backfill'),
     path('brokers/<str:code>/', views.BrokerDetailView.as_view(), name='broker_detail'),
 ]
