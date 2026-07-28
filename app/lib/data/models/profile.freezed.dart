@@ -15,8 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Profile {
 
-@JsonKey(name: 'base_currency') String get baseCurrency;@JsonKey(name: 'auto_sync_enabled') bool get autoSyncEnabled;@JsonKey(name: 'send_weekly_report') bool get sendWeeklyReport;@JsonKey(name: 'default_chart_range') int get defaultChartRange;@JsonKey(name: 'default_chart_granularity') String get defaultChartGranularity;@JsonKey(name: 'push_notifications_enabled') bool get pushNotificationsEnabled;@JsonKey(name: 'push_weekly_report') bool get pushWeeklyReport;@JsonKey(name: 'sync_on_app_open') bool get syncOnAppOpen;@JsonKey(name: 'monthly_aggregation') String get monthlyAggregation;// Encryption status
-@JsonKey(name: 'encryption_migrated') bool get encryptionMigrated;
+@JsonKey(name: 'base_currency') String get baseCurrency;@JsonKey(name: 'auto_sync_enabled') bool get autoSyncEnabled;@JsonKey(name: 'send_weekly_report') bool get sendWeeklyReport;@JsonKey(name: 'default_chart_range') int get defaultChartRange;@JsonKey(name: 'default_chart_granularity') String get defaultChartGranularity;@JsonKey(name: 'push_notifications_enabled') bool get pushNotificationsEnabled;@JsonKey(name: 'push_weekly_report') bool get pushWeeklyReport;@JsonKey(name: 'sync_on_app_open') bool get syncOnAppOpen;@JsonKey(name: 'monthly_aggregation') String get monthlyAggregation;@JsonKey(name: 'encryption_migrated') bool get encryptionMigrated;
 /// Create a copy of Profile
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -231,7 +230,6 @@ class _Profile implements Profile {
 @override@JsonKey(name: 'push_weekly_report') final  bool pushWeeklyReport;
 @override@JsonKey(name: 'sync_on_app_open') final  bool syncOnAppOpen;
 @override@JsonKey(name: 'monthly_aggregation') final  String monthlyAggregation;
-// Encryption status
 @override@JsonKey(name: 'encryption_migrated') final  bool encryptionMigrated;
 
 /// Create a copy of Profile
