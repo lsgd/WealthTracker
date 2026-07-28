@@ -2,7 +2,7 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==25.1.0
 asgiref==3.12.1
 bleach==6.4.0
-certifi==2026.6.17
+certifi==2026.7.22
 cffi==2.1.0
 charset-normalizer==3.4.9
 click==8.4.2
@@ -15,7 +15,7 @@ Django==6.0.7
 django-cors-headers==4.9.0
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
-djlint==1.40.8
+djlint==1.43.1
 ebicsclient==1.5.0
 EditorConfig==0.17.1
 elementpath==5.1.3
@@ -38,16 +38,16 @@ pyotp==2.10.0
 python-dotenv==1.2.2
 python-json-logger==4.1.0
 PyYAML==6.0.3
-regex==2026.7.10
+regex==2026.7.19
 reportlab==5.0.0
 requests==2.34.2
 sepaxml==2.7.0
 six==1.17.0
 sqlparse==0.5.5
 text-unidecode==1.3
-tqdm==4.69.0
+tqdm==4.70.0
 typing_extensions==4.16.0
 urllib3==2.7.0
 webencodings==0.5.1
-websockets==16.1
+websockets==16.1.1
 xmlschema==4.3.2
