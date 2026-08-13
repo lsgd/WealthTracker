@@ -28,7 +28,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     with WidgetsBindingObserver {
   bool _checkedQuickSnapshot = false;
   final Set<int> _syncingAccounts = {};
-  bool _syncingAll = false;
   StreamSubscription<String>? _notificationSub;
 
   @override
@@ -51,7 +50,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   void _onNotificationTap(String payload) {
-    if (payload == 'sync_reminder' && mounted && !_syncingAll) {
+    if (payload == 'sync_reminder' && mounted) {
       debugPrint('Sync reminder notification tapped while app running, triggering sync');
       _syncAllAccounts();
     }
@@ -101,7 +100,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   Future<void> _checkSyncOnAppOpen() async {
-    if (!mounted || _syncingAll) return;
+    if (!mounted) return;
 
     try {
       await ref.read(syncAllProvider.notifier).trySyncOnAppOpen();
@@ -180,62 +179,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
-  Future<void> _syncAllAccounts() async {
-    if (_syncingAll || !mounted) return;
+  /// Trigger a sync-all run via the shared provider. Progress and results
+  /// are surfaced through the [syncAllProvider] listener in [build].
+  Future<void> _syncAllAccounts() {
+    return ref.read(syncAllProvider.notifier).syncAll();
+  }
 
-    setState(() => _syncingAll = true);
-    if (mounted) _showSyncHint();
+  /// Show the outcome of a completed sync-all run (manual or automatic).
+  void _onSyncAllCompleted(SyncAllResult? result) {
+    if (!mounted || result == null) return;
 
-    try {
-      final repo = ref.read(accountRepositoryProvider);
-      final relay = ref.read(relayServiceProvider);
-      final accounts = ref.read(accountsProvider).asData?.value ?? const <Account>[];
-      await relay.withRelay(() async {
-        final startResult = await repo.syncAllAccounts();
-        final taskId = startResult['task_id'] as String?;
-
-        if (taskId == null) {
-          // No task created (e.g. no accounts to sync)
-          await _refresh();
-          if (mounted) {
-            _showSuccessSnackBar(startResult['message'] as String? ?? 'Done');
-          }
-          return;
-        }
-
-        final result = await _pollSyncTask(repo, taskId);
-        await _refresh();
-
-        if (mounted && result != null) {
-          final details = result['result'] as Map<String, dynamic>?;
-          if (details != null) {
-            final syncedCount = details['synced_count'] as int? ?? 0;
-            final errors = (details['details'] as Map?)?['errors'] as List? ?? [];
-
-            if (errors.isNotEmpty) {
-              _showSyncErrorsDialog(errors, syncedCount: syncedCount);
-            } else if (syncedCount > 0) {
-              _showSuccessSnackBar('Synced $syncedCount account${syncedCount == 1 ? '' : 's'}');
-            } else {
-              _showSuccessSnackBar('All accounts up to date');
-            }
-          } else if (result['error'] != null) {
-            _showSyncErrorsDialog([
-              {'name': 'Sync', 'error': result['error']}
-            ]);
-          }
-        }
-      }, active: anyNeedsRelay(accounts));
-    } catch (e) {
-      if (mounted) {
-        _showSyncErrorsDialog([
-          {'name': 'Sync', 'error': e.toString()}
-        ]);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _syncingAll = false);
-      }
+    if (result.errors.isNotEmpty) {
+      _showSyncErrorsDialog(result.errors, syncedCount: result.syncedCount);
+    } else if (result.message != null) {
+      _showSuccessSnackBar(result.message!);
+    } else if (result.syncedCount > 0) {
+      _showSuccessSnackBar(
+          'Synced ${result.syncedCount} account${result.syncedCount == 1 ? '' : 's'}');
+    } else {
+      _showSuccessSnackBar('All accounts up to date');
     }
   }
 
@@ -382,6 +344,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final wealthHistory = ref.watch(wealthHistoryProvider);
     final accounts = ref.watch(accountsProvider);
     final authState = ref.watch(authStateProvider);
+    final syncingAll = ref.watch(syncAllProvider.select((s) => s.isSyncing));
+
+    // Surface sync-all progress and results regardless of how the sync was
+    // triggered (button, auto-sync on app open, notification tap).
+    ref.listen<SyncAllState>(syncAllProvider, (previous, next) {
+      final wasSyncing = previous?.isSyncing ?? false;
+      if (!wasSyncing && next.isSyncing) {
+        _showSyncHint();
+      } else if (wasSyncing && !next.isSyncing) {
+        _onSyncAllCompleted(next.lastResult);
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -392,6 +366,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             onPressed: () => context.push('/settings'),
           ),
         ],
+        bottom: syncingAll
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(_SyncStatusBar.height),
+                child: _SyncStatusBar(),
+              )
+            : null,
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
@@ -470,8 +450,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     if (accounts.value != null &&
                         _hasAutoSyncAccounts(accounts.value!))
                       TextButton.icon(
-                        onPressed: _syncingAll ? null : _syncAllAccounts,
-                        icon: _syncingAll
+                        onPressed: syncingAll ? null : _syncAllAccounts,
+                        icon: syncingAll
                             ? SizedBox(
                                 width: 16,
                                 height: 16,
@@ -557,6 +537,43 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Slim bar under the app bar shown while a sync-all run is in progress.
+/// Stays visible while scrolling, unlike the button spinner in the list.
+class _SyncStatusBar extends StatelessWidget {
+  static const double height = 32;
+
+  const _SyncStatusBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      height: height,
+      color: colorScheme.primaryContainer,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colorScheme.onPrimaryContainer,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Syncing accounts…',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onPrimaryContainer,
+                ),
+          ),
+        ],
       ),
     );
   }

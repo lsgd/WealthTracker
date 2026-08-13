@@ -6,6 +6,7 @@ import '../../data/models/account.dart';
 import '../../data/models/snapshot.dart';
 import '../providers/accounts_provider.dart';
 import '../providers/core_providers.dart';
+import '../providers/wealth_provider.dart';
 import '../widgets/add_snapshot_dialog.dart';
 import '../widgets/wealth_line_chart.dart';
 
@@ -26,6 +27,9 @@ class AccountDetailScreen extends ConsumerWidget {
   Future<void> _refresh(WidgetRef ref) async {
     ref.invalidate(accountSnapshotsProvider(accountId));
     ref.invalidate(accountsProvider);
+    // Keep the dashboard fresh too: totals and chart include this account.
+    ref.invalidate(wealthSummaryProvider);
+    ref.invalidate(wealthHistoryProvider);
   }
 
   void _showAddSnapshotDialog(BuildContext context, WidgetRef ref, Account account) {

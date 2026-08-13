@@ -2,6 +2,9 @@
 
 ## Next: 1.4.0
 
+- Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
+- A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
+- Sync results (synced count or per-account errors) are now also shown after automatic syncs
 - Bug fixes and improvements.
 
 ## 1.3.8

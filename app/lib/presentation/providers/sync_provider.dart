@@ -6,38 +6,35 @@ import '../../services/notification_service.dart';
 import 'accounts_provider.dart';
 import 'core_providers.dart';
 import 'profile_provider.dart';
+import 'wealth_provider.dart';
+
+/// Outcome of a completed sync-all run.
+class SyncAllResult {
+  final int syncedCount;
+  final List<Map<String, dynamic>> errors;
+  final String? message;
+
+  const SyncAllResult({
+    this.syncedCount = 0,
+    this.errors = const [],
+    this.message,
+  });
+}
 
 /// State for sync-all operations.
 class SyncAllState {
   final bool isSyncing;
-  final String? error;
   final DateTime? lastSyncTime;
-  final int? successCount;
-  final int? failureCount;
+
+  /// Result of the most recent run; null until a run completes
+  /// (or when the run timed out without a final status).
+  final SyncAllResult? lastResult;
 
   const SyncAllState({
     this.isSyncing = false,
-    this.error,
     this.lastSyncTime,
-    this.successCount,
-    this.failureCount,
+    this.lastResult,
   });
-
-  SyncAllState copyWith({
-    bool? isSyncing,
-    String? error,
-    DateTime? lastSyncTime,
-    int? successCount,
-    int? failureCount,
-  }) {
-    return SyncAllState(
-      isSyncing: isSyncing ?? this.isSyncing,
-      error: error,
-      lastSyncTime: lastSyncTime ?? this.lastSyncTime,
-      successCount: successCount ?? this.successCount,
-      failureCount: failureCount ?? this.failureCount,
-    );
-  }
 }
 
 /// Provider for sync-all operations with notification tracking.
@@ -54,8 +51,12 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
   Future<void> _loadLastSyncTime() async {
     final notificationService = ref.read(notificationServiceProvider);
     final lastSync = await notificationService.getLastSyncAll();
-    if (lastSync != null) {
-      state = state.copyWith(lastSyncTime: lastSync);
+    if (lastSync != null && state.lastSyncTime == null) {
+      state = SyncAllState(
+        isSyncing: state.isSyncing,
+        lastSyncTime: lastSync,
+        lastResult: state.lastResult,
+      );
     }
   }
 
@@ -66,7 +67,7 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
   Future<void> syncAll() async {
     if (state.isSyncing) return;
 
-    state = state.copyWith(isSyncing: true, error: null);
+    state = SyncAllState(isSyncing: true, lastSyncTime: state.lastSyncTime);
 
     try {
       final repository = ref.read(accountRepositoryProvider);
@@ -83,9 +84,12 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
         if (taskId == null) {
           // No task created (e.g. no accounts to sync)
           await notificationService.recordSyncAll();
-          state = state.copyWith(
+          state = SyncAllState(
             isSyncing: false,
             lastSyncTime: DateTime.now(),
+            lastResult: SyncAllResult(
+              message: startResult['message'] as String? ?? 'Done',
+            ),
           );
           return;
         }
@@ -93,34 +97,58 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
         // Poll for completion
         final result = await _pollTask(repository, taskId);
 
-        int successCount = 0;
-        int failureCount = 0;
-
-        if (result != null) {
-          final details = result['result'] as Map<String, dynamic>?;
-          if (details != null) {
-            successCount = details['synced_count'] as int? ?? 0;
-            failureCount = details['error_count'] as int? ?? 0;
-          }
-        }
-
         await notificationService.recordSyncAll();
 
-        state = state.copyWith(
+        state = SyncAllState(
           isSyncing: false,
           lastSyncTime: DateTime.now(),
-          successCount: successCount,
-          failureCount: failureCount,
+          lastResult: result != null ? _parseResult(result) : null,
         );
-
-        ref.invalidate(accountsProvider);
       }, active: anyNeedsRelay(accounts));
     } catch (e) {
-      state = state.copyWith(
+      state = SyncAllState(
         isSyncing: false,
-        error: e.toString(),
+        lastSyncTime: state.lastSyncTime,
+        lastResult: SyncAllResult(
+          errors: [
+            {'name': 'Sync', 'error': e.toString()}
+          ],
+        ),
+      );
+    } finally {
+      _refreshData();
+    }
+  }
+
+  /// Extract synced count and per-account errors from a task status payload.
+  SyncAllResult _parseResult(Map<String, dynamic> result) {
+    final details = result['result'] as Map<String, dynamic>?;
+    if (details != null) {
+      final errors =
+          ((details['details'] as Map?)?['errors'] as List? ?? const [])
+              .cast<Map<String, dynamic>>();
+      return SyncAllResult(
+        syncedCount: details['synced_count'] as int? ?? 0,
+        errors: errors,
       );
     }
+    if (result['error'] != null) {
+      return SyncAllResult(
+        errors: [
+          {'name': 'Sync', 'error': result['error']}
+        ],
+      );
+    }
+    return const SyncAllResult();
+  }
+
+  /// Invalidate all providers derived from account/snapshot data so every
+  /// screen (summary card, chart, account list, snapshot banner) refreshes.
+  void _refreshData() {
+    ref.invalidate(accountsProvider);
+    ref.invalidate(accountSnapshotsProvider);
+    ref.invalidate(wealthSummaryProvider);
+    ref.invalidate(wealthHistoryProvider);
   }
 
   /// Poll a sync task until completion.
