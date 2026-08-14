@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ArrowLeftRight, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
+import AiCategorization from '../components/AiCategorization';
 import type {
   CategoryRule,
   SpendingReport,
@@ -602,7 +603,7 @@ export default function SpendingPage() {
         </div>
         </>)}
 
-        {tab === 'config' && (
+        {tab === 'config' && (<>
         <div className="card">
           <div className="chart-header">
             <h2>Rules</h2>
@@ -662,7 +663,14 @@ export default function SpendingPage() {
             </div>
           </div>
         </div>
-        )}
+
+        <AiCategorization onApplied={() => {
+          loadReport();
+          getCategories().then(setCategories).catch(() => {});
+          getCategoryRules().then(setRules).catch(() => {});
+          if (accountId !== null) loadTransactions(accountId, 1);
+        }} />
+        </>)}
 
         {categoryDialogOpen && (
           <div className="modal-overlay" onClick={() => setCategoryDialogOpen(false)}>

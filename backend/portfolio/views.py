@@ -1007,6 +1007,214 @@ class DetectTransfersView(APIView):
         return Response({'status': 'success', 'marked': marked})
 
 
+class AiConfigView(KEKAuthenticationMixin, APIView):
+    """Configure Gemini-assisted categorization (API key + model).
+
+    The API key is a user secret and is stored encrypted under the per-user key
+    (same KEK scheme as account credentials), so reads/writes require the KEK.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .ai_categorization import DISCLOSED_FIELDS
+        profile = request.user.profile
+        return Response({
+            'configured': bool(profile.encrypted_gemini_key),
+            'model': profile.gemini_model,
+            'disclosed_fields': DISCLOSED_FIELDS,
+        })
+
+    def put(self, request):
+        profile = request.user.profile
+        api_key = request.data.get('api_key')
+        model = request.data.get('model')
+        if api_key:
+            profile.encrypted_gemini_key = self.encrypt_blob(request, {'api_key': api_key})
+        if model is not None:
+            profile.gemini_model = model
+        profile.save()
+        return Response({'status': 'success', 'configured': bool(profile.encrypted_gemini_key),
+                         'model': profile.gemini_model})
+
+    def delete(self, request):
+        profile = request.user.profile
+        profile.encrypted_gemini_key = None
+        profile.gemini_model = ''
+        profile.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AiModelsView(KEKAuthenticationMixin, APIView):
+    """List Gemini models available to the user's key, with known prices.
+
+    Accepts an ``api_key`` in the body (pre-save validation while configuring)
+    or falls back to the stored key.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import GeminiError, list_models
+
+        api_key = request.data.get('api_key')
+        if not api_key:
+            profile = request.user.profile
+            if not profile.encrypted_gemini_key:
+                return Response({'error': 'No Gemini API key configured'}, status=400)
+            api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        try:
+            return Response({'models': list_models(api_key)})
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+
+class AiSuggestView(KEKAuthenticationMixin, APIView):
+    """Ask Gemini to suggest categories for uncategorized transactions.
+
+    Nothing is persisted: the response is a proposal the user reviews and
+    applies (or not) via AiApplyView. The response also states exactly which
+    data was transferred to Google.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import (
+            DISCLOSED_FIELDS,
+            MAX_TRANSACTIONS,
+            GeminiError,
+            suggest_categories,
+        )
+
+        profile = request.user.profile
+        if not profile.encrypted_gemini_key or not profile.gemini_model:
+            return Response({'error': 'Gemini is not configured'}, status=400)
+        api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        qs = (
+            Transaction.objects
+            .filter(
+                account__user=request.user,
+                category__isnull=True,
+                category_manual=False,
+                is_transfer=False,
+            )
+            .order_by('-booking_date')
+        )
+        total = qs.count()
+        transactions = list(qs[:MAX_TRANSACTIONS])
+        if not transactions:
+            return Response({
+                'suggestions': [], 'rules': [], 'sent_count': 0, 'total_uncategorized': 0,
+                'disclosed_fields': DISCLOSED_FIELDS,
+            })
+
+        categories = list(
+            TransactionCategory.objects.filter(user=request.user).values_list('name', flat=True)
+        )
+        payload = [
+            {
+                'id': t.id, 'counterparty': t.counterparty,
+                'description': t.description, 'amount': str(t.amount), 'currency': t.currency,
+            }
+            for t in transactions
+        ]
+
+        try:
+            result = suggest_categories(api_key, profile.gemini_model, payload, categories)
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+        by_id = {t.id: t for t in transactions}
+        existing = {c.lower() for c in categories}
+        suggestions = []
+        for assignment in result['assignments']:
+            tx = by_id.get(assignment['id'])
+            if tx is None:
+                continue  # never act on ids we did not send
+            name = str(assignment['category']).strip()[:64]
+            suggestions.append({
+                'transaction_id': tx.id,
+                'booking_date': tx.booking_date,
+                'counterparty': tx.counterparty,
+                'description': tx.description,
+                'amount': str(tx.amount),
+                'currency': tx.currency,
+                'category': name,
+                'is_new_category': name.lower() not in existing,
+            })
+
+        rules = [
+            {
+                'match_text': str(r['match_text']).strip().lower()[:128],
+                'category': str(r['category']).strip()[:64],
+                'is_new_category': str(r['category']).strip().lower() not in existing,
+            }
+            for r in result['rules']
+        ]
+
+        return Response({
+            'suggestions': suggestions,
+            'rules': rules,
+            'sent_count': len(transactions),
+            'total_uncategorized': total,
+            'disclosed_fields': DISCLOSED_FIELDS,
+            'usage': result['usage'],
+        })
+
+
+class AiApplyView(APIView):
+    """Persist the user-confirmed subset of AI suggestions.
+
+    Body: ``assignments`` [{transaction_id, category}] and ``rules``
+    [{match_text, category}]. Categories are created on demand; confirmed
+    assignments are marked ``category_manual`` (a human decision, sticky);
+    created rules immediately apply to remaining uncategorized transactions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .classification import apply_rules
+
+        def category_for(name):
+            name = str(name).strip()[:64]
+            if not name:
+                return None
+            category, _ = TransactionCategory.objects.get_or_create(
+                user=request.user, name=name,
+            )
+            return category
+
+        assigned = 0
+        for item in request.data.get('assignments', []):
+            category = category_for(item.get('category'))
+            if category is None:
+                continue
+            updated = Transaction.objects.filter(
+                pk=item.get('transaction_id'), account__user=request.user,
+            ).update(category=category, category_manual=True)
+            assigned += updated
+
+        rules_created = 0
+        for item in request.data.get('rules', []):
+            match_text = str(item.get('match_text', '')).strip().lower()[:128]
+            category = category_for(item.get('category'))
+            if not match_text or category is None:
+                continue
+            _, created = CategoryRule.objects.get_or_create(
+                user=request.user, match_text=match_text,
+                defaults={'category': category, 'spread_months': 1},
+            )
+            rules_created += created
+
+        rule_applied = apply_rules(request.user) if rules_created else 0
+        return Response({
+            'status': 'success',
+            'assigned': assigned,
+            'rules_created': rules_created,
+            'rule_applied': rule_applied,
+        })
+
+
 class SpendingMonthlyView(APIView):
     """Month-to-month spending report.
 

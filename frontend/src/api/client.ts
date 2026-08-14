@@ -920,6 +920,102 @@ export async function detectTransfers(): Promise<{ marked: number }> {
   return res.json();
 }
 
+// AI categorization (Gemini)
+
+export interface AiConfig {
+  configured: boolean;
+  model: string;
+  disclosed_fields: string[];
+}
+
+export interface AiModel {
+  id: string;
+  display_name: string;
+  input_price_per_1m: number | null;
+  output_price_per_1m: number | null;
+}
+
+export interface AiSuggestion {
+  transaction_id: number;
+  booking_date: string;
+  counterparty: string;
+  description: string;
+  amount: string;
+  currency: string;
+  category: string;
+  is_new_category: boolean;
+}
+
+export interface AiRuleSuggestion {
+  match_text: string;
+  category: string;
+  is_new_category: boolean;
+}
+
+export interface AiSuggestResponse {
+  suggestions: AiSuggestion[];
+  rules: AiRuleSuggestion[];
+  sent_count: number;
+  total_uncategorized: number;
+  disclosed_fields: string[];
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost_usd: number | null;
+  };
+}
+
+async function jsonOrThrow(res: Response, fallback: string) {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || fallback);
+  }
+  return data;
+}
+
+export async function getAiConfig(): Promise<AiConfig> {
+  const res = await fetchWithAuth('/api/spending/ai/config/');
+  return jsonOrThrow(res, 'Failed to load AI configuration');
+}
+
+export async function saveAiConfig(fields: { api_key?: string; model?: string }) {
+  const res = await fetchWithAuth('/api/spending/ai/config/', {
+    method: 'PUT',
+    body: JSON.stringify(fields),
+  });
+  return jsonOrThrow(res, 'Failed to save AI configuration');
+}
+
+export async function deleteAiConfig(): Promise<void> {
+  const res = await fetchWithAuth('/api/spending/ai/config/', { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) throw new Error('Failed to remove AI configuration');
+}
+
+export async function listAiModels(apiKey?: string): Promise<AiModel[]> {
+  const res = await fetchWithAuth('/api/spending/ai/models/', {
+    method: 'POST',
+    body: JSON.stringify(apiKey ? { api_key: apiKey } : {}),
+  });
+  const data = await jsonOrThrow(res, 'Failed to fetch Gemini models');
+  return (data as { models: AiModel[] }).models;
+}
+
+export async function aiSuggest(): Promise<AiSuggestResponse> {
+  const res = await fetchWithAuth('/api/spending/ai/suggest/', { method: 'POST' });
+  return jsonOrThrow(res, 'Failed to get AI suggestions');
+}
+
+export async function aiApply(fields: {
+  assignments: { transaction_id: number; category: string }[];
+  rules: { match_text: string; category: string }[];
+}): Promise<{ assigned: number; rules_created: number; rule_applied: number }> {
+  const res = await fetchWithAuth('/api/spending/ai/apply/', {
+    method: 'POST',
+    body: JSON.stringify(fields),
+  });
+  return jsonOrThrow(res, 'Failed to apply suggestions');
+}
+
 // Profile API
 export async function getProfile() {
   const res = await fetchWithAuth('/api/profile/');

@@ -120,6 +120,20 @@ class UserProfile(models.Model):
         help_text='Automatically sync when opening app'
     )
 
+    # AI categorization (Gemini). The API key is a user secret: stored Fernet-
+    # encrypted under the user's key (KEK scheme), like account credentials.
+    encrypted_gemini_key = models.BinaryField(
+        null=True,
+        blank=True,
+        help_text='Gemini API key, encrypted under the per-user key'
+    )
+    gemini_model = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text='Selected Gemini model id for category suggestions'
+    )
+
     # Demo mode flag
     is_demo_user = models.BooleanField(
         default=False,

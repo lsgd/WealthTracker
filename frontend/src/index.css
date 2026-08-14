@@ -2343,3 +2343,36 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-size: 0.75rem;
   pointer-events: none;
 }
+
+/* AI categorization */
+.ai-disclosure {
+  background: rgba(79, 140, 255, 0.07);
+  border: 1px solid rgba(79, 140, 255, 0.25);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #8b93a7);
+  margin-bottom: 14px;
+}
+
+.ai-disclosure strong { color: inherit; }
+.ai-disclosure ul { margin: 6px 0; padding-left: 18px; }
+.ai-disclosure p { margin: 6px 0 0; }
+
+.ai-setup { margin-bottom: 8px; }
+
+.ai-suggestions h3 {
+  font-size: 0.95rem;
+  margin: 18px 0 8px;
+}
+
+.ai-new-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #a3e635;
+  border: 1px solid rgba(163, 230, 53, 0.5);
+}

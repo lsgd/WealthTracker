@@ -902,3 +902,159 @@ class ClassificationApiTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.data['months']), 2)
         self.assertEqual(resp.data['base_currency'], self.user.profile.base_currency)
+
+
+class AiCategorizationClientTests(TestCase):
+    """Gemini client: pricing lookup, model listing, suggestion parsing."""
+
+    def test_price_prefix_matching_prefers_longest(self):
+        from portfolio.ai_categorization import price_for_model
+        self.assertEqual(price_for_model('gemini-3.5-flash-lite-001'), (0.30, 2.50))
+        self.assertEqual(price_for_model('gemini-3.5-flash'), (1.50, 9.00))
+        self.assertIsNone(price_for_model('gemini-unknown-model'))
+
+    @patch('portfolio.ai_categorization.requests.get')
+    def test_list_models_filters_and_prices(self, m_get):
+        from portfolio.ai_categorization import list_models
+        m_get.return_value = MagicMock(status_code=200, json=lambda: {'models': [
+            {'name': 'models/gemini-3.6-flash', 'displayName': 'Gemini 3.6 Flash',
+             'supportedGenerationMethods': ['generateContent']},
+            {'name': 'models/gemini-embedding-001', 'displayName': 'Embedding',
+             'supportedGenerationMethods': ['embedContent']},
+            {'name': 'models/imagen-4', 'displayName': 'Imagen',
+             'supportedGenerationMethods': ['generateContent']},
+        ]})
+        models = list_models('key')
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]['id'], 'gemini-3.6-flash')
+        self.assertEqual(models[0]['input_price_per_1m'], 0.75)
+
+    @patch('portfolio.ai_categorization.requests.get')
+    def test_list_models_invalid_key_is_friendly(self, m_get):
+        from portfolio.ai_categorization import GeminiError, list_models
+        m_get.return_value = MagicMock(status_code=400, json=lambda: {
+            'error': {'message': 'API key not valid. Please pass a valid API key.'}})
+        with self.assertRaises(GeminiError) as ctx:
+            list_models('bad')
+        self.assertIn('not valid', str(ctx.exception))
+
+    @patch('portfolio.ai_categorization.requests.post')
+    def test_suggest_parses_assignments_rules_and_cost(self, m_post):
+        import json as jsonlib
+        from portfolio.ai_categorization import suggest_categories
+        m_post.return_value = MagicMock(status_code=200, json=lambda: {
+            'candidates': [{'content': {'parts': [{'text': jsonlib.dumps({
+                'assignments': [{'id': 1, 'category': 'Health'}, {'bogus': True}],
+                'rules': [{'match_text': 'apotheke', 'category': 'Health'}, {'match_text': ''}],
+            })}]}}],
+            'usageMetadata': {'promptTokenCount': 1000, 'candidatesTokenCount': 500},
+        })
+        result = suggest_categories(
+            'key', 'gemini-3.6-flash',
+            [{'id': 1, 'counterparty': 'Apotheke', 'description': '', 'amount': '-10', 'currency': 'EUR'}],
+            ['Groceries'],
+        )
+        self.assertEqual(result['assignments'], [{'id': 1, 'category': 'Health'}])
+        self.assertEqual(result['rules'], [{'match_text': 'apotheke', 'category': 'Health'}])
+        self.assertAlmostEqual(result['usage']['estimated_cost_usd'], 0.002625)
+
+
+class AiEndpointTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.tx = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-19.90'), currency='EUR', counterparty='Apotheke am Markt',
+            source='camt053', dedup_key='ref:A1',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def test_config_roundtrip_stores_key_encrypted(self):
+        resp = self.client.put(reverse('ai_config'), {
+            'api_key': 'AIza-test', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.user.profile.refresh_from_db()
+        self.assertTrue(self.user.profile.encrypted_gemini_key)
+        self.assertNotIn(b'AIza-test', bytes(self.user.profile.encrypted_gemini_key))
+        resp = self.client.get(reverse('ai_config'))
+        self.assertTrue(resp.data['configured'])
+        self.assertEqual(resp.data['model'], 'gemini-3.6-flash')
+        self.assertTrue(resp.data['disclosed_fields'])
+
+    def test_config_requires_kek(self):
+        self.client.credentials()  # drop X-KEK
+        resp = self.client.put(reverse('ai_config'), {'api_key': 'x'}, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_returns_disclosure_and_flags_new_categories(self, m_suggest):
+        from portfolio.models import TransactionCategory
+        TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [
+                {'id': self.tx.id, 'category': 'Health'},
+                {'id': 999999, 'category': 'Ignored'},
+            ],
+            'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            'usage': {'input_tokens': 10, 'output_tokens': 5, 'estimated_cost_usd': 0.0001},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['suggestions']), 1)
+        self.assertTrue(resp.data['suggestions'][0]['is_new_category'])
+        self.assertEqual(resp.data['sent_count'], 1)
+        self.assertTrue(resp.data['disclosed_fields'])
+        # The suggestion is NOT persisted without confirmation.
+        self.tx.refresh_from_db()
+        self.assertIsNone(self.tx.category)
+
+    def test_apply_confirmed_suggestions(self):
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+        other = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 2),
+            amount=Decimal('-5.00'), currency='EUR', counterparty='Apotheke Nord',
+            source='camt053', dedup_key='ref:A2',
+        )
+        resp = self.client.post(reverse('ai_apply'), {
+            'assignments': [{'transaction_id': self.tx.id, 'category': 'Health'}],
+            'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['assigned'], 1)
+        self.assertEqual(resp.data['rules_created'], 1)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.category.name, 'Health')
+        self.assertTrue(self.tx.category_manual)
+        # The created rule immediately categorized the other apotheke transaction.
+        other.refresh_from_db()
+        self.assertEqual(other.category.name, 'Health')
+        self.assertEqual(TransactionCategory.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 1)
+
+    def test_apply_cannot_touch_other_users_transactions(self):
+        from portfolio.models import Transaction
+        other_user, _, _ = make_kek_user(username='bob')
+        foreign_account = FinancialAccount.objects.create(
+            user=other_user, broker=self.broker, name='Foreign', currency='EUR',
+        )
+        foreign_tx = Transaction.objects.create(
+            account=foreign_account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-1.00'), currency='EUR', source='camt053', dedup_key='x',
+        )
+        resp = self.client.post(reverse('ai_apply'), {
+            'assignments': [{'transaction_id': foreign_tx.id, 'category': 'Hijack'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['assigned'], 0)
+        foreign_tx.refresh_from_db()
+        self.assertIsNone(foreign_tx.category)
