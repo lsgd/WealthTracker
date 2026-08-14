@@ -2,15 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowLeftRight, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Plus, Trash2, X } from 'lucide-react';
 import type {
   CategoryRule,
   SpendingReport,
@@ -57,6 +60,7 @@ function formatAmount(value: number, currency: string): string {
 }
 
 export default function SpendingPage() {
+  const [tab, setTab] = useState<'insights' | 'config'>('insights');
   const [mode, setMode] = useState<'normalized' | 'actual'>('normalized');
   const [months, setMonths] = useState(12);
   const [report, setReport] = useState<SpendingReport | null>(null);
@@ -69,10 +73,14 @@ export default function SpendingPage() {
   const [txPage, setTxPage] = useState(1);
   const [error, setError] = useState('');
 
-  // New rule form
+  // New rule form. ruleCategory '__new__' means "create a category first" —
+  // the Add Rule click then opens the naming dialog instead of saving directly.
   const [ruleText, setRuleText] = useState('');
-  const [ruleCategory, setRuleCategory] = useState<number | ''>('');
+  const [ruleCategory, setRuleCategory] = useState<number | '' | '__new__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [savingRule, setSavingRule] = useState(false);
 
   const loadReport = useCallback(async () => {
     try {
@@ -126,6 +134,10 @@ export default function SpendingPage() {
     }
   }, [accountId, loadTransactions]);
 
+  // Month selected for the pie breakdown (bar click or dropdown); defaults to
+  // the latest month of the report.
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+
   const chartData = useMemo(() => {
     if (!report) return [];
     return report.months.map((m) => ({
@@ -134,6 +146,25 @@ export default function SpendingPage() {
       ...m.by_category,
     }));
   }, [report]);
+
+  const monthDetail = useMemo(() => {
+    if (!report || report.months.length === 0) return null;
+    return report.months.find((m) => m.month === selectedMonth)
+      ?? report.months[report.months.length - 1];
+  }, [report, selectedMonth]);
+
+  const pieData = useMemo(() => {
+    if (!monthDetail || !report) return [];
+    // Colors follow the bar chart: index within the report's category order.
+    return Object.entries(monthDetail.by_category).map(([name, value]) => {
+      const index = report.categories.indexOf(name);
+      return {
+        name,
+        value,
+        color: index >= 0 ? COLORS[index % COLORS.length] : '#5b6270',
+      };
+    });
+  }, [monthDetail, report]);
 
   const avgExpenses = useMemo(() => {
     if (!report || report.months.length === 0) return 0;
@@ -156,22 +187,51 @@ export default function SpendingPage() {
     }
   };
 
-  const handleAddRule = async () => {
-    if (!ruleText.trim() || ruleCategory === '') return;
+  const saveRule = async (categoryId: number) => {
+    setSavingRule(true);
     try {
       const rule = await createCategoryRule({
         match_text: ruleText.trim(),
-        category: ruleCategory,
+        category: categoryId,
         spread_months: ruleSpread,
       });
       setRules((prev) => [...prev, rule]);
       setRuleText('');
+      setRuleCategory('');
       setRuleSpread(1);
       // The rule applied retroactively — refresh everything that may have changed.
       loadReport();
       if (accountId !== null) loadTransactions(accountId, 1);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create rule');
+      return false;
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const handleAddRule = () => {
+    if (!ruleText.trim() || ruleCategory === '') return;
+    if (ruleCategory === '__new__') {
+      setCategoryDialogOpen(true);
+      return;
+    }
+    saveRule(ruleCategory);
+  };
+
+  const handleCreateCategoryAndRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+    try {
+      const category = await createCategory(name);
+      setCategories((prev) => [...prev, category].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewCategoryName('');
+      setCategoryDialogOpen(false);
+      await saveRule(category.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create category');
     }
   };
 
@@ -181,17 +241,6 @@ export default function SpendingPage() {
       setRules((prev) => prev.filter((r) => r.id !== ruleId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete rule');
-    }
-  };
-
-  const handleAddCategory = async () => {
-    const name = window.prompt('New category name');
-    if (!name?.trim()) return;
-    try {
-      const category = await createCategory(name.trim());
-      setCategories((prev) => [...prev, category].sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create category');
     }
   };
 
@@ -205,6 +254,16 @@ export default function SpendingPage() {
     }
   };
 
+  // Close the category dialog on Escape.
+  useEffect(() => {
+    if (!categoryDialogOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCategoryDialogOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [categoryDialogOpen]);
+
   const currency = report?.base_currency ?? 'EUR';
 
   return (
@@ -213,6 +272,22 @@ export default function SpendingPage() {
           <div className="form-error" onClick={() => setError('')}>{error}</div>
         )}
 
+        <div className="page-tabs">
+          <button
+            className={tab === 'insights' ? 'active' : ''}
+            onClick={() => setTab('insights')}
+          >
+            Insights
+          </button>
+          <button
+            className={tab === 'config' ? 'active' : ''}
+            onClick={() => setTab('config')}
+          >
+            Configuration
+          </button>
+        </div>
+
+        {tab === 'insights' && (<>
         <div className="card">
           <div className="chart-header">
             <h2>Monthly Spending</h2>
@@ -266,6 +341,11 @@ export default function SpendingPage() {
                     dataKey={name}
                     stackId="expenses"
                     fill={COLORS[i % COLORS.length]}
+                    onClick={(data: { month?: string; payload?: { month?: string } }) => {
+                      const m = data?.month ?? data?.payload?.month;
+                      if (m) setSelectedMonth(m);
+                    }}
+                    style={{ cursor: 'pointer' }}
                   />
                 ))}
                 <Line dataKey="Income" stroke="#34d399" strokeWidth={2} dot={false} />
@@ -276,57 +356,63 @@ export default function SpendingPage() {
 
         <div className="card">
           <div className="chart-header">
-            <h2>Rules</h2>
-            <button className="btn btn-sm btn-ghost" onClick={handleAddCategory}>
-              <Plus size={14} /> Category
-            </button>
-          </div>
-          <p className="form-hint">
-            Match text is compared against counterparty and description. New rules apply
-            to all still-uncategorized transactions. A spread of 12 shows a yearly bill
-            as one twelfth per month in the normalized view.
-          </p>
-          <div className="spending-rules">
-            {rules.map((rule) => (
-              <div key={rule.id} className="spending-rule-row">
-                <code>{rule.match_text}</code>
-                <span>→ {rule.category_name}</span>
-                {rule.spread_months > 1 && <span className="spending-spread-badge">/{rule.spread_months} months</span>}
-                <button
-                  className="btn btn-sm btn-ghost"
-                  title="Delete rule"
-                  onClick={() => handleDeleteRule(rule.id)}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-            <div className="spending-rule-row spending-rule-new">
-              <input
-                placeholder="match text, e.g. rewe"
-                value={ruleText}
-                onChange={(e) => setRuleText(e.target.value)}
-              />
+            <h2>Breakdown</h2>
+            <div className="range-buttons">
               <select
-                value={ruleCategory}
-                onChange={(e) => setRuleCategory(e.target.value ? Number(e.target.value) : '')}
+                value={monthDetail?.month ?? ''}
+                onChange={(e) => setSelectedMonth(e.target.value)}
               >
-                <option value="">Category…</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                {report?.months.map((m) => (
+                  <option key={m.month} value={m.month}>{m.month}</option>
                 ))}
               </select>
-              <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
-                <option value={1}>no spread</option>
-                <option value={3}>/3 months</option>
-                <option value={6}>/6 months</option>
-                <option value={12}>/12 months</option>
-              </select>
-              <button className="btn btn-sm btn-primary" onClick={handleAddRule}>
-                <Plus size={14} /> Rule
-              </button>
             </div>
           </div>
+          {!monthDetail || pieData.length === 0 ? (
+            <div className="chart-empty"><p>No spending in this month.</p></div>
+          ) : (
+            <div className="breakdown-content">
+              <div className="breakdown-chart">
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={85}
+                      paddingAngle={2}
+                    >
+                      {pieData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="breakdown-legend">
+                {pieData.map((entry) => (
+                  <div key={entry.name} className="breakdown-legend-item">
+                    <span
+                      className="breakdown-legend-color"
+                      style={{ backgroundColor: entry.color }}
+                    />
+                    <span className="breakdown-legend-label">{entry.name}</span>
+                    <span className="breakdown-legend-value">
+                      {formatAmount(entry.value, currency)}
+                    </span>
+                    <span className="breakdown-legend-pct">
+                      {monthDetail.expenses > 0
+                        ? ((entry.value / monthDetail.expenses) * 100).toFixed(1)
+                        : '0.0'}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card">
@@ -409,6 +495,110 @@ export default function SpendingPage() {
             </div>
           )}
         </div>
+        </>)}
+
+        {tab === 'config' && (
+        <div className="card">
+          <div className="chart-header">
+            <h2>Rules</h2>
+          </div>
+          <p className="form-hint">
+            Match text is compared against counterparty and description. New rules apply
+            to all still-uncategorized transactions. A spread of 12 shows a yearly bill
+            as one twelfth per month in the normalized view.
+          </p>
+          <div className="spending-rules">
+            {rules.map((rule) => (
+              <div key={rule.id} className="spending-rule-row">
+                <code>{rule.match_text}</code>
+                <span>→ {rule.category_name}</span>
+                {rule.spread_months > 1 && <span className="spending-spread-badge">/{rule.spread_months} months</span>}
+                <button
+                  className="btn btn-sm btn-ghost"
+                  title="Delete rule"
+                  onClick={() => handleDeleteRule(rule.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            <div className="spending-rule-row spending-rule-new">
+              <input
+                placeholder="match text, e.g. rewe"
+                value={ruleText}
+                onChange={(e) => setRuleText(e.target.value)}
+              />
+              <select
+                value={ruleCategory}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setRuleCategory(v === '' ? '' : v === '__new__' ? '__new__' : Number(v));
+                }}
+              >
+                <option value="">Category…</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+                <option value="__new__">+ New category…</option>
+              </select>
+              <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
+                <option value={1}>no spread</option>
+                <option value={3}>/3 months</option>
+                <option value={6}>/6 months</option>
+                <option value={12}>/12 months</option>
+              </select>
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={handleAddRule}
+                disabled={savingRule || !ruleText.trim() || ruleCategory === ''}
+              >
+                <Plus size={14} /> Rule
+              </button>
+            </div>
+          </div>
+        </div>
+        )}
+
+        {categoryDialogOpen && (
+          <div className="modal-overlay" onClick={() => setCategoryDialogOpen(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>New Category</h3>
+                <button className="btn btn-ghost" onClick={() => setCategoryDialogOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <form onSubmit={handleCreateCategoryAndRule}>
+                <div className="form-group">
+                  <label htmlFor="new-category-name">Category name</label>
+                  <input
+                    id="new-category-name"
+                    required
+                    autoFocus
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    placeholder="e.g. Insurance"
+                  />
+                </div>
+                <p className="form-hint">
+                  The rule <code>{ruleText}</code> will be created with this category.
+                </p>
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setCategoryDialogOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={savingRule}>
+                    Create
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
     </div>
   );
 }

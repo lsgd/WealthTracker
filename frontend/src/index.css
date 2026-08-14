@@ -2293,3 +2293,30 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   border: 1px solid rgba(255, 255, 255, 0.18);
   color: var(--text-secondary, #8b93a7);
 }
+
+.page-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.page-tabs button {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #8b93a7);
+  font-size: 0.95rem;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.page-tabs button:hover {
+  color: inherit;
+}
+
+.page-tabs button.active {
+  color: inherit;
+  border-bottom-color: #4f8cff;
+}
