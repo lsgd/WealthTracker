@@ -2320,3 +2320,24 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: inherit;
   border-bottom-color: #4f8cff;
 }
+
+.spending-month-select {
+  width: 110px;
+  text-align: center;
+}
+
+.spending-month-title {
+  color: var(--text-secondary, #8b93a7);
+  font-weight: 500;
+}
+
+.spending-donut-total {
+  fill: currentColor;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.spending-donut-label {
+  fill: #8b93a7;
+  font-size: 0.75rem;
+}

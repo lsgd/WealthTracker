@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowLeftRight, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import type {
   CategoryRule,
   SpendingReport,
@@ -52,6 +52,11 @@ const RANGES = [6, 12, 24];
 interface AccountOption {
   id: number;
   name: string;
+}
+
+function formatMonthLabel(month: string): string {
+  const [year, m] = month.split('-').map(Number);
+  return new Date(year, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 }
 
 function formatAmount(value: number, currency: string): string {
@@ -156,6 +161,17 @@ export default function SpendingPage() {
     return report.months.find((m) => m.month === selectedMonth)
       ?? report.months[report.months.length - 1];
   }, [report, selectedMonth]);
+
+  const monthIndex = useMemo(() => {
+    if (!report || !monthDetail) return -1;
+    return report.months.findIndex((m) => m.month === monthDetail.month);
+  }, [report, monthDetail]);
+
+  const stepMonth = (delta: number) => {
+    if (!report || monthIndex < 0) return;
+    const next = report.months[monthIndex + delta];
+    if (next) setSelectedMonth(next.month);
+  };
 
   const pieData = useMemo(() => {
     if (!monthDetail || !report) return [];
@@ -364,9 +380,23 @@ export default function SpendingPage() {
 
         <div className="card">
           <div className="chart-header">
-            <h2>Breakdown</h2>
+            <h2>
+              Breakdown
+              {monthDetail && (
+                <span className="spending-month-title"> · {formatMonthLabel(monthDetail.month)}</span>
+              )}
+            </h2>
             <div className="range-buttons">
+              <button
+                className="btn btn-sm btn-ghost"
+                title="Previous month"
+                disabled={monthIndex <= 0}
+                onClick={() => stepMonth(-1)}
+              >
+                <ChevronLeft size={16} />
+              </button>
               <select
+                className="spending-month-select"
                 value={monthDetail?.month ?? ''}
                 onChange={(e) => setSelectedMonth(e.target.value)}
               >
@@ -374,6 +404,14 @@ export default function SpendingPage() {
                   <option key={m.month} value={m.month}>{m.month}</option>
                 ))}
               </select>
+              <button
+                className="btn btn-sm btn-ghost"
+                title="Next month"
+                disabled={report === null || monthIndex < 0 || monthIndex >= report.months.length - 1}
+                onClick={() => stepMonth(1)}
+              >
+                <ChevronRight size={16} />
+              </button>
             </div>
           </div>
           {!monthDetail || pieData.length === 0 ? (
@@ -397,6 +435,20 @@ export default function SpendingPage() {
                         <Cell key={entry.name} fill={entry.color} />
                       ))}
                     </Pie>
+                    <text
+                      x="50%" y="47%" textAnchor="middle" dominantBaseline="middle"
+                      className="spending-donut-total"
+                    >
+                      {new Intl.NumberFormat('de-CH', {
+                        style: 'currency', currency, maximumFractionDigits: 0,
+                      }).format(monthDetail.expenses)}
+                    </text>
+                    <text
+                      x="50%" y="57%" textAnchor="middle" dominantBaseline="middle"
+                      className="spending-donut-label"
+                    >
+                      {formatMonthLabel(monthDetail.month)}
+                    </text>
                   </PieChart>
                 </ResponsiveContainer>
               </div>
