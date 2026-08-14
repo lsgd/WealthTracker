@@ -181,6 +181,95 @@ class AccountSnapshot(models.Model):
         return f"{self.account.name} - {self.balance} {self.currency} ({self.snapshot_date})"
 
 
+class Transaction(models.Model):
+    """A single booking entry (bank transaction) on an account.
+
+    One row regardless of where it came from — an automatic feed (camt.053 via EBICS,
+    FinTS/MT940, a broker API) or manual entry. ``amount`` is signed: negative means
+    money left the account.
+
+    Dedup: ``dedup_key`` is unique per account. Feeds with a bank-side unique
+    reference (e.g. camt.053 ``AcctSvcrRef``) use it directly; otherwise the importer
+    hashes the entry's content (plus an ordinal, so two identical purchases on the
+    same day both survive) — see ``portfolio.transaction_importer``. Re-importing an
+    overlapping statement range is therefore idempotent.
+    """
+
+    SOURCES = [
+        ('camt053', 'camt.053 statement (EBICS)'),
+        ('fints', 'FinTS/MT940 statement'),
+        ('broker', 'Broker API'),
+        ('manual', 'Manual Entry'),
+    ]
+
+    account = models.ForeignKey(
+        FinancialAccount,
+        on_delete=models.CASCADE,
+        related_name='transactions'
+    )
+
+    booking_date = models.DateField(help_text='Date the entry was booked')
+    value_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=4,
+        help_text='Signed amount in account currency (negative = outflow)'
+    )
+    currency = models.CharField(max_length=3)
+
+    counterparty = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Name of the other party'
+    )
+    counterparty_account = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text='IBAN/account number of the other party, if reported'
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text='Remittance info / purpose text'
+    )
+
+    source = models.CharField(max_length=20, choices=SOURCES, default='manual')
+    external_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default='',
+        help_text="Bank's own reference for this entry (e.g. AcctSvcrRef)"
+    )
+    dedup_key = models.CharField(
+        max_length=128,
+        help_text='Idempotency key, unique per account'
+    )
+
+    raw_data = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'transactions'
+        ordering = ['-booking_date', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'dedup_key'],
+                name='uniq_transaction_dedup_per_account',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['account', 'booking_date']),
+            models.Index(fields=['booking_date']),
+        ]
+
+    def __str__(self):
+        return f"{self.account.name}: {self.amount} {self.currency} on {self.booking_date}"
+
+
 class PortfolioPosition(models.Model):
     """Individual holdings within an investment account."""
 

@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from brokers.serializers import BrokerSerializer
 
-from .models import AccountSnapshot, FinancialAccount, PortfolioPosition
+from .models import AccountSnapshot, FinancialAccount, PortfolioPosition, Transaction
 
 
 class PortfolioPositionSerializer(serializers.ModelSerializer):
@@ -37,6 +37,37 @@ class AccountSnapshotCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data['snapshot_source'] = 'manual'
+        return super().create(validated_data)
+
+
+class TransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transaction
+        fields = [
+            'id', 'account', 'booking_date', 'value_date', 'amount', 'currency',
+            'counterparty', 'counterparty_account', 'description', 'source',
+            'external_id', 'created_at'
+        ]
+        read_only_fields = ['id', 'account', 'source', 'external_id', 'created_at']
+
+
+class TransactionCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating/updating manual transactions.
+
+    ``currency`` may be omitted — the view defaults it to the account currency.
+    """
+    class Meta:
+        model = Transaction
+        fields = [
+            'booking_date', 'value_date', 'amount', 'currency',
+            'counterparty', 'counterparty_account', 'description'
+        ]
+        extra_kwargs = {'currency': {'required': False}}
+
+    def create(self, validated_data):
+        import uuid
+        validated_data['source'] = 'manual'
+        validated_data['dedup_key'] = f'manual:{uuid.uuid4().hex}'
         return super().create(validated_data)
 
 

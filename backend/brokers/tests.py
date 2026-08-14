@@ -897,3 +897,175 @@ class FinTSBalanceParsingTests(TestCase):
         )
         response = SimpleNamespace(response_segments=lambda cmd, name: [typed])
         self.assertEqual(_tolerant_get_balance(None, 'HKSAL', response), 'MT940BAL')
+
+
+# ---------------------------------------------------------------------------
+# Transaction parsing (camt.053 entries + FinTS/MT940 mapping)
+# ---------------------------------------------------------------------------
+
+CAMT053_SAMPLE = b'''<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+ <BkToCstmrStmt>
+  <GrpHdr><MsgId>M1</MsgId><CreDtTm>2026-08-01T00:00:00</CreDtTm></GrpHdr>
+  <Stmt>
+   <Id>S1</Id>
+   <Acct><Id><IBAN>CH9300762011623852957</IBAN></Id></Acct>
+   <Ntry>
+     <Amt Ccy="CHF">25.50</Amt>
+     <CdtDbtInd>DBIT</CdtDbtInd>
+     <Sts><Cd>BOOK</Cd></Sts>
+     <BookgDt><Dt>2026-07-30</Dt></BookgDt>
+     <ValDt><Dt>2026-07-31</Dt></ValDt>
+     <AcctSvcrRef>REF-001</AcctSvcrRef>
+     <NtryDtls><TxDtls>
+        <Refs><EndToEndId>E2E-1</EndToEndId></Refs>
+        <RltdPties>
+          <Cdtr><Pty><Nm>Migros</Nm></Pty></Cdtr>
+          <CdtrAcct><Id><IBAN>CH5604835012345678009</IBAN></Id></CdtrAcct>
+        </RltdPties>
+        <RmtInf><Ustrd>Groceries</Ustrd><Ustrd>July</Ustrd></RmtInf>
+     </TxDtls></NtryDtls>
+   </Ntry>
+   <Ntry>
+     <Amt Ccy="CHF">3500.00</Amt>
+     <CdtDbtInd>CRDT</CdtDbtInd>
+     <Sts><Cd>BOOK</Cd></Sts>
+     <BookgDt><Dt>2026-07-25</Dt></BookgDt>
+     <AddtlNtryInf>Salary July</AddtlNtryInf>
+     <NtryDtls><TxDtls>
+        <RltdPties><Dbtr><Pty><Nm>Employer AG</Nm></Pty></Dbtr></RltdPties>
+     </TxDtls></NtryDtls>
+   </Ntry>
+   <Ntry>
+     <Amt Ccy="CHF">10.00</Amt>
+     <CdtDbtInd>DBIT</CdtDbtInd>
+     <Sts><Cd>PDNG</Cd></Sts>
+     <BookgDt><Dt>2026-07-31</Dt></BookgDt>
+   </Ntry>
+  </Stmt>
+ </BkToCstmrStmt>
+</Document>'''
+
+
+class Camt053TransactionParsingTests(TestCase):
+    def setUp(self):
+        from brokers.integrations.zkb_ebics import parse_camt053_transactions
+        self.by_iban = parse_camt053_transactions(CAMT053_SAMPLE)
+
+    def test_entries_grouped_by_iban(self):
+        self.assertEqual(list(self.by_iban), ['CH9300762011623852957'])
+
+    def test_pending_entries_are_skipped(self):
+        self.assertEqual(len(self.by_iban['CH9300762011623852957']), 2)
+
+    def test_debit_entry_full_detail(self):
+        tx = self.by_iban['CH9300762011623852957'][0]
+        self.assertEqual(tx.amount, Decimal('-25.50'))
+        self.assertEqual(tx.currency, 'CHF')
+        self.assertEqual(tx.booking_date, date(2026, 7, 30))
+        self.assertEqual(tx.value_date, date(2026, 7, 31))
+        self.assertEqual(tx.counterparty, 'Migros')
+        self.assertEqual(tx.counterparty_account, 'CH5604835012345678009')
+        self.assertEqual(tx.description, 'Groceries July')
+        self.assertEqual(tx.external_id, 'REF-001')
+        self.assertEqual(tx.raw_data['end_to_end_id'], 'E2E-1')
+
+    def test_credit_entry_uses_debtor_and_addtl_info(self):
+        tx = self.by_iban['CH9300762011623852957'][1]
+        self.assertEqual(tx.amount, Decimal('3500.00'))
+        self.assertEqual(tx.counterparty, 'Employer AG')
+        self.assertEqual(tx.description, 'Salary July')
+        self.assertIsNone(tx.external_id)
+
+
+class ZKBEbicsTransactionTests(TestCase):
+    """get_transactions on the integration, seeded with cached raw data (no network)."""
+
+    def setUp(self):
+        self.integration = ZKBEbicsIntegration({})
+        self.integration._statements = []  # pretend the download already happened
+        self.integration._raw = CAMT053_SAMPLE
+
+    def test_supports_transactions(self):
+        self.assertTrue(self.integration.supports_transactions())
+
+    def test_get_transactions_filters_by_iban_and_range(self):
+        txs = self.integration.get_transactions(
+            'CH9300762011623852957', date(2026, 7, 28), date(2026, 7, 31),
+        )
+        self.assertEqual(len(txs), 1)
+        self.assertEqual(txs[0].external_id, 'REF-001')
+
+    def test_get_transactions_unknown_iban_is_empty(self):
+        self.assertEqual(
+            self.integration.get_transactions('CH000', date(2026, 1, 1), date(2026, 12, 31)),
+            [],
+        )
+
+    def test_get_transactions_no_download_is_empty(self):
+        self.integration._raw = None
+        self.assertEqual(
+            self.integration.get_transactions(
+                'CH9300762011623852957', date(2026, 1, 1), date(2026, 12, 31),
+            ),
+            [],
+        )
+
+
+class FinTSTransactionTests(TestCase):
+    """MT940 -> TransactionInfo mapping with a mocked python-fints client."""
+
+    def _integration(self, fints_result):
+        from brokers.integrations.fints_integration import FinTSIntegration
+        integration = FinTSIntegration({'username': 'u', 'pin': 'p'}, 'BLZ', 'https://x')
+        integration._authenticated = True
+        integration._accounts = [SimpleNamespace(iban='DE02120300000000202051')]
+        integration._client = SimpleNamespace(
+            get_transactions=lambda account, start, end: fints_result,
+        )
+        return integration
+
+    def _mt940_tx(self, **data):
+        return SimpleNamespace(data=data)
+
+    def test_maps_mt940_fields(self):
+        amount = SimpleNamespace(amount=Decimal('-42.90'), currency='EUR')
+        integration = self._integration([self._mt940_tx(
+            amount=amount, date=date(2026, 8, 2), entry_date=date(2026, 8, 1),
+            applicant_name='REWE Markt', applicant_iban='DE99',
+            purpose='Einkauf Danke', posting_text='Kartenzahlung',
+            bank_reference='BR-77', end_to_end_reference='E2E-9',
+        )])
+        txs = integration.get_transactions(
+            'DE02120300000000202051', date(2026, 8, 1), date(2026, 8, 3),
+        )
+        self.assertEqual(len(txs), 1)
+        tx = txs[0]
+        self.assertEqual(tx.amount, Decimal('-42.90'))
+        self.assertEqual(tx.currency, 'EUR')
+        self.assertEqual(tx.booking_date, date(2026, 8, 1))
+        self.assertEqual(tx.value_date, date(2026, 8, 2))
+        self.assertEqual(tx.counterparty, 'REWE Markt')
+        self.assertEqual(tx.counterparty_account, 'DE99')
+        self.assertEqual(tx.description, 'Einkauf Danke')
+        self.assertEqual(tx.external_id, 'BR-77')
+
+    def test_nonref_bank_reference_is_dropped(self):
+        amount = SimpleNamespace(amount=Decimal('10.00'), currency='EUR')
+        integration = self._integration([self._mt940_tx(
+            amount=amount, date=date(2026, 8, 2), bank_reference='NONREF',
+            posting_text='Gutschrift',
+        )])
+        tx = integration.get_transactions('DE02120300000000202051', date(2026, 8, 1), date(2026, 8, 3))[0]
+        self.assertIsNone(tx.external_id)
+        # No purpose: posting_text is the description fallback.
+        self.assertEqual(tx.description, 'Gutschrift')
+
+    def test_need_tan_response_returns_empty(self):
+        from fints.client import NeedTANResponse
+        need_tan = NeedTANResponse.__new__(NeedTANResponse)
+        integration = self._integration(need_tan)
+        self.assertEqual(
+            integration.get_transactions('DE02120300000000202051', date(2026, 8, 1), date(2026, 8, 3)),
+            [],
+        )

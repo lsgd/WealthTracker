@@ -14,6 +14,9 @@ urlpatterns = [
     # Snapshots
     path('accounts/<int:account_id>/snapshots/', views.AccountSnapshotListCreateView.as_view(), name='snapshot_list'),
     path('snapshots/<int:pk>/', views.AccountSnapshotDetailView.as_view(), name='snapshot_detail'),
+    # Transactions
+    path('accounts/<int:account_id>/transactions/', views.AccountTransactionListCreateView.as_view(), name='transaction_list'),
+    path('transactions/<int:pk>/', views.TransactionDetailView.as_view(), name='transaction_detail'),
     # Account bulk create (discover is in brokers/urls.py to avoid <str:code> catch-all)
     path('accounts/bulk/', views.BulkAccountCreateView.as_view(), name='account_bulk_create'),
     # CSV import

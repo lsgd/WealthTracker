@@ -563,3 +563,153 @@ class EbicsAccountFallbackTests(APITestCase):
         self.assertTrue(m_enqueue.called)
         account_ids = [aid for aid, _ in m_enqueue.call_args.kwargs['account_creds']]
         self.assertEqual(account_ids, [self.account.id])
+
+
+class TransactionImporterTests(TestCase):
+    """Dedup and window logic of the shared transaction importer."""
+
+    def setUp(self):
+        from brokers.integrations.base import TransactionInfo
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93',
+        )
+        self.TransactionInfo = TransactionInfo
+
+    def _fake_integration(self, infos):
+        calls = []
+
+        class Fake:
+            def supports_transactions(self):
+                return True
+
+            def get_transactions(self, identifier, start, end):
+                calls.append((identifier, start, end))
+                return infos
+
+        fake = Fake()
+        fake.calls = calls
+        return fake
+
+    def _info(self, **overrides):
+        from decimal import Decimal as D
+        defaults = dict(
+            booking_date=date(2026, 8, 1), amount=D('-12.50'), currency='CHF',
+            counterparty='Coop', description='Lunch',
+        )
+        defaults.update(overrides)
+        return self.TransactionInfo(**defaults)
+
+    def test_import_is_idempotent(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        infos = [self._info(external_id='R1'), self._info(external_id='R2')]
+        integration = self._fake_integration(infos)
+        self.assertEqual(import_account_transactions(self.account, integration), 2)
+        self.assertEqual(import_account_transactions(self.account, integration), 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+        self.assertEqual(
+            set(Transaction.objects.values_list('dedup_key', flat=True)),
+            {'ref:R1', 'ref:R2'},
+        )
+
+    def test_identical_entries_without_reference_both_survive(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        # Two identical coffee purchases on the same day, no bank reference.
+        infos = [self._info(), self._info()]
+        integration = self._fake_integration(infos)
+        self.assertEqual(import_account_transactions(self.account, integration), 2)
+        # Redelivery of the same day maps onto the same ordinal-based keys.
+        self.assertEqual(import_account_transactions(self.account, integration), 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+
+    def test_source_mapped_from_integration_type(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        import_account_transactions(self.account, self._fake_integration([self._info()]))
+        self.assertEqual(Transaction.objects.get(account=self.account).source, 'camt053')
+
+    def test_window_starts_before_latest_imported_transaction(self):
+        from datetime import timedelta
+        from portfolio.transaction_importer import (
+            OVERLAP_DAYS, import_account_transactions,
+        )
+        integration = self._fake_integration([self._info(external_id='R1')])
+        import_account_transactions(self.account, integration)
+        import_account_transactions(self.account, integration)
+        # Second run: start = newest imported booking_date - overlap.
+        _, start, _ = integration.calls[1]
+        self.assertEqual(start, date(2026, 8, 1) - timedelta(days=OVERLAP_DAYS))
+
+    def test_unsupported_integration_is_noop(self):
+        from portfolio.transaction_importer import import_account_transactions
+
+        class NoTx:
+            def supports_transactions(self):
+                return False
+
+        self.assertEqual(import_account_transactions(self.account, NoTx()), 0)
+
+
+class TransactionEndpointTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+        )
+        self.imported = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-25.50'), currency='CHF', counterparty='Migros',
+            source='camt053', dedup_key='ref:R1',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _list_url(self):
+        return reverse('transaction_list', kwargs={'account_id': self.account.id})
+
+    def test_list_transactions(self):
+        resp = self.client.get(self._list_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+    def test_list_filters_by_date_range(self):
+        resp = self.client.get(self._list_url(), {'start': '2026-08-02'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'], [])
+
+    def test_other_users_account_is_empty(self):
+        other, _, _ = make_kek_user(username='bob')
+        self.client.force_authenticate(user=other)
+        resp = self.client.get(self._list_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'], [])
+
+    def test_create_manual_transaction_defaults_currency(self):
+        from portfolio.models import Transaction
+        resp = self.client.post(self._list_url(), {
+            'booking_date': '2026-08-05', 'amount': '-9.90', 'description': 'Kiosk',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        tx = Transaction.objects.get(pk=resp.data['id'])
+        self.assertEqual(tx.source, 'manual')
+        self.assertEqual(tx.currency, 'CHF')
+        self.assertTrue(tx.dedup_key.startswith('manual:'))
+
+    def test_manual_transaction_can_be_deleted(self):
+        resp = self.client.post(self._list_url(), {
+            'booking_date': '2026-08-05', 'amount': '-1.00',
+        }, format='json')
+        detail = reverse('transaction_detail', kwargs={'pk': resp.data['id']})
+        self.assertEqual(self.client.delete(detail).status_code, 204)
+
+    def test_imported_transaction_cannot_be_modified_or_deleted(self):
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        self.assertEqual(
+            self.client.patch(detail, {'description': 'x'}, format='json').status_code, 400,
+        )
+        self.assertEqual(self.client.delete(detail).status_code, 400)

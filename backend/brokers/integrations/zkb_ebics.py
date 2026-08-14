@@ -28,6 +28,7 @@ from .base import (
     BalanceInfo,
     BrokerIntegrationBase,
     NoNewDataError,
+    TransactionInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,132 @@ def _statement_to_balance(stmt, bal) -> BalanceInfo:
     )
 
 
+def _download_raw_or_none(client, *, receipt_policy=None):
+    """``client.download(CAMT_053, ...)`` returning the raw order-data bytes, or ``None``
+    when the bank reports "no data available" (090005 — a routine empty result)."""
+    from ebicsclient import CAMT_053, ReceiptPolicy, ReturnCodeError
+
+    try:
+        return client.download(
+            CAMT_053, receipt_policy=receipt_policy or ReceiptPolicy.ACKNOWLEDGE,
+        )
+    except ReturnCodeError as e:
+        if getattr(e, 'code', None) == _EBICS_NO_DOWNLOAD_DATA_AVAILABLE:
+            logger.info('EBICS: no statement to download (090005) — treating as empty')
+            return None
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Rich camt.053 entry parsing.
+#
+# ebicsclient's Entry model stops at amount/dates/reference — no counterparty or
+# remittance info, which transaction tracking needs. The raw camt.053 XML carries
+# both (NtryDtls/TxDtls), so we keep the raw download and walk the Ntry elements
+# ourselves, reusing the library's container/document helpers so ZIP handling and
+# namespace adoption stay in one place.
+# ---------------------------------------------------------------------------
+
+def _xp(element, namespace, path):
+    """First matching descendant element for a /-separated local-name path, or None."""
+    ns = {'c': namespace}
+    return next(iter(element.findall('/'.join(f'c:{p}' for p in path.split('/')), ns)), None)
+
+
+def _xp_text(element, namespace, path):
+    found = _xp(element, namespace, path)
+    return found.text.strip() if found is not None and found.text else ''
+
+
+def _parse_entry(ntry, namespace, iban) -> TransactionInfo:
+    """Map one camt.053 ``Ntry`` element to a TransactionInfo."""
+    from ebicsclient import CreditDebit
+
+    amount_el = _xp(ntry, namespace, 'Amt')
+    amount = Decimal(amount_el.text)
+    currency = amount_el.get('Ccy', '')
+    is_debit = _xp_text(ntry, namespace, 'CdtDbtInd') == CreditDebit.DEBIT.value
+    if is_debit:
+        amount = -amount
+
+    # Sts is plain text in older camt.053 vintages, a <Cd> child in .001.08.
+    status = _xp_text(ntry, namespace, 'Sts/Cd') or _xp_text(ntry, namespace, 'Sts') or 'BOOK'
+
+    booking_date = _xp_text(ntry, namespace, 'BookgDt/Dt')
+    value_date = _xp_text(ntry, namespace, 'ValDt/Dt')
+
+    # Transaction details: counterparty and remittance info. A batch entry can carry
+    # several TxDtls; only take the parties when the entry is a single transaction.
+    ns = {'c': namespace}
+    tx_details = ntry.findall('c:NtryDtls/c:TxDtls', ns)
+    counterparty = ''
+    counterparty_account = ''
+    end_to_end_id = ''
+    remittance_parts = []
+    if len(tx_details) == 1:
+        tx = tx_details[0]
+        # The other party: creditor for money going out, debtor for money coming in.
+        side = 'Cdtr' if is_debit else 'Dbtr'
+        counterparty = (
+            _xp_text(tx, namespace, f'RltdPties/{side}/Pty/Nm')  # .001.08
+            or _xp_text(tx, namespace, f'RltdPties/{side}/Nm')  # older vintages
+        )
+        counterparty_account = _xp_text(tx, namespace, f'RltdPties/{side}Acct/Id/IBAN')
+        end_to_end_id = _xp_text(tx, namespace, 'Refs/EndToEndId')
+        remittance_parts = [
+            el.text.strip()
+            for el in tx.findall('c:RmtInf/c:Ustrd', ns)
+            if el.text and el.text.strip()
+        ]
+
+    description = ' '.join(remittance_parts) or _xp_text(ntry, namespace, 'AddtlNtryInf')
+    reference = _xp_text(ntry, namespace, 'AcctSvcrRef')
+
+    return TransactionInfo(
+        booking_date=date.fromisoformat(booking_date) if booking_date else None,
+        value_date=date.fromisoformat(value_date) if value_date else None,
+        amount=amount,
+        currency=currency,
+        counterparty=counterparty,
+        counterparty_account=counterparty_account,
+        description=description,
+        external_id=reference or None,
+        status=status,
+        raw_data={
+            'iban': iban,
+            'source': 'ebics_camt053',
+            'end_to_end_id': end_to_end_id or None,
+            'tx_details_count': len(tx_details),
+        },
+    )
+
+
+def parse_camt053_transactions(order_data: bytes) -> Dict[str, List[TransactionInfo]]:
+    """Parse raw camt.053 order data into booked transactions, keyed by IBAN.
+
+    Entries without a booking date and entries not in BOOK status are skipped —
+    the importer needs a stable date and only ever records booked movements.
+    """
+    from ebicsclient.formats import camt
+    from ebicsclient.formats.container import extract_documents
+
+    out: Dict[str, List[TransactionInfo]] = {}
+    for document in extract_documents(order_data):
+        for stmt_el, namespace in camt.document_items(
+            document, 'camt.053', 'BkToCstmrStmt', 'Stmt',
+        ):
+            iban = _xp_text(stmt_el, namespace, 'Acct/Id/IBAN')
+            if not iban:
+                continue
+            ns = {'c': namespace}
+            for ntry in stmt_el.findall('c:Ntry', ns):
+                info = _parse_entry(ntry, namespace, iban)
+                if info.booking_date is None or info.status != 'BOOK':
+                    continue
+                out.setdefault(iban, []).append(info)
+    return out
+
+
 class ZKBEbicsIntegration(BrokerIntegrationBase):
     """Download-only EBICS integration (camt.053 statements)."""
 
@@ -95,6 +222,7 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
         super().__init__(credentials)
         self._client = None
         self._statements = None  # cached list[Statement] for this instance
+        self._raw = None  # raw camt.053 order data of the same download
 
     # ---- client construction -------------------------------------------------
 
@@ -126,14 +254,23 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
         return None
 
     def _get_statements(self):
-        """HPB (verifying pinned bank keys) then download+parse camt.053, cached."""
+        """HPB (verifying pinned bank keys) then download+parse camt.053, cached.
+
+        The raw order data is kept alongside the parsed statements so
+        ``get_transactions`` can extract the entry details (counterparty, remittance
+        info) that ebicsclient's Entry model does not expose — same download, no
+        extra network call.
+        """
         if self._statements is not None:
             return self._statements
+        from ebicsclient.formats import camt053
+
         if self._client is None:
             self._client = self._build_client()
         # Fetch and pin the bank's public keys, then pull the statements.
         self._client.hpb(pinned=self._pinned_hashes())
-        self._statements = _download_statements_or_empty(self._client)
+        self._raw = _download_raw_or_none(self._client)
+        self._statements = camt053.parse(self._raw) if self._raw is not None else []
         return self._statements
 
     # ---- BrokerIntegrationBase ----------------------------------------------
@@ -222,6 +359,22 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
                 continue
             out.append(_statement_to_balance(stmt, bal))
         return out
+
+    # ---- transactions ---------------------------------------------------------
+
+    def supports_transactions(self) -> bool:
+        return True
+
+    def get_transactions(self, account_identifier, start_date, end_date):
+        """Booked entries for the IBAN from the camt.053 data of this sync's download."""
+        self._get_statements()  # ensure the raw order data is fetched (or confirmed empty)
+        if self._raw is None:
+            return []
+        by_iban = parse_camt053_transactions(self._raw)
+        return [
+            info for info in by_iban.get(account_identifier, [])
+            if start_date <= info.booking_date <= end_date
+        ]
 
 
 # ---------------------------------------------------------------------------

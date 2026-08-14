@@ -55,12 +55,14 @@ from rest_framework.views import APIView
 from core.kek_auth import KEKAuthenticationMixin
 from exchange_rates.models import ExchangeRate
 
-from .models import AccountSnapshot, FinancialAccount
+from .models import AccountSnapshot, FinancialAccount, Transaction
 from .serializers import (
     AccountSnapshotCreateSerializer,
     AccountSnapshotSerializer,
     FinancialAccountCreateSerializer,
     FinancialAccountSerializer,
+    TransactionCreateSerializer,
+    TransactionSerializer,
 )
 
 
@@ -177,6 +179,15 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 account, integration, base_currency,
             )
 
+        # Import booked transactions if supported. A transaction-import failure must
+        # never fail the balance sync that already succeeded — log and move on.
+        imported_tx_count = 0
+        try:
+            from .transaction_importer import import_account_transactions
+            imported_tx_count = import_account_transactions(account, integration)
+        except Exception:
+            logger.exception("Transaction import failed for account %s", account.id)
+
         account.status = 'active'
         account.last_sync_at = timezone.now()
         account.last_sync_error = ''
@@ -186,6 +197,8 @@ def _sync_single_account(*, account_id, credentials, base_currency):
         message = 'Sync completed' if created else 'No change (snapshot already exists)'
         if backfilled_count > 0:
             message += f' + {backfilled_count} historical snapshots backfilled'
+        if imported_tx_count > 0:
+            message += f' + {imported_tx_count} transactions imported'
 
         return {
             'status': 'success',
@@ -311,6 +324,13 @@ def _sync_all_accounts(*, account_creds, base_currency):
                 # camt.053 backlog), not just the latest — otherwise those are lost.
                 if integration.supports_historical_data():
                     _backfill_historical(account, integration, base_currency)
+
+                # Import booked transactions; a failure here must not fail the sync.
+                try:
+                    from .transaction_importer import import_account_transactions
+                    import_account_transactions(account, integration)
+                except Exception:
+                    logger.exception("Transaction import failed for account %s", account.id)
 
                 account.status = 'active'
                 account.last_sync_at = timezone.now()
@@ -842,6 +862,83 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
             snapshot.base_currency = user_profile.base_currency
             snapshot.exchange_rate_used = Decimal('1')
         snapshot.save()
+
+
+class AccountTransactionListCreateView(generics.ListCreateAPIView):
+    """List transactions for an account or create a manual one.
+
+    Optional query params: ``start`` / ``end`` (ISO dates, filter on booking_date).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return TransactionCreateSerializer
+        return TransactionSerializer
+
+    def get_queryset(self):
+        qs = Transaction.objects.filter(
+            account_id=self.kwargs['account_id'],
+            account__user=self.request.user,
+        )
+        start = self.request.query_params.get('start')
+        end = self.request.query_params.get('end')
+        if start:
+            qs = qs.filter(booking_date__gte=start)
+        if end:
+            qs = qs.filter(booking_date__lte=end)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        """Override to return full transaction data after creation."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            TransactionSerializer(serializer.instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def perform_create(self, serializer):
+        account = FinancialAccount.objects.get(
+            pk=self.kwargs['account_id'], user=self.request.user,
+        )
+        currency = serializer.validated_data.get('currency') or account.currency
+        serializer.save(account=account, currency=currency)
+
+
+class TransactionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Get, update, or delete a transaction.
+
+    Only manual transactions can be changed or deleted: imported rows mirror the
+    bank's statement, and a deleted one would simply be re-imported on the next
+    sync anyway (same dedup key).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method in ('PUT', 'PATCH'):
+            return TransactionCreateSerializer
+        return TransactionSerializer
+
+    def get_queryset(self):
+        return Transaction.objects.filter(account__user=self.request.user)
+
+    def _ensure_manual(self, transaction):
+        if transaction.source != 'manual':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'detail': 'Only manual transactions can be modified. '
+                          'Imported transactions mirror the bank statement.'
+            })
+
+    def perform_update(self, serializer):
+        self._ensure_manual(serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._ensure_manual(instance)
+        instance.delete()
 
 
 class WealthSummaryView(APIView):
