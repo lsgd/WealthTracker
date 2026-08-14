@@ -2333,11 +2333,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .spending-donut-total {
   fill: currentColor;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 600;
+  pointer-events: none;
 }
 
 .spending-donut-label {
   fill: #8b93a7;
   font-size: 0.75rem;
+  pointer-events: none;
 }

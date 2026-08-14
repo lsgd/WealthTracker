@@ -146,6 +146,11 @@ export default function SpendingPage() {
   // Month selected for the pie breakdown (bar click or dropdown); defaults to
   // the latest month of the report.
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  // Two-way hover sync between the donut and its legend rows.
+  const [hoveredSlice, setHoveredSlice] = useState<number | null>(null);
+  // Show/hide the Uncategorized bucket, separately per card.
+  const [showUncatBars, setShowUncatBars] = useState(true);
+  const [showUncatPie, setShowUncatPie] = useState(true);
 
   const chartData = useMemo(() => {
     if (!report) return [];
@@ -162,6 +167,11 @@ export default function SpendingPage() {
       ?? report.months[report.months.length - 1];
   }, [report, selectedMonth]);
 
+  // Slice indices change with the month — drop a stale highlight.
+  useEffect(() => {
+    setHoveredSlice(null);
+  }, [monthDetail]);
+
   const monthIndex = useMemo(() => {
     if (!report || !monthDetail) return -1;
     return report.months.findIndex((m) => m.month === monthDetail.month);
@@ -176,15 +186,23 @@ export default function SpendingPage() {
   const pieData = useMemo(() => {
     if (!monthDetail || !report) return [];
     // Colors follow the bar chart: index within the report's category order.
-    return Object.entries(monthDetail.by_category).map(([name, value]) => {
-      const index = report.categories.indexOf(name);
-      return {
-        name,
-        value,
-        color: index >= 0 ? COLORS[index % COLORS.length] : '#5b6270',
-      };
-    });
-  }, [monthDetail, report]);
+    return Object.entries(monthDetail.by_category)
+      .filter(([name]) => showUncatPie || name !== 'Uncategorized')
+      .map(([name, value]) => {
+        const index = report.categories.indexOf(name);
+        return {
+          name,
+          value,
+          color: index >= 0 ? COLORS[index % COLORS.length] : '#5b6270',
+        };
+      });
+  }, [monthDetail, report, showUncatPie]);
+
+  // Center total and percentages refer to what the donut actually shows.
+  const pieTotal = useMemo(
+    () => pieData.reduce((sum, entry) => sum + entry.value, 0),
+    [pieData],
+  );
 
   const avgExpenses = useMemo(() => {
     if (!report || report.months.length === 0) return 0;
@@ -334,6 +352,14 @@ export default function SpendingPage() {
                   {r}m
                 </button>
               ))}
+              <span className="spending-toolbar-gap" />
+              <button
+                className={`btn btn-sm ${showUncatBars ? 'btn-primary' : 'btn-ghost'}`}
+                title="Show or hide uncategorized spending"
+                onClick={() => setShowUncatBars((v) => !v)}
+              >
+                Uncategorized
+              </button>
             </div>
           </div>
           {report && (
@@ -359,12 +385,12 @@ export default function SpendingPage() {
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a3040' }}
                 />
                 <Legend />
-                {report?.categories.map((name, i) => (
+                {report?.categories.filter((name) => showUncatBars || name !== 'Uncategorized').map((name) => (
                   <Bar
                     key={name}
                     dataKey={name}
                     stackId="expenses"
-                    fill={COLORS[i % COLORS.length]}
+                    fill={COLORS[(report?.categories.indexOf(name) ?? 0) % COLORS.length]}
                     onClick={(data: { month?: string; payload?: { month?: string } }) => {
                       const m = data?.month ?? data?.payload?.month;
                       if (m) setSelectedMonth(m);
@@ -387,6 +413,14 @@ export default function SpendingPage() {
               )}
             </h2>
             <div className="range-buttons">
+              <button
+                className={`btn btn-sm ${showUncatPie ? 'btn-primary' : 'btn-ghost'}`}
+                title="Show or hide uncategorized spending"
+                onClick={() => setShowUncatPie((v) => !v)}
+              >
+                Uncategorized
+              </button>
+              <span className="spending-toolbar-gap" />
               <button
                 className="btn btn-sm btn-ghost"
                 title="Previous month"
@@ -427,12 +461,19 @@ export default function SpendingPage() {
                       nameKey="name"
                       cx="50%"
                       cy="50%"
-                      innerRadius={50}
-                      outerRadius={85}
+                      innerRadius={60}
+                      outerRadius={90}
                       paddingAngle={2}
+                      onMouseLeave={() => setHoveredSlice(null)}
                     >
-                      {pieData.map((entry) => (
-                        <Cell key={entry.name} fill={entry.color} />
+                      {pieData.map((entry, index) => (
+                        <Cell
+                          key={entry.name}
+                          fill={entry.color}
+                          opacity={hoveredSlice === null || hoveredSlice === index ? 1 : 0.4}
+                          style={{ cursor: 'pointer' }}
+                          onMouseEnter={() => setHoveredSlice(index)}
+                        />
                       ))}
                     </Pie>
                     <text
@@ -441,7 +482,7 @@ export default function SpendingPage() {
                     >
                       {new Intl.NumberFormat('de-CH', {
                         style: 'currency', currency, maximumFractionDigits: 0,
-                      }).format(monthDetail.expenses)}
+                      }).format(pieTotal)}
                     </text>
                     <text
                       x="50%" y="57%" textAnchor="middle" dominantBaseline="middle"
@@ -453,8 +494,14 @@ export default function SpendingPage() {
                 </ResponsiveContainer>
               </div>
               <div className="breakdown-legend">
-                {pieData.map((entry) => (
-                  <div key={entry.name} className="breakdown-legend-item">
+                {pieData.map((entry, index) => (
+                  <div
+                    key={entry.name}
+                    className={`breakdown-legend-item ${hoveredSlice === index ? 'highlighted' : ''} ${hoveredSlice !== null && hoveredSlice !== index ? 'dimmed' : ''}`}
+                    onMouseEnter={() => setHoveredSlice(index)}
+                    onMouseLeave={() => setHoveredSlice(null)}
+                    onClick={() => setHoveredSlice(index)}
+                  >
                     <span
                       className="breakdown-legend-color"
                       style={{ backgroundColor: entry.color }}
@@ -464,9 +511,7 @@ export default function SpendingPage() {
                       {formatAmount(entry.value, currency)}
                     </span>
                     <span className="breakdown-legend-pct">
-                      {monthDetail.expenses > 0
-                        ? ((entry.value / monthDetail.expenses) * 100).toFixed(1)
-                        : '0.0'}%
+                      {pieTotal > 0 ? ((entry.value / pieTotal) * 100).toFixed(1) : '0.0'}%
                     </span>
                   </div>
                 ))}
