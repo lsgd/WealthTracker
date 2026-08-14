@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { LogOut, Settings, TrendingUp, Info, Landmark } from 'lucide-react';
+import { LogOut, Settings, TrendingUp, Info, Landmark, ReceiptText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -20,6 +20,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {user && (
             <>
               <span className="header-user">{displayName}</span>
+              <Link to="/spending" className="btn btn-ghost" title="Spending">
+                <ReceiptText size={18} />
+              </Link>
               <Link to="/ebics" className="btn btn-ghost" title="EBICS bank connections">
                 <Landmark size={18} />
               </Link>

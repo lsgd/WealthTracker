@@ -17,6 +17,13 @@ urlpatterns = [
     # Transactions
     path('accounts/<int:account_id>/transactions/', views.AccountTransactionListCreateView.as_view(), name='transaction_list'),
     path('transactions/<int:pk>/', views.TransactionDetailView.as_view(), name='transaction_detail'),
+    # Spending insight: categories, rules, transfer detection, monthly report
+    path('spending/categories/', views.TransactionCategoryListCreateView.as_view(), name='category_list'),
+    path('spending/categories/<int:pk>/', views.TransactionCategoryDetailView.as_view(), name='category_detail'),
+    path('spending/rules/', views.CategoryRuleListCreateView.as_view(), name='rule_list'),
+    path('spending/rules/<int:pk>/', views.CategoryRuleDetailView.as_view(), name='rule_detail'),
+    path('spending/detect-transfers/', views.DetectTransfersView.as_view(), name='detect_transfers'),
+    path('spending/monthly/', views.SpendingMonthlyView.as_view(), name='spending_monthly'),
     # Account bulk create (discover is in brokers/urls.py to avoid <str:code> catch-all)
     path('accounts/bulk/', views.BulkAccountCreateView.as_view(), name='account_bulk_create'),
     # CSV import

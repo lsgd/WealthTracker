@@ -1,6 +1,25 @@
 from django.contrib import admin
 
-from .models import AccountSnapshot, FinancialAccount, PortfolioPosition, Transaction
+from .models import (
+    AccountSnapshot,
+    CategoryRule,
+    FinancialAccount,
+    PortfolioPosition,
+    Transaction,
+    TransactionCategory,
+)
+
+
+@admin.register(TransactionCategory)
+class TransactionCategoryAdmin(admin.ModelAdmin):
+    list_display = ['name', 'user']
+    search_fields = ['name', 'user__username']
+
+
+@admin.register(CategoryRule)
+class CategoryRuleAdmin(admin.ModelAdmin):
+    list_display = ['match_text', 'category', 'spread_months', 'user']
+    search_fields = ['match_text', 'category__name', 'user__username']
 
 
 @admin.register(FinancialAccount)

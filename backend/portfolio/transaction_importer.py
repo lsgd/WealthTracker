@@ -122,4 +122,12 @@ def import_account_transactions(account, integration) -> int:
         'Imported %d new transactions for %s (%d fetched, %s to %s)',
         created_count, account.name, len(infos), start_date, end_date,
     )
+
+    # Classify what just arrived: category rules + transfer pairing. Both are
+    # idempotent and skip user-overridden rows.
+    if created_count:
+        from .classification import apply_rules, detect_transfers
+        apply_rules(account.user)
+        detect_transfers(account.user)
+
     return created_count

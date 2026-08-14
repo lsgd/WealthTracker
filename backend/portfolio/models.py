@@ -181,6 +181,67 @@ class AccountSnapshot(models.Model):
         return f"{self.account.name} - {self.balance} {self.currency} ({self.snapshot_date})"
 
 
+class TransactionCategory(models.Model):
+    """A user-defined spending category (flat list, e.g. Rent, Groceries)."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='transaction_categories'
+    )
+    name = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'transaction_categories'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'name'],
+                name='uniq_category_name_per_user',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class CategoryRule(models.Model):
+    """Auto-categorization rule: substring match against counterparty/description.
+
+    Applied at import time and retroactively — but never over a user's manual
+    choice (``Transaction.category_manual``). ``spread_months`` > 1 additionally
+    marks matches for amortization (e.g. a yearly insurance bill spread over 12).
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='category_rules'
+    )
+    match_text = models.CharField(
+        max_length=128,
+        help_text='Case-insensitive substring matched against counterparty and description'
+    )
+    category = models.ForeignKey(
+        TransactionCategory,
+        on_delete=models.CASCADE,
+        related_name='rules'
+    )
+    spread_months = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Spread matched transactions over this many months (1 = no spread)'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'category_rules'
+        ordering = ['id']
+
+    def __str__(self):
+        return f"'{self.match_text}' -> {self.category.name}"
+
+
 class Transaction(models.Model):
     """A single booking entry (bank transaction) on an account.
 
@@ -233,6 +294,40 @@ class Transaction(models.Model):
         blank=True,
         default='',
         help_text='Remittance info / purpose text'
+    )
+
+    # Classification (spending insight). ``*_manual`` flags make user overrides
+    # sticky: rule application and transfer detection never touch flagged rows.
+    category = models.ForeignKey(
+        TransactionCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transactions'
+    )
+    category_manual = models.BooleanField(
+        default=False,
+        help_text='Category was set by the user; rules must not overwrite it'
+    )
+    spread_months = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Amortize over this many months in the normalized spending view'
+    )
+    is_transfer = models.BooleanField(
+        default=False,
+        help_text='Transfer between own accounts; excluded from spending'
+    )
+    transfer_manual = models.BooleanField(
+        default=False,
+        help_text='Transfer flag was set by the user; detection must not change it'
+    )
+    transfer_peer = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        help_text='Matching opposite entry on the other own account, if identified'
     )
 
     source = models.CharField(max_length=20, choices=SOURCES, default='manual')

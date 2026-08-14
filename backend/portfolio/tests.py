@@ -707,9 +707,198 @@ class TransactionEndpointTests(APITestCase):
         detail = reverse('transaction_detail', kwargs={'pk': resp.data['id']})
         self.assertEqual(self.client.delete(detail).status_code, 204)
 
-    def test_imported_transaction_cannot_be_modified_or_deleted(self):
+    def test_imported_transaction_financials_immutable_and_undeletable(self):
+        # Classification PATCHes are allowed on imported rows; the bank's own
+        # fields are read-only (silently ignored), and deletion is rejected.
         detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
-        self.assertEqual(
-            self.client.patch(detail, {'description': 'x'}, format='json').status_code, 400,
-        )
+        resp = self.client.patch(detail, {'description': 'x'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.description, '')
         self.assertEqual(self.client.delete(detail).status_code, 400)
+
+
+class ClassificationTests(TestCase):
+    """Category rules and transfer detection."""
+
+    def setUp(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.checking = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH-GIRO',
+        )
+        self.savings = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Sparen', currency='CHF',
+            account_identifier='CH-SPAR',
+        )
+        self.groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.insurance = TransactionCategory.objects.create(user=self.user, name='Insurance')
+        CategoryRule.objects.create(user=self.user, match_text='migros', category=self.groceries)
+        CategoryRule.objects.create(
+            user=self.user, match_text='axa', category=self.insurance, spread_months=12,
+        )
+
+    def _tx(self, account=None, **kwargs):
+        from portfolio.models import Transaction
+        defaults = dict(
+            account=account or self.checking, booking_date=date(2026, 8, 1),
+            amount=Decimal('-50'), currency='CHF', source='camt053',
+        )
+        defaults.update(kwargs)
+        defaults.setdefault('dedup_key', f"t-{len(Transaction.objects.all())}-{kwargs}")
+        return Transaction.objects.create(**defaults)
+
+    def test_rules_match_case_insensitive_and_set_spread(self):
+        from portfolio.classification import apply_rules
+        grocery_tx = self._tx(counterparty='MIGROS Zuerich')
+        insurance_tx = self._tx(description='AXA Jahresrechnung')
+        self.assertEqual(apply_rules(self.user), 2)
+        grocery_tx.refresh_from_db()
+        insurance_tx.refresh_from_db()
+        self.assertEqual(grocery_tx.category, self.groceries)
+        self.assertEqual(grocery_tx.spread_months, 1)
+        self.assertEqual(insurance_tx.category, self.insurance)
+        self.assertEqual(insurance_tx.spread_months, 12)
+
+    def test_rules_respect_manual_category(self):
+        from portfolio.classification import apply_rules
+        tx = self._tx(counterparty='Migros', category=self.insurance, category_manual=True)
+        # Also uncategorized-but-manually-cleared rows stay untouched.
+        cleared = self._tx(counterparty='Migros', category=None, category_manual=True)
+        self.assertEqual(apply_rules(self.user), 0)
+        tx.refresh_from_db()
+        self.assertEqual(tx.category, self.insurance)
+        cleared.refresh_from_db()
+        self.assertIsNone(cleared.category)
+
+    def test_transfer_pairing_across_accounts(self):
+        from portfolio.classification import detect_transfers
+        out_tx = self._tx(amount=Decimal('-500'), booking_date=date(2026, 8, 26))
+        in_tx = self._tx(
+            account=self.savings, amount=Decimal('500'), booking_date=date(2026, 8, 27),
+        )
+        unrelated = self._tx(amount=Decimal('-77'), counterparty='Shop')
+        self.assertEqual(detect_transfers(self.user), 2)
+        out_tx.refresh_from_db(); in_tx.refresh_from_db(); unrelated.refresh_from_db()
+        self.assertTrue(out_tx.is_transfer)
+        self.assertEqual(out_tx.transfer_peer_id, in_tx.id)
+        self.assertTrue(in_tx.is_transfer)
+        self.assertFalse(unrelated.is_transfer)
+
+    def test_transfer_by_own_iban(self):
+        from portfolio.classification import detect_transfers
+        tx = self._tx(amount=Decimal('-300'), counterparty_account='CH-SPAR')
+        self.assertEqual(detect_transfers(self.user), 1)
+        tx.refresh_from_db()
+        self.assertTrue(tx.is_transfer)
+
+    def test_transfer_detection_respects_manual_flag(self):
+        from portfolio.classification import detect_transfers
+        self._tx(amount=Decimal('-500'), transfer_manual=True)
+        self._tx(account=self.savings, amount=Decimal('500'))
+        self.assertEqual(detect_transfers(self.user), 0)
+
+
+class SpendingReportTests(TestCase):
+    def setUp(self):
+        from portfolio.models import TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.user.profile.base_currency = 'EUR'
+        self.user.profile.save()
+        self.groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+
+    def _tx(self, **kwargs):
+        from portfolio.models import Transaction
+        defaults = dict(
+            account=self.account, booking_date=date.today().replace(day=1),
+            amount=Decimal('-100'), currency='EUR', source='camt053',
+        )
+        defaults.update(kwargs)
+        defaults.setdefault('dedup_key', f"t-{Transaction.objects.count()}")
+        return Transaction.objects.create(**defaults)
+
+    def test_actual_vs_normalized_amortization(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-1200'), spread_months=12, category=self.groceries)
+        self._tx(amount=Decimal('1000'))
+
+        actual = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(actual['months'][-1]['expenses'], 1200.0)
+        self.assertEqual(actual['months'][-1]['income'], 1000.0)
+
+        normalized = monthly_spending(self.user, months=1, mode='normalized')
+        self.assertEqual(normalized['months'][-1]['expenses'], 100.0)
+        self.assertEqual(normalized['months'][-1]['by_category'], {'Groceries': 100.0})
+
+    def test_transfers_are_excluded(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-500'), is_transfer=True)
+        self._tx(amount=Decimal('-40'))
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['expenses'], 40.0)
+
+    def test_uncategorized_bucket(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-25'))
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['by_category'], {'Uncategorized': 25.0})
+
+
+class ClassificationApiTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction, TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+        )
+        self.category = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.imported = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-25.50'), currency='CHF', counterparty='Migros',
+            source='camt053', dedup_key='ref:R1',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_classify_imported_transaction(self):
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'category': self.category.id}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['category_name'], 'Groceries')
+        self.imported.refresh_from_db()
+        self.assertTrue(self.imported.category_manual)
+
+    def test_imported_financial_fields_stay_readonly(self):
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'amount': '-1.00'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.amount, Decimal('-25.50'))
+
+    def test_cannot_use_other_users_category(self):
+        from portfolio.models import TransactionCategory
+        other, _, _ = make_kek_user(username='bob')
+        foreign = TransactionCategory.objects.create(user=other, name='Theirs')
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'category': foreign.id}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rule_create_applies_retroactively(self):
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'migros', 'category': self.category.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.category, self.category)
+
+    def test_monthly_report_endpoint(self):
+        resp = self.client.get(reverse('spending_monthly'), {'months': 2, 'mode': 'actual'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data['months']), 2)
+        self.assertEqual(resp.data['base_currency'], self.user.profile.base_currency)

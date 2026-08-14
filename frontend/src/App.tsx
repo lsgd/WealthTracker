@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
+import SpendingPage from './pages/SpendingPage'
 import EbicsPage from './pages/EbicsPage'
 import ImprintPage from './pages/ImprintPage'
 
@@ -32,6 +33,14 @@ function App() {
           element={
             <ProtectedRoute>
               <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/spending"
+          element={
+            <ProtectedRoute>
+              <SpendingPage />
             </ProtectedRoute>
           }
         />

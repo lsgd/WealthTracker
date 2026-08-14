@@ -784,6 +784,142 @@ export async function importCSV(
   return data;
 }
 
+// Spending / transactions API
+
+export interface TransactionCategory {
+  id: number;
+  name: string;
+}
+
+export interface CategoryRule {
+  id: number;
+  match_text: string;
+  category: number;
+  category_name: string;
+  spread_months: number;
+}
+
+export interface Transaction {
+  id: number;
+  account: number;
+  booking_date: string;
+  value_date: string | null;
+  amount: string;
+  currency: string;
+  counterparty: string;
+  counterparty_account: string;
+  description: string;
+  source: string;
+  external_id: string;
+  category: number | null;
+  category_name: string | null;
+  spread_months: number;
+  is_transfer: boolean;
+  created_at: string;
+}
+
+export interface SpendingMonth {
+  month: string;
+  income: number;
+  expenses: number;
+  net: number;
+  by_category: Record<string, number>;
+}
+
+export interface SpendingReport {
+  mode: 'normalized' | 'actual';
+  base_currency: string;
+  categories: string[];
+  months: SpendingMonth[];
+}
+
+export async function getSpendingMonthly(
+  months: number,
+  mode: 'normalized' | 'actual',
+): Promise<SpendingReport> {
+  const res = await fetchWithAuth(`/api/spending/monthly/?months=${months}&mode=${mode}`);
+  if (!res.ok) throw new Error('Failed to fetch spending report');
+  return res.json();
+}
+
+export async function getCategories(): Promise<TransactionCategory[]> {
+  const res = await fetchWithAuth('/api/spending/categories/');
+  if (!res.ok) throw new Error('Failed to fetch categories');
+  return unwrapResults<TransactionCategory>(await res.json());
+}
+
+export async function createCategory(name: string): Promise<TransactionCategory> {
+  const res = await fetchWithAuth('/api/spending/categories/', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(Object.values(data).flat().join(' ') || 'Failed to create category');
+  }
+  return data;
+}
+
+export async function getCategoryRules(): Promise<CategoryRule[]> {
+  const res = await fetchWithAuth('/api/spending/rules/');
+  if (!res.ok) throw new Error('Failed to fetch rules');
+  return unwrapResults<CategoryRule>(await res.json());
+}
+
+// Creating a rule also applies it retroactively to uncategorized transactions.
+export async function createCategoryRule(fields: {
+  match_text: string;
+  category: number;
+  spread_months?: number;
+}): Promise<CategoryRule> {
+  const res = await fetchWithAuth('/api/spending/rules/', {
+    method: 'POST',
+    body: JSON.stringify(fields),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(Object.values(data).flat().join(' ') || 'Failed to create rule');
+  }
+  return data;
+}
+
+export async function deleteCategoryRule(ruleId: number): Promise<void> {
+  const res = await fetchWithAuth(`/api/spending/rules/${ruleId}/`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) throw new Error('Failed to delete rule');
+}
+
+export async function getAccountTransactions(
+  accountId: number,
+  page = 1,
+): Promise<{ count: number; results: Transaction[] }> {
+  const url = `/api/accounts/${accountId}/transactions/${page > 1 ? `?page=${page}` : ''}`;
+  const res = await fetchWithAuth(url);
+  if (!res.ok) throw new Error('Failed to fetch transactions');
+  return res.json();
+}
+
+// Classification updates are allowed on every transaction (incl. imported).
+export async function classifyTransaction(
+  transactionId: number,
+  fields: { category?: number | null; spread_months?: number; is_transfer?: boolean },
+): Promise<Transaction> {
+  const res = await fetchWithAuth(`/api/transactions/${transactionId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(Object.values(data).flat().join(' ') || 'Failed to update transaction');
+  }
+  return data;
+}
+
+export async function detectTransfers(): Promise<{ marked: number }> {
+  const res = await fetchWithAuth('/api/spending/detect-transfers/', { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to detect transfers');
+  return res.json();
+}
+
 // Profile API
 export async function getProfile() {
   const res = await fetchWithAuth('/api/profile/');

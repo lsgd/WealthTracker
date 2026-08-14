@@ -55,12 +55,22 @@ from rest_framework.views import APIView
 from core.kek_auth import KEKAuthenticationMixin
 from exchange_rates.models import ExchangeRate
 
-from .models import AccountSnapshot, FinancialAccount, Transaction
+from .models import (
+    AccountSnapshot,
+    CategoryRule,
+    FinancialAccount,
+    Transaction,
+    TransactionCategory,
+)
 from .serializers import (
     AccountSnapshotCreateSerializer,
     AccountSnapshotSerializer,
+    CategoryRuleSerializer,
     FinancialAccountCreateSerializer,
     FinancialAccountSerializer,
+    ManualTransactionUpdateSerializer,
+    TransactionCategorySerializer,
+    TransactionClassificationSerializer,
     TransactionCreateSerializer,
     TransactionSerializer,
 )
@@ -910,35 +920,113 @@ class AccountTransactionListCreateView(generics.ListCreateAPIView):
 class TransactionDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Get, update, or delete a transaction.
 
-    Only manual transactions can be changed or deleted: imported rows mirror the
-    bank's statement, and a deleted one would simply be re-imported on the next
-    sync anyway (same dedup key).
+    Imported rows mirror the bank's statement: their financial fields are
+    read-only and they cannot be deleted (they would be re-imported on the next
+    sync anyway) — but their *classification* (category, spread, transfer flag)
+    is always the user's to change. Manual transactions are fully editable.
     """
     permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
         if self.request.method in ('PUT', 'PATCH'):
-            return TransactionCreateSerializer
+            if self.get_object().source == 'manual':
+                return ManualTransactionUpdateSerializer
+            return TransactionClassificationSerializer
         return TransactionSerializer
 
     def get_queryset(self):
         return Transaction.objects.filter(account__user=self.request.user)
 
-    def _ensure_manual(self, transaction):
-        if transaction.source != 'manual':
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError({
-                'detail': 'Only manual transactions can be modified. '
-                          'Imported transactions mirror the bank statement.'
-            })
-
-    def perform_update(self, serializer):
-        self._ensure_manual(serializer.instance)
-        serializer.save()
+    def update(self, request, *args, **kwargs):
+        """Override to return the full transaction after a partial update."""
+        super().update(request, *args, **kwargs)
+        return Response(TransactionSerializer(self.get_object()).data)
 
     def perform_destroy(self, instance):
-        self._ensure_manual(instance)
+        if instance.source != 'manual':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'detail': 'Only manual transactions can be deleted. '
+                          'Imported transactions mirror the bank statement.'
+            })
         instance.delete()
+
+
+class TransactionCategoryListCreateView(generics.ListCreateAPIView):
+    """List or create the user's spending categories."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionCategorySerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return TransactionCategory.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class TransactionCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionCategorySerializer
+
+    def get_queryset(self):
+        return TransactionCategory.objects.filter(user=self.request.user)
+
+
+class CategoryRuleListCreateView(generics.ListCreateAPIView):
+    """List or create category rules. Creating a rule applies it retroactively
+    to all still-uncategorized transactions."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = CategoryRuleSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return CategoryRule.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+        from .classification import apply_rules
+        apply_rules(self.request.user)
+
+
+class CategoryRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CategoryRuleSerializer
+
+    def get_queryset(self):
+        return CategoryRule.objects.filter(user=self.request.user)
+
+
+class DetectTransfersView(APIView):
+    """Re-run transfer detection across all of the user's accounts."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .classification import detect_transfers
+        marked = detect_transfers(request.user)
+        return Response({'status': 'success', 'marked': marked})
+
+
+class SpendingMonthlyView(APIView):
+    """Month-to-month spending report.
+
+    Query params: ``months`` (default 12, max 60), ``mode`` (``normalized`` |
+    ``actual``, default ``normalized``).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .spending import monthly_spending
+
+        try:
+            months = min(max(int(request.query_params.get('months', 12)), 1), 60)
+        except ValueError:
+            months = 12
+        mode = request.query_params.get('mode', 'normalized')
+        if mode not in ('normalized', 'actual'):
+            mode = 'normalized'
+
+        return Response(monthly_spending(request.user, months=months, mode=mode))
 
 
 class WealthSummaryView(APIView):
