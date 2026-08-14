@@ -33,10 +33,14 @@ import {
   getSpendingMonthly,
 } from '../api/client';
 
+// Category palette. Deliberately does NOT contain INCOME_COLOR so the income
+// line never shares its color with a category.
 const COLORS = [
-  '#4f8cff', '#34d399', '#fbbf24', '#f87171',
+  '#4f8cff', '#a3e635', '#fbbf24', '#f87171',
   '#a78bfa', '#fb923c', '#38bdf8', '#e879f9',
 ];
+
+const INCOME_COLOR = '#34d399';
 
 const MODES = [
   { label: 'Normalized', value: 'normalized' as const },
@@ -332,6 +336,10 @@ export default function SpendingPage() {
                 <Tooltip
                   formatter={(value: number | string, name: string) =>
                     [formatAmount(Number(value), currency), name]}
+                  // Income first, then categories in report order (largest total first).
+                  itemSorter={(item) => (item.name === 'Income'
+                    ? -1
+                    : report?.categories.indexOf(String(item.name)) ?? 0)}
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a3040' }}
                 />
                 <Legend />
@@ -348,7 +356,7 @@ export default function SpendingPage() {
                     style={{ cursor: 'pointer' }}
                   />
                 ))}
-                <Line dataKey="Income" stroke="#34d399" strokeWidth={2} dot={false} />
+                <Line dataKey="Income" stroke={INCOME_COLOR} strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
