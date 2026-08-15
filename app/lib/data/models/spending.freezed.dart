@@ -1,0 +1,579 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+// coverage:ignore-file
+// ignore_for_file: type=lint
+// ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
+
+part of 'spending.dart';
+
+// **************************************************************************
+// FreezedGenerator
+// **************************************************************************
+
+// dart format off
+T _$identity<T>(T value) => value;
+
+/// @nodoc
+mixin _$SpendingMonth {
+
+ String get month; double get income; double get expenses; double get net;@JsonKey(name: 'by_category') Map<String, double> get byCategory;
+/// Create a copy of SpendingMonth
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SpendingMonthCopyWith<SpendingMonth> get copyWith => _$SpendingMonthCopyWithImpl<SpendingMonth>(this as SpendingMonth, _$identity);
+
+  /// Serializes this SpendingMonth to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SpendingMonth&&(identical(other.month, month) || other.month == month)&&(identical(other.income, income) || other.income == income)&&(identical(other.expenses, expenses) || other.expenses == expenses)&&(identical(other.net, net) || other.net == net)&&const DeepCollectionEquality().equals(other.byCategory, byCategory));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,month,income,expenses,net,const DeepCollectionEquality().hash(byCategory));
+
+@override
+String toString() {
+  return 'SpendingMonth(month: $month, income: $income, expenses: $expenses, net: $net, byCategory: $byCategory)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SpendingMonthCopyWith<$Res>  {
+  factory $SpendingMonthCopyWith(SpendingMonth value, $Res Function(SpendingMonth) _then) = _$SpendingMonthCopyWithImpl;
+@useResult
+$Res call({
+ String month, double income, double expenses, double net,@JsonKey(name: 'by_category') Map<String, double> byCategory
+});
+
+
+
+
+}
+/// @nodoc
+class _$SpendingMonthCopyWithImpl<$Res>
+    implements $SpendingMonthCopyWith<$Res> {
+  _$SpendingMonthCopyWithImpl(this._self, this._then);
+
+  final SpendingMonth _self;
+  final $Res Function(SpendingMonth) _then;
+
+/// Create a copy of SpendingMonth
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? month = null,Object? income = null,Object? expenses = null,Object? net = null,Object? byCategory = null,}) {
+  return _then(_self.copyWith(
+month: null == month ? _self.month : month // ignore: cast_nullable_to_non_nullable
+as String,income: null == income ? _self.income : income // ignore: cast_nullable_to_non_nullable
+as double,expenses: null == expenses ? _self.expenses : expenses // ignore: cast_nullable_to_non_nullable
+as double,net: null == net ? _self.net : net // ignore: cast_nullable_to_non_nullable
+as double,byCategory: null == byCategory ? _self.byCategory : byCategory // ignore: cast_nullable_to_non_nullable
+as Map<String, double>,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SpendingMonth].
+extension SpendingMonthPatterns on SpendingMonth {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SpendingMonth value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SpendingMonth() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SpendingMonth value)  $default,){
+final _that = this;
+switch (_that) {
+case _SpendingMonth():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SpendingMonth value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SpendingMonth() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String month,  double income,  double expenses,  double net, @JsonKey(name: 'by_category')  Map<String, double> byCategory)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SpendingMonth() when $default != null:
+return $default(_that.month,_that.income,_that.expenses,_that.net,_that.byCategory);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String month,  double income,  double expenses,  double net, @JsonKey(name: 'by_category')  Map<String, double> byCategory)  $default,) {final _that = this;
+switch (_that) {
+case _SpendingMonth():
+return $default(_that.month,_that.income,_that.expenses,_that.net,_that.byCategory);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String month,  double income,  double expenses,  double net, @JsonKey(name: 'by_category')  Map<String, double> byCategory)?  $default,) {final _that = this;
+switch (_that) {
+case _SpendingMonth() when $default != null:
+return $default(_that.month,_that.income,_that.expenses,_that.net,_that.byCategory);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SpendingMonth implements SpendingMonth {
+  const _SpendingMonth({required this.month, required this.income, required this.expenses, required this.net, @JsonKey(name: 'by_category') final  Map<String, double> byCategory = const <String, double>{}}): _byCategory = byCategory;
+  factory _SpendingMonth.fromJson(Map<String, dynamic> json) => _$SpendingMonthFromJson(json);
+
+@override final  String month;
+@override final  double income;
+@override final  double expenses;
+@override final  double net;
+ final  Map<String, double> _byCategory;
+@override@JsonKey(name: 'by_category') Map<String, double> get byCategory {
+  if (_byCategory is EqualUnmodifiableMapView) return _byCategory;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(_byCategory);
+}
+
+
+/// Create a copy of SpendingMonth
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SpendingMonthCopyWith<_SpendingMonth> get copyWith => __$SpendingMonthCopyWithImpl<_SpendingMonth>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SpendingMonthToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SpendingMonth&&(identical(other.month, month) || other.month == month)&&(identical(other.income, income) || other.income == income)&&(identical(other.expenses, expenses) || other.expenses == expenses)&&(identical(other.net, net) || other.net == net)&&const DeepCollectionEquality().equals(other._byCategory, _byCategory));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,month,income,expenses,net,const DeepCollectionEquality().hash(_byCategory));
+
+@override
+String toString() {
+  return 'SpendingMonth(month: $month, income: $income, expenses: $expenses, net: $net, byCategory: $byCategory)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SpendingMonthCopyWith<$Res> implements $SpendingMonthCopyWith<$Res> {
+  factory _$SpendingMonthCopyWith(_SpendingMonth value, $Res Function(_SpendingMonth) _then) = __$SpendingMonthCopyWithImpl;
+@override @useResult
+$Res call({
+ String month, double income, double expenses, double net,@JsonKey(name: 'by_category') Map<String, double> byCategory
+});
+
+
+
+
+}
+/// @nodoc
+class __$SpendingMonthCopyWithImpl<$Res>
+    implements _$SpendingMonthCopyWith<$Res> {
+  __$SpendingMonthCopyWithImpl(this._self, this._then);
+
+  final _SpendingMonth _self;
+  final $Res Function(_SpendingMonth) _then;
+
+/// Create a copy of SpendingMonth
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? month = null,Object? income = null,Object? expenses = null,Object? net = null,Object? byCategory = null,}) {
+  return _then(_SpendingMonth(
+month: null == month ? _self.month : month // ignore: cast_nullable_to_non_nullable
+as String,income: null == income ? _self.income : income // ignore: cast_nullable_to_non_nullable
+as double,expenses: null == expenses ? _self.expenses : expenses // ignore: cast_nullable_to_non_nullable
+as double,net: null == net ? _self.net : net // ignore: cast_nullable_to_non_nullable
+as double,byCategory: null == byCategory ? _self._byCategory : byCategory // ignore: cast_nullable_to_non_nullable
+as Map<String, double>,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$SpendingReport {
+
+ String get mode;@JsonKey(name: 'base_currency') String get baseCurrency; List<String> get categories; List<SpendingMonth> get months;
+/// Create a copy of SpendingReport
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SpendingReportCopyWith<SpendingReport> get copyWith => _$SpendingReportCopyWithImpl<SpendingReport>(this as SpendingReport, _$identity);
+
+  /// Serializes this SpendingReport to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&const DeepCollectionEquality().equals(other.categories, categories)&&const DeepCollectionEquality().equals(other.months, months));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,mode,baseCurrency,const DeepCollectionEquality().hash(categories),const DeepCollectionEquality().hash(months));
+
+@override
+String toString() {
+  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, categories: $categories, months: $months)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SpendingReportCopyWith<$Res>  {
+  factory $SpendingReportCopyWith(SpendingReport value, $Res Function(SpendingReport) _then) = _$SpendingReportCopyWithImpl;
+@useResult
+$Res call({
+ String mode,@JsonKey(name: 'base_currency') String baseCurrency, List<String> categories, List<SpendingMonth> months
+});
+
+
+
+
+}
+/// @nodoc
+class _$SpendingReportCopyWithImpl<$Res>
+    implements $SpendingReportCopyWith<$Res> {
+  _$SpendingReportCopyWithImpl(this._self, this._then);
+
+  final SpendingReport _self;
+  final $Res Function(SpendingReport) _then;
+
+/// Create a copy of SpendingReport
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? mode = null,Object? baseCurrency = null,Object? categories = null,Object? months = null,}) {
+  return _then(_self.copyWith(
+mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
+as String,baseCurrency: null == baseCurrency ? _self.baseCurrency : baseCurrency // ignore: cast_nullable_to_non_nullable
+as String,categories: null == categories ? _self.categories : categories // ignore: cast_nullable_to_non_nullable
+as List<String>,months: null == months ? _self.months : months // ignore: cast_nullable_to_non_nullable
+as List<SpendingMonth>,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SpendingReport].
+extension SpendingReportPatterns on SpendingReport {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SpendingReport value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SpendingReport() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SpendingReport value)  $default,){
+final _that = this;
+switch (_that) {
+case _SpendingReport():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SpendingReport value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SpendingReport() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SpendingReport() when $default != null:
+return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)  $default,) {final _that = this;
+switch (_that) {
+case _SpendingReport():
+return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)?  $default,) {final _that = this;
+switch (_that) {
+case _SpendingReport() when $default != null:
+return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SpendingReport implements SpendingReport {
+  const _SpendingReport({required this.mode, @JsonKey(name: 'base_currency') required this.baseCurrency, final  List<String> categories = const <String>[], final  List<SpendingMonth> months = const <SpendingMonth>[]}): _categories = categories,_months = months;
+  factory _SpendingReport.fromJson(Map<String, dynamic> json) => _$SpendingReportFromJson(json);
+
+@override final  String mode;
+@override@JsonKey(name: 'base_currency') final  String baseCurrency;
+ final  List<String> _categories;
+@override@JsonKey() List<String> get categories {
+  if (_categories is EqualUnmodifiableListView) return _categories;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_categories);
+}
+
+ final  List<SpendingMonth> _months;
+@override@JsonKey() List<SpendingMonth> get months {
+  if (_months is EqualUnmodifiableListView) return _months;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_months);
+}
+
+
+/// Create a copy of SpendingReport
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SpendingReportCopyWith<_SpendingReport> get copyWith => __$SpendingReportCopyWithImpl<_SpendingReport>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SpendingReportToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&const DeepCollectionEquality().equals(other._categories, _categories)&&const DeepCollectionEquality().equals(other._months, _months));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,mode,baseCurrency,const DeepCollectionEquality().hash(_categories),const DeepCollectionEquality().hash(_months));
+
+@override
+String toString() {
+  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, categories: $categories, months: $months)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SpendingReportCopyWith<$Res> implements $SpendingReportCopyWith<$Res> {
+  factory _$SpendingReportCopyWith(_SpendingReport value, $Res Function(_SpendingReport) _then) = __$SpendingReportCopyWithImpl;
+@override @useResult
+$Res call({
+ String mode,@JsonKey(name: 'base_currency') String baseCurrency, List<String> categories, List<SpendingMonth> months
+});
+
+
+
+
+}
+/// @nodoc
+class __$SpendingReportCopyWithImpl<$Res>
+    implements _$SpendingReportCopyWith<$Res> {
+  __$SpendingReportCopyWithImpl(this._self, this._then);
+
+  final _SpendingReport _self;
+  final $Res Function(_SpendingReport) _then;
+
+/// Create a copy of SpendingReport
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? mode = null,Object? baseCurrency = null,Object? categories = null,Object? months = null,}) {
+  return _then(_SpendingReport(
+mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
+as String,baseCurrency: null == baseCurrency ? _self.baseCurrency : baseCurrency // ignore: cast_nullable_to_non_nullable
+as String,categories: null == categories ? _self._categories : categories // ignore: cast_nullable_to_non_nullable
+as List<String>,months: null == months ? _self._months : months // ignore: cast_nullable_to_non_nullable
+as List<SpendingMonth>,
+  ));
+}
+
+
+}
+
+// dart format on
