@@ -1058,3 +1058,96 @@ class AiEndpointTests(APITestCase):
         self.assertEqual(resp.data['assigned'], 0)
         foreign_tx.refresh_from_db()
         self.assertIsNone(foreign_tx.category)
+
+
+class TransactionBackfillTests(APITestCase):
+    """Dated transaction backfill (web-only feature)."""
+
+    def setUp(self):
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93', encrypted_credentials=b'x',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def _url(self):
+        return reverse('transaction_backfill', kwargs={'pk': self.account.pk})
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_sync_credentials')
+    @patch('portfolio.views.FinancialAccount.objects.get')
+    def test_rejects_bad_dates(self, _m_get, m_creds):
+        m_creds.return_value = {}
+        _m_get.return_value = self.account
+        resp = self.client.post(self._url(), {'start': 'nope'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('ISO dates', resp.data['error'])
+
+        resp = self.client.post(
+            self._url(), {'start': '2026-08-01', 'end': '2026-01-01'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('before end date', resp.data['error'])
+
+    def test_manual_account_rejected(self):
+        self.account.is_manual = True
+        self.account.save()
+        resp = self.client.post(self._url(), {'start': '2026-01-01'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_sync_credentials')
+    def test_enqueues_task(self, m_creds):
+        m_creds.return_value = {'keyring_pem': 'x'}
+        resp = self.client.post(
+            self._url(), {'start': '2026-01-01', 'end': '2026-06-30'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'queued')
+        self.assertIn('task_id', resp.data)
+
+
+class BackfillImporterTests(TestCase):
+    def setUp(self):
+        from brokers.integrations.base import TransactionInfo
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93',
+        )
+        self.TransactionInfo = TransactionInfo
+
+    def _integration(self, infos):
+        calls = []
+
+        class Fake:
+            def supports_transactions(self):
+                return True
+
+            def get_transactions(self, identifier, start, end):
+                calls.append((start, end))
+                return infos
+
+        fake = Fake()
+        fake.calls = calls
+        return fake
+
+    def test_backfill_uses_requested_range_and_is_idempotent(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import backfill_account_transactions
+        infos = [self.TransactionInfo(
+            booking_date=date(2025, 3, 5), amount=Decimal('-20'), currency='CHF',
+            counterparty='Old Shop', external_id='OLD1',
+        )]
+        integration = self._integration(infos)
+        created = backfill_account_transactions(
+            self.account, integration, date(2025, 1, 1), date(2025, 12, 31))
+        self.assertEqual(created, 1)
+        self.assertEqual(integration.calls[0], (date(2025, 1, 1), date(2025, 12, 31)))
+        # Re-running the same range imports nothing new.
+        self.assertEqual(
+            backfill_account_transactions(
+                self.account, integration, date(2025, 1, 1), date(2025, 12, 31)),
+            0,
+        )
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)

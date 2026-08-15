@@ -33,6 +33,8 @@ class ApiConfig {
 
   static const String syncAllPath = '/api/accounts/sync/';
 
+  static const String spendingMonthlyPath = '/api/spending/monthly/';
+
   static String syncTaskStatusPath(String taskId) =>
       '/api/accounts/sync/$taskId/';
 }

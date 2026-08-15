@@ -920,6 +920,27 @@ export async function detectTransfers(): Promise<{ marked: number }> {
   return res.json();
 }
 
+// Fetch historical transactions for an explicit date range. Returns once the
+// background task finishes (same queue as sync), so the caller sees the result.
+export async function backfillTransactions(
+  accountId: number,
+  start: string,
+  end?: string,
+): Promise<{ status: string; imported?: number; message?: string; error?: string }> {
+  const res = await fetchWithAuth(`/api/accounts/${accountId}/transactions/backfill/`, {
+    method: 'POST',
+    body: JSON.stringify({ start, ...(end ? { end } : {}) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Backfill failed');
+  }
+  if (data.status === 'queued' && data.task_id) {
+    return pollSyncTask(data.task_id);
+  }
+  return data;
+}
+
 // AI categorization (Gemini)
 
 export interface AiConfig {

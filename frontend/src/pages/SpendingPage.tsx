@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowLeftRight, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, ChevronLeft, ChevronRight, History, Plus, Trash2, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import type {
   CategoryRule,
@@ -22,6 +22,7 @@ import type {
   TransactionCategory,
 } from '../api/client';
 import {
+  backfillTransactions,
   classifyTransaction,
   createCategory,
   createCategoryRule,
@@ -91,6 +92,13 @@ export default function SpendingPage() {
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [savingRule, setSavingRule] = useState(false);
+
+  // Historical transaction backfill (web only — needs the KEK to decrypt credentials).
+  const [backfillAccount, setBackfillAccount] = useState<number | ''>('');
+  const [backfillStart, setBackfillStart] = useState('');
+  const [backfillEnd, setBackfillEnd] = useState('');
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillNotice, setBackfillNotice] = useState('');
 
   const loadReport = useCallback(async () => {
     try {
@@ -280,6 +288,31 @@ export default function SpendingPage() {
       setRules((prev) => prev.filter((r) => r.id !== ruleId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete rule');
+    }
+  };
+
+  const handleBackfill = async () => {
+    if (backfillAccount === '' || !backfillStart) return;
+    setError('');
+    setBackfillNotice('');
+    setBackfillBusy(true);
+    try {
+      const outcome = await backfillTransactions(
+        backfillAccount, backfillStart, backfillEnd || undefined,
+      );
+      if (outcome.status === 'error') {
+        setError(outcome.error || 'Backfill failed');
+      } else {
+        setBackfillNotice(
+          outcome.message || `${outcome.imported ?? 0} new transactions imported`,
+        );
+        loadReport();
+        if (accountId !== null) loadTransactions(accountId, 1);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Backfill failed');
+    } finally {
+      setBackfillBusy(false);
     }
   };
 
@@ -662,6 +695,49 @@ export default function SpendingPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        <div className="card">
+          <div className="chart-header">
+            <h2>Import history</h2>
+          </div>
+          <p className="form-hint">
+            A sync only fetches transactions newer than the ones already stored. Use this
+            to pull an older period once. Re-importing a period you already have changes
+            nothing. How far back a bank serves is bank-specific — EBICS often allows
+            years, FinTS/DKB typically about 90 days.
+          </p>
+          <div className="spending-rule-row spending-rule-new">
+            <select
+              value={backfillAccount}
+              onChange={(e) => setBackfillAccount(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Account…</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <input
+              type="date"
+              aria-label="Start date"
+              value={backfillStart}
+              onChange={(e) => setBackfillStart(e.target.value)}
+            />
+            <input
+              type="date"
+              aria-label="End date (defaults to today)"
+              value={backfillEnd}
+              onChange={(e) => setBackfillEnd(e.target.value)}
+            />
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={handleBackfill}
+              disabled={backfillBusy || backfillAccount === '' || !backfillStart}
+            >
+              <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
+            </button>
+          </div>
+          {backfillNotice && <p className="form-hint">{backfillNotice}</p>}
         </div>
 
         <AiCategorization onApplied={() => {

@@ -448,6 +448,116 @@ def _backfill_historical(account, integration, base_currency):
         return 0
 
 
+def _backfill_transactions_worker(*, account_id, credentials, start_date, end_date):
+    """Run on the sync worker thread: fetch transactions for an explicit range."""
+    import django
+    django.db.connections.close_all()
+
+    from brokers.integrations import get_broker_integration
+
+    from .transaction_importer import backfill_account_transactions
+
+    account = FinancialAccount.objects.get(pk=account_id)
+    integration = get_broker_integration(account.broker, credentials, account_id=account.id)
+    try:
+        auth_result = integration.authenticate()
+        if not auth_result.success:
+            return {
+                'status': 'error',
+                'error': auth_result.error_message or 'Authentication failed',
+            }
+        if not integration.supports_transactions():
+            return {
+                'status': 'error',
+                'error': f'{account.broker.name} does not support transaction download.',
+            }
+        imported = backfill_account_transactions(
+            account, integration, start_date, end_date,
+        )
+        return {
+            'status': 'success',
+            'imported': imported,
+            'message': f'{imported} new transactions imported',
+        }
+    finally:
+        integration.close()
+
+
+class AccountTransactionBackfillView(KEKAuthenticationMixin, APIView):
+    """Fetch historical transactions for an explicit date range (web only).
+
+    The regular sync only walks forward from the newest stored transaction; this
+    pulls an arbitrary past window on demand. Storage is idempotent, so an
+    overlapping range adds nothing. Whether a bank actually re-serves old data is
+    bank-specific (EBICS dated downloads often do; FinTS usually has a limit of
+    ~90 days).
+
+    Body: ``start`` and ``end`` as ISO dates (``end`` defaults to today).
+    Returns a queued task id — poll it via the existing sync-task endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from .sync_queue import sync_queue
+
+        try:
+            account = FinancialAccount.objects.get(pk=pk, user=request.user)
+        except FinancialAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if account.is_manual:
+            return Response(
+                {'error': 'Manual accounts have no transaction feed'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not account.encrypted_credentials and not account.ebics_credential_id:
+            return Response({'error': 'No credentials configured'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if account.ebics_credential_id and account.ebics_credential.state != 'active':
+            return Response({'error': 'EBICS access is not active yet.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            start_date = date.fromisoformat(request.data['start'])
+            end_date = (
+                date.fromisoformat(request.data['end'])
+                if request.data.get('end') else date.today()
+            )
+        except (KeyError, TypeError, ValueError):
+            return Response(
+                {'error': 'Provide "start" (and optionally "end") as ISO dates, e.g. 2025-01-01'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if start_date > end_date:
+            return Response({'error': 'Start date must be before end date'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        existing = sync_queue.has_pending_task(request.user.id)
+        if existing:
+            return Response({
+                'status': 'queued', 'task_id': existing,
+                'message': 'A sync is already in progress',
+            })
+
+        try:
+            credentials = self.decrypt_sync_credentials(request, account)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        task_id = sync_queue.enqueue(
+            request.user.id,
+            _backfill_transactions_worker,
+            account_id=account.id,
+            credentials=credentials,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return Response({
+            'status': 'queued', 'task_id': task_id,
+            'message': f'Fetching transactions from {start_date} to {end_date}',
+        })
+
+
 class AccountSyncView(KEKAuthenticationMixin, APIView):
     """Trigger a sync for an account.
 

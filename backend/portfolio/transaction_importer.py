@@ -64,6 +64,63 @@ def _dedup_keys(infos):
     return keys
 
 
+def store_transactions(account, infos) -> int:
+    """Persist a fetched batch idempotently. Returns the number of new rows."""
+    from .models import Transaction
+
+    source = _SOURCE_BY_INTEGRATION_TYPE.get(
+        getattr(account.broker, 'integration_type', '') or '', 'broker',
+    )
+
+    created_count = 0
+    for info, dedup_key in zip(infos, _dedup_keys(infos)):
+        _, created = Transaction.objects.get_or_create(
+            account=account,
+            dedup_key=dedup_key,
+            defaults={
+                'booking_date': info.booking_date,
+                'value_date': info.value_date,
+                'amount': info.amount,
+                'currency': info.currency,
+                'counterparty': info.counterparty[:255],
+                'counterparty_account': info.counterparty_account[:64],
+                'description': info.description,
+                'source': source,
+                'external_id': (info.external_id or '')[:128],
+                'raw_data': info.raw_data,
+            },
+        )
+        if created:
+            created_count += 1
+    return created_count
+
+
+def backfill_account_transactions(account, integration, start_date, end_date) -> int:
+    """Fetch and store transactions for an explicit date range.
+
+    Same idempotent storage as the incremental import — re-running an
+    overlapping range creates nothing new. Also classifies what arrived.
+    """
+    if not integration.supports_transactions():
+        return 0
+
+    infos = integration.get_transactions(account.account_identifier, start_date, end_date)
+    if not infos:
+        return 0
+
+    created_count = store_transactions(account, infos)
+    if created_count:
+        from .classification import apply_rules, detect_transfers
+        apply_rules(account.user)
+        detect_transfers(account.user)
+
+    logger.info(
+        'Backfilled %d new transactions for %s (%d fetched, %s to %s)',
+        created_count, account.name, len(infos), start_date, end_date,
+    )
+    return created_count
+
+
 def import_account_transactions(account, integration) -> int:
     """Fetch and store booked transactions for one account. Returns the created count.
 
@@ -93,30 +150,7 @@ def import_account_transactions(account, integration) -> int:
     if not infos:
         return 0
 
-    source = _SOURCE_BY_INTEGRATION_TYPE.get(
-        getattr(account.broker, 'integration_type', '') or '', 'broker',
-    )
-
-    created_count = 0
-    for info, dedup_key in zip(infos, _dedup_keys(infos)):
-        _, created = Transaction.objects.get_or_create(
-            account=account,
-            dedup_key=dedup_key,
-            defaults={
-                'booking_date': info.booking_date,
-                'value_date': info.value_date,
-                'amount': info.amount,
-                'currency': info.currency,
-                'counterparty': info.counterparty[:255],
-                'counterparty_account': info.counterparty_account[:64],
-                'description': info.description,
-                'source': source,
-                'external_id': (info.external_id or '')[:128],
-                'raw_data': info.raw_data,
-            },
-        )
-        if created:
-            created_count += 1
+    created_count = store_transactions(account, infos)
 
     logger.info(
         'Imported %d new transactions for %s (%d fetched, %s to %s)',

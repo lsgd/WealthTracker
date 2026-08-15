@@ -17,6 +17,7 @@ urlpatterns = [
     # Transactions
     path('accounts/<int:account_id>/transactions/', views.AccountTransactionListCreateView.as_view(), name='transaction_list'),
     path('transactions/<int:pk>/', views.TransactionDetailView.as_view(), name='transaction_detail'),
+    path('accounts/<int:pk>/transactions/backfill/', views.AccountTransactionBackfillView.as_view(), name='transaction_backfill'),
     # Spending insight: categories, rules, transfer detection, monthly report
     path('spending/categories/', views.TransactionCategoryListCreateView.as_view(), name='category_list'),
     path('spending/categories/<int:pk>/', views.TransactionCategoryDetailView.as_view(), name='category_detail'),
