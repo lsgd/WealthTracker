@@ -194,7 +194,9 @@ export default function AiCategorization({ onApplied }: Props) {
         )}
       </div>
 
-      {config?.configured && config.pricing && !editing && (
+      {/* Stays visible while editing too — otherwise you lose sight of what is
+          configured exactly when you are about to change it. */}
+      {config?.configured && config.pricing && (
         <div className="ai-model-banner">
           <div>
             <div className="ai-model-name">{config.pricing.display_name}</div>
@@ -240,8 +242,9 @@ export default function AiCategorization({ onApplied }: Props) {
         <div className="ai-setup">
           <div className="spending-rule-row spending-rule-new">
             <input
+              className="ai-key-input"
               type="password"
-              placeholder={config?.configured ? 'API key (leave empty to keep current)' : 'Gemini API key'}
+              placeholder="Gemini API key"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
@@ -276,12 +279,13 @@ export default function AiCategorization({ onApplied }: Props) {
               </button>
             </div>
           )}
-          {!models && (
-            <p className="form-hint">
-              Paste your Gemini API key (aistudio.google.com), then load the model list to
-              pick a model. Prices shown are Google's standard per-1M-token rates.
-            </p>
-          )}
+          <p className="form-hint">
+            {config?.configured
+              ? 'Leave the key empty to keep the one already stored and only change the model. '
+              : 'Paste your Gemini API key (aistudio.google.com). '}
+            Load the model list to pick a model; prices shown are Google's standard
+            per-1M-token rates.
+          </p>
         </div>
       )}
 

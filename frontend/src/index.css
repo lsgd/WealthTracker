@@ -2430,3 +2430,14 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   min-width: 16px;
   text-align: right;
 }
+
+/* The key is long; give it room and let the row wrap on narrow screens. */
+.ai-setup .spending-rule-new {
+  flex-wrap: wrap;
+}
+
+.ai-key-input {
+  flex: 1 1 320px;
+  min-width: 260px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
