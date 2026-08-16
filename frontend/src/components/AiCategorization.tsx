@@ -194,39 +194,50 @@ export default function AiCategorization({ onApplied }: Props) {
         )}
       </div>
 
-      {/* Stays visible while editing too — otherwise you lose sight of what is
-          configured exactly when you are about to change it. */}
-      {/* Rendered whenever a model is configured — a missing price snapshot
-          must not hide which model is selected. */}
-      {config?.configured && config.model && (
+      {/* Always rendered, directly above the disclosure, and never hidden while
+          editing: whatever the state is, it is named here rather than leaving a
+          blank card. */}
+      {config && (
         <div className="ai-model-banner">
           <div>
             <div className="ai-model-name">
-              {config.pricing?.display_name ?? config.model}
+              {config.model
+                ? (config.pricing?.display_name ?? config.model)
+                : (config.configured ? 'No model selected' : 'Gemini not set up')}
             </div>
             <div className="ai-model-price">
-              {config.pricing ? formatPrice(config.pricing) : 'price not checked yet'}
+              {!config.model
+                ? (config.configured
+                    ? 'Key stored — press Change to pick a model'
+                    : 'Add an API key below to enable suggestions')
+                : config.pricing
+                  ? formatPrice(config.pricing)
+                  : 'price not checked yet'}
             </div>
-            <div className="ai-model-meta">
-              <code>{config.model}</code>
-              {config.pricing
-                ? ` · prices checked ${formatDate(config.pricing.checked_at)}`
-                : ' · press “Check prices” to look up the rate'}
-              {' · from the rate table shipped with this app ('}
-              <a href={config.pricing_source_url} target="_blank" rel="noreferrer">
-                Google's pricing page
-              </a>
-              {')'}
-            </div>
+            {config.model && (
+              <div className="ai-model-meta">
+                <code>{config.model}</code>
+                {config.pricing
+                  ? ` · prices checked ${formatDate(config.pricing.checked_at)}`
+                  : ' · press “Check prices” to look up the rate'}
+                {' · from the rate table shipped with this app ('}
+                <a href={config.pricing_source_url} target="_blank" rel="noreferrer">
+                  Google's pricing page
+                </a>
+                {')'}
+              </div>
+            )}
           </div>
-          <button
-            className="btn btn-sm btn-ghost"
-            title="Re-check the listed price for this model"
-            onClick={refreshPricing}
-            disabled={busy}
-          >
-            <RefreshCw size={14} /> {busy ? 'Checking…' : 'Check prices'}
-          </button>
+          {config.configured && config.model && (
+            <button
+              className="btn btn-sm btn-ghost"
+              title="Re-check the listed price for this model"
+              onClick={refreshPricing}
+              disabled={busy}
+            >
+              <RefreshCw size={14} /> {busy ? 'Checking…' : 'Check prices'}
+            </button>
+          )}
         </div>
       )}
 
