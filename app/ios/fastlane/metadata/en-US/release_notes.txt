@@ -1,4 +1,5 @@
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
 - Sync results (synced count or per-account errors) are now also shown after automatic syncs
+- New Spending screen (chart icon on the start screen): month-to-month spending by category, with a normalized view that spreads yearly bills across their months, and a per-month breakdown you can step through
 - Bug fixes and improvements.
