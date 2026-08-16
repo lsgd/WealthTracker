@@ -181,6 +181,190 @@ class AccountSnapshot(models.Model):
         return f"{self.account.name} - {self.balance} {self.currency} ({self.snapshot_date})"
 
 
+class TransactionCategory(models.Model):
+    """A user-defined spending category (flat list, e.g. Rent, Groceries)."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='transaction_categories'
+    )
+    name = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'transaction_categories'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'name'],
+                name='uniq_category_name_per_user',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class CategoryRule(models.Model):
+    """Auto-categorization rule: substring match against counterparty/description.
+
+    Applied at import time and retroactively — but never over a user's manual
+    choice (``Transaction.category_manual``). ``spread_months`` > 1 additionally
+    marks matches for amortization (e.g. a yearly insurance bill spread over 12).
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='category_rules'
+    )
+    match_text = models.CharField(
+        max_length=128,
+        help_text='Case-insensitive substring matched against counterparty and description'
+    )
+    category = models.ForeignKey(
+        TransactionCategory,
+        on_delete=models.CASCADE,
+        related_name='rules'
+    )
+    spread_months = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Spread matched transactions over this many months (1 = no spread)'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'category_rules'
+        ordering = ['id']
+
+    def __str__(self):
+        return f"'{self.match_text}' -> {self.category.name}"
+
+
+class Transaction(models.Model):
+    """A single booking entry (bank transaction) on an account.
+
+    One row regardless of where it came from — an automatic feed (camt.053 via EBICS,
+    FinTS/MT940, a broker API) or manual entry. ``amount`` is signed: negative means
+    money left the account.
+
+    Dedup: ``dedup_key`` is unique per account. Feeds with a bank-side unique
+    reference (e.g. camt.053 ``AcctSvcrRef``) use it directly; otherwise the importer
+    hashes the entry's content (plus an ordinal, so two identical purchases on the
+    same day both survive) — see ``portfolio.transaction_importer``. Re-importing an
+    overlapping statement range is therefore idempotent.
+    """
+
+    SOURCES = [
+        ('camt053', 'camt.053 statement (EBICS)'),
+        ('fints', 'FinTS/MT940 statement'),
+        ('broker', 'Broker API'),
+        ('manual', 'Manual Entry'),
+    ]
+
+    account = models.ForeignKey(
+        FinancialAccount,
+        on_delete=models.CASCADE,
+        related_name='transactions'
+    )
+
+    booking_date = models.DateField(help_text='Date the entry was booked')
+    value_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=4,
+        help_text='Signed amount in account currency (negative = outflow)'
+    )
+    currency = models.CharField(max_length=3)
+
+    counterparty = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Name of the other party'
+    )
+    counterparty_account = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text='IBAN/account number of the other party, if reported'
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text='Remittance info / purpose text'
+    )
+
+    # Classification (spending insight). ``*_manual`` flags make user overrides
+    # sticky: rule application and transfer detection never touch flagged rows.
+    category = models.ForeignKey(
+        TransactionCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transactions'
+    )
+    category_manual = models.BooleanField(
+        default=False,
+        help_text='Category was set by the user; rules must not overwrite it'
+    )
+    spread_months = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Amortize over this many months in the normalized spending view'
+    )
+    is_transfer = models.BooleanField(
+        default=False,
+        help_text='Transfer between own accounts; excluded from spending'
+    )
+    transfer_manual = models.BooleanField(
+        default=False,
+        help_text='Transfer flag was set by the user; detection must not change it'
+    )
+    transfer_peer = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        help_text='Matching opposite entry on the other own account, if identified'
+    )
+
+    source = models.CharField(max_length=20, choices=SOURCES, default='manual')
+    external_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default='',
+        help_text="Bank's own reference for this entry (e.g. AcctSvcrRef)"
+    )
+    dedup_key = models.CharField(
+        max_length=128,
+        help_text='Idempotency key, unique per account'
+    )
+
+    raw_data = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'transactions'
+        ordering = ['-booking_date', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'dedup_key'],
+                name='uniq_transaction_dedup_per_account',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['account', 'booking_date']),
+            models.Index(fields=['booking_date']),
+        ]
+
+    def __str__(self):
+        return f"{self.account.name}: {self.amount} {self.currency} on {self.booking_date}"
+
+
 class PortfolioPosition(models.Model):
     """Individual holdings within an investment account."""
 

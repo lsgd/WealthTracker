@@ -69,8 +69,8 @@ key.properties
 # Release artifacts
 app/_releases/
 
-# Data directory
-data/
+# Data directory (repo root only — must not swallow app/lib/data/)
+/data/
 
 # Morgan Stanley headless-login device-trust state (contains session cookies)
 ms_browser_state/

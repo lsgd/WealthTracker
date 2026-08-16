@@ -362,6 +362,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         title: const Text('Wealth Tracker'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.pie_chart_outline),
+            tooltip: 'Spending',
+            onPressed: () => context.push('/spending'),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => context.push('/settings'),
           ),

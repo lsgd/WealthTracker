@@ -16,6 +16,7 @@ from .base import (
     AuthResult,
     BalanceInfo,
     BrokerIntegrationBase,
+    TransactionInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -461,6 +462,90 @@ class FinTSIntegration(BrokerIntegrationBase):
             balance_date=date.today(),
             raw_data={'fints_balance': str(balance)}
         )
+
+    def supports_transactions(self) -> bool:
+        return True
+
+    def get_transactions(
+        self,
+        account_identifier: str,
+        start_date: date,
+        end_date: date
+    ) -> List[TransactionInfo]:
+        """Fetch booked SEPA transactions (MT940) for an account.
+
+        python-fints returns ``mt940.models.Transaction`` objects whose ``data`` dict
+        carries the SEPA fields its processors extracted (applicant_name, purpose,
+        posting_text, ...). All lookups are defensive — banks differ in what they fill.
+        """
+        if not self._client or not self._authenticated:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+
+        if not self._accounts:
+            self.get_accounts()
+
+        account = None
+        for acc in self._accounts:
+            if acc.iban == account_identifier:
+                account = acc
+                break
+        if not account:
+            raise ValueError(f"Account {account_identifier} not found")
+
+        result = self._client.get_transactions(account, start_date, end_date)
+
+        # PSD2: some banks demand a TAN for statement retrieval mid-dialog. Skipping
+        # is the right call here — the balance sync already succeeded, and the next
+        # freshly-authenticated sync will pick the transactions up.
+        if isinstance(result, NeedTANResponse):
+            logger.warning(
+                'FinTS: bank requires a TAN for transaction retrieval — skipping this sync'
+            )
+            return []
+
+        transactions = []
+        for tx in result:
+            data = getattr(tx, 'data', None) or {}
+            mt940_amount = data.get('amount')
+            if mt940_amount is None:
+                continue
+            amount = Decimal(str(getattr(mt940_amount, 'amount', mt940_amount)))
+            currency = getattr(mt940_amount, 'currency', None) or data.get('currency') or 'EUR'
+
+            # MT940: 'entry_date' is the booking date, 'date' the value date.
+            booking_date = data.get('entry_date') or data.get('date')
+            if booking_date is None:
+                continue
+            value_date = data.get('date')
+
+            # Bank reference is only useful for dedup if it is a real reference.
+            bank_ref = (data.get('bank_reference') or '').strip()
+            if bank_ref.upper() in ('', 'NONREF', 'NOTPROVIDED'):
+                bank_ref = ''
+
+            description = (data.get('purpose') or '').strip()
+            posting_text = (data.get('posting_text') or '').strip()
+
+            transactions.append(TransactionInfo(
+                booking_date=booking_date,
+                value_date=value_date,
+                amount=amount,
+                currency=currency,
+                counterparty=(data.get('applicant_name') or '').strip(),
+                counterparty_account=(data.get('applicant_iban') or '').strip(),
+                description=description or posting_text,
+                external_id=bank_ref or None,
+                status='BOOK',
+                raw_data={
+                    'iban': account_identifier,
+                    'source': 'fints_mt940',
+                    'posting_text': posting_text or None,
+                    'end_to_end_reference': data.get('end_to_end_reference') or None,
+                    'transaction_code': data.get('transaction_code') or None,
+                },
+            ))
+
+        return transactions
 
     def close(self):
         """Close FinTS session."""

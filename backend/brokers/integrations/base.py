@@ -53,6 +53,27 @@ class PositionInfo:
 
 
 @dataclass
+class TransactionInfo:
+    """Standardized booking entry (bank transaction) returned by brokers.
+
+    ``amount`` is signed: negative = money left the account. ``external_id`` is the
+    bank's own unique reference for the entry (e.g. camt.053 ``AcctSvcrRef``) when it
+    provides one — the importer uses it for exact dedup and falls back to a content
+    hash otherwise.
+    """
+    booking_date: date
+    amount: Decimal
+    currency: str
+    value_date: Optional[date] = None
+    counterparty: str = ''  # Other party's name (creditor for debits, debtor for credits)
+    counterparty_account: str = ''  # Other party's IBAN/account number if reported
+    description: str = ''  # Remittance info / purpose text
+    external_id: Optional[str] = None
+    status: str = 'BOOK'  # ISO entry status: BOOK (booked), PDNG (pending)
+    raw_data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class AuthResult:
     """Result of authentication attempt."""
     success: bool
@@ -110,6 +131,25 @@ class BrokerIntegrationBase(ABC):
         """
         Fetch positions for an investment account.
         Override in subclasses that support this.
+        """
+        return []
+
+    def supports_transactions(self) -> bool:
+        """
+        Returns True if this integration can fetch booking entries (transactions).
+        Override in subclasses that implement get_transactions().
+        """
+        return False
+
+    def get_transactions(
+        self,
+        account_identifier: str,
+        start_date: date,
+        end_date: date
+    ) -> List['TransactionInfo']:
+        """
+        Fetch booked transactions for an account in the inclusive date range.
+        Override in subclasses that support this. Returns empty list by default.
         """
         return []
 

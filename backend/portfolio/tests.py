@@ -563,3 +563,591 @@ class EbicsAccountFallbackTests(APITestCase):
         self.assertTrue(m_enqueue.called)
         account_ids = [aid for aid, _ in m_enqueue.call_args.kwargs['account_creds']]
         self.assertEqual(account_ids, [self.account.id])
+
+
+class TransactionImporterTests(TestCase):
+    """Dedup and window logic of the shared transaction importer."""
+
+    def setUp(self):
+        from brokers.integrations.base import TransactionInfo
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93',
+        )
+        self.TransactionInfo = TransactionInfo
+
+    def _fake_integration(self, infos):
+        calls = []
+
+        class Fake:
+            def supports_transactions(self):
+                return True
+
+            def get_transactions(self, identifier, start, end):
+                calls.append((identifier, start, end))
+                return infos
+
+        fake = Fake()
+        fake.calls = calls
+        return fake
+
+    def _info(self, **overrides):
+        from decimal import Decimal as D
+        defaults = dict(
+            booking_date=date(2026, 8, 1), amount=D('-12.50'), currency='CHF',
+            counterparty='Coop', description='Lunch',
+        )
+        defaults.update(overrides)
+        return self.TransactionInfo(**defaults)
+
+    def test_import_is_idempotent(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        infos = [self._info(external_id='R1'), self._info(external_id='R2')]
+        integration = self._fake_integration(infos)
+        self.assertEqual(import_account_transactions(self.account, integration), 2)
+        self.assertEqual(import_account_transactions(self.account, integration), 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+        self.assertEqual(
+            set(Transaction.objects.values_list('dedup_key', flat=True)),
+            {'ref:R1', 'ref:R2'},
+        )
+
+    def test_identical_entries_without_reference_both_survive(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        # Two identical coffee purchases on the same day, no bank reference.
+        infos = [self._info(), self._info()]
+        integration = self._fake_integration(infos)
+        self.assertEqual(import_account_transactions(self.account, integration), 2)
+        # Redelivery of the same day maps onto the same ordinal-based keys.
+        self.assertEqual(import_account_transactions(self.account, integration), 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+
+    def test_source_mapped_from_integration_type(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import import_account_transactions
+        import_account_transactions(self.account, self._fake_integration([self._info()]))
+        self.assertEqual(Transaction.objects.get(account=self.account).source, 'camt053')
+
+    def test_window_starts_before_latest_imported_transaction(self):
+        from datetime import timedelta
+        from portfolio.transaction_importer import (
+            OVERLAP_DAYS, import_account_transactions,
+        )
+        integration = self._fake_integration([self._info(external_id='R1')])
+        import_account_transactions(self.account, integration)
+        import_account_transactions(self.account, integration)
+        # Second run: start = newest imported booking_date - overlap.
+        _, start, _ = integration.calls[1]
+        self.assertEqual(start, date(2026, 8, 1) - timedelta(days=OVERLAP_DAYS))
+
+    def test_unsupported_integration_is_noop(self):
+        from portfolio.transaction_importer import import_account_transactions
+
+        class NoTx:
+            def supports_transactions(self):
+                return False
+
+        self.assertEqual(import_account_transactions(self.account, NoTx()), 0)
+
+
+class TransactionEndpointTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+        )
+        self.imported = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-25.50'), currency='CHF', counterparty='Migros',
+            source='camt053', dedup_key='ref:R1',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _list_url(self):
+        return reverse('transaction_list', kwargs={'account_id': self.account.id})
+
+    def test_list_transactions(self):
+        resp = self.client.get(self._list_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+    def test_list_filters_by_date_range(self):
+        resp = self.client.get(self._list_url(), {'start': '2026-08-02'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'], [])
+
+    def test_other_users_account_is_empty(self):
+        other, _, _ = make_kek_user(username='bob')
+        self.client.force_authenticate(user=other)
+        resp = self.client.get(self._list_url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['results'], [])
+
+    def test_create_manual_transaction_defaults_currency(self):
+        from portfolio.models import Transaction
+        resp = self.client.post(self._list_url(), {
+            'booking_date': '2026-08-05', 'amount': '-9.90', 'description': 'Kiosk',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        tx = Transaction.objects.get(pk=resp.data['id'])
+        self.assertEqual(tx.source, 'manual')
+        self.assertEqual(tx.currency, 'CHF')
+        self.assertTrue(tx.dedup_key.startswith('manual:'))
+
+    def test_manual_transaction_can_be_deleted(self):
+        resp = self.client.post(self._list_url(), {
+            'booking_date': '2026-08-05', 'amount': '-1.00',
+        }, format='json')
+        detail = reverse('transaction_detail', kwargs={'pk': resp.data['id']})
+        self.assertEqual(self.client.delete(detail).status_code, 204)
+
+    def test_imported_transaction_financials_immutable_and_undeletable(self):
+        # Classification PATCHes are allowed on imported rows; the bank's own
+        # fields are read-only (silently ignored), and deletion is rejected.
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'description': 'x'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.description, '')
+        self.assertEqual(self.client.delete(detail).status_code, 400)
+
+
+class ClassificationTests(TestCase):
+    """Category rules and transfer detection."""
+
+    def setUp(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.checking = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH-GIRO',
+        )
+        self.savings = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Sparen', currency='CHF',
+            account_identifier='CH-SPAR',
+        )
+        self.groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.insurance = TransactionCategory.objects.create(user=self.user, name='Insurance')
+        CategoryRule.objects.create(user=self.user, match_text='migros', category=self.groceries)
+        CategoryRule.objects.create(
+            user=self.user, match_text='axa', category=self.insurance, spread_months=12,
+        )
+
+    def _tx(self, account=None, **kwargs):
+        from portfolio.models import Transaction
+        defaults = dict(
+            account=account or self.checking, booking_date=date(2026, 8, 1),
+            amount=Decimal('-50'), currency='CHF', source='camt053',
+        )
+        defaults.update(kwargs)
+        defaults.setdefault('dedup_key', f"t-{len(Transaction.objects.all())}-{kwargs}")
+        return Transaction.objects.create(**defaults)
+
+    def test_rules_match_case_insensitive_and_set_spread(self):
+        from portfolio.classification import apply_rules
+        grocery_tx = self._tx(counterparty='MIGROS Zuerich')
+        insurance_tx = self._tx(description='AXA Jahresrechnung')
+        self.assertEqual(apply_rules(self.user), 2)
+        grocery_tx.refresh_from_db()
+        insurance_tx.refresh_from_db()
+        self.assertEqual(grocery_tx.category, self.groceries)
+        self.assertEqual(grocery_tx.spread_months, 1)
+        self.assertEqual(insurance_tx.category, self.insurance)
+        self.assertEqual(insurance_tx.spread_months, 12)
+
+    def test_rules_respect_manual_category(self):
+        from portfolio.classification import apply_rules
+        tx = self._tx(counterparty='Migros', category=self.insurance, category_manual=True)
+        # Also uncategorized-but-manually-cleared rows stay untouched.
+        cleared = self._tx(counterparty='Migros', category=None, category_manual=True)
+        self.assertEqual(apply_rules(self.user), 0)
+        tx.refresh_from_db()
+        self.assertEqual(tx.category, self.insurance)
+        cleared.refresh_from_db()
+        self.assertIsNone(cleared.category)
+
+    def test_transfer_pairing_across_accounts(self):
+        from portfolio.classification import detect_transfers
+        out_tx = self._tx(amount=Decimal('-500'), booking_date=date(2026, 8, 26))
+        in_tx = self._tx(
+            account=self.savings, amount=Decimal('500'), booking_date=date(2026, 8, 27),
+        )
+        unrelated = self._tx(amount=Decimal('-77'), counterparty='Shop')
+        self.assertEqual(detect_transfers(self.user), 2)
+        out_tx.refresh_from_db(); in_tx.refresh_from_db(); unrelated.refresh_from_db()
+        self.assertTrue(out_tx.is_transfer)
+        self.assertEqual(out_tx.transfer_peer_id, in_tx.id)
+        self.assertTrue(in_tx.is_transfer)
+        self.assertFalse(unrelated.is_transfer)
+
+    def test_transfer_by_own_iban(self):
+        from portfolio.classification import detect_transfers
+        tx = self._tx(amount=Decimal('-300'), counterparty_account='CH-SPAR')
+        self.assertEqual(detect_transfers(self.user), 1)
+        tx.refresh_from_db()
+        self.assertTrue(tx.is_transfer)
+
+    def test_transfer_detection_respects_manual_flag(self):
+        from portfolio.classification import detect_transfers
+        self._tx(amount=Decimal('-500'), transfer_manual=True)
+        self._tx(account=self.savings, amount=Decimal('500'))
+        self.assertEqual(detect_transfers(self.user), 0)
+
+
+class SpendingReportTests(TestCase):
+    def setUp(self):
+        from portfolio.models import TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.user.profile.base_currency = 'EUR'
+        self.user.profile.save()
+        self.groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+
+    def _tx(self, **kwargs):
+        from portfolio.models import Transaction
+        defaults = dict(
+            account=self.account, booking_date=date.today().replace(day=1),
+            amount=Decimal('-100'), currency='EUR', source='camt053',
+        )
+        defaults.update(kwargs)
+        defaults.setdefault('dedup_key', f"t-{Transaction.objects.count()}")
+        return Transaction.objects.create(**defaults)
+
+    def test_actual_vs_normalized_amortization(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-1200'), spread_months=12, category=self.groceries)
+        self._tx(amount=Decimal('1000'))
+
+        actual = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(actual['months'][-1]['expenses'], 1200.0)
+        self.assertEqual(actual['months'][-1]['income'], 1000.0)
+
+        normalized = monthly_spending(self.user, months=1, mode='normalized')
+        self.assertEqual(normalized['months'][-1]['expenses'], 100.0)
+        self.assertEqual(normalized['months'][-1]['by_category'], {'Groceries': 100.0})
+
+    def test_transfers_are_excluded(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-500'), is_transfer=True)
+        self._tx(amount=Decimal('-40'))
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['expenses'], 40.0)
+
+    def test_uncategorized_bucket(self):
+        from portfolio.spending import monthly_spending
+        self._tx(amount=Decimal('-25'))
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['by_category'], {'Uncategorized': 25.0})
+
+
+class ClassificationApiTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction, TransactionCategory
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+        )
+        self.category = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.imported = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-25.50'), currency='CHF', counterparty='Migros',
+            source='camt053', dedup_key='ref:R1',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_classify_imported_transaction(self):
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'category': self.category.id}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['category_name'], 'Groceries')
+        self.imported.refresh_from_db()
+        self.assertTrue(self.imported.category_manual)
+
+    def test_imported_financial_fields_stay_readonly(self):
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'amount': '-1.00'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.amount, Decimal('-25.50'))
+
+    def test_cannot_use_other_users_category(self):
+        from portfolio.models import TransactionCategory
+        other, _, _ = make_kek_user(username='bob')
+        foreign = TransactionCategory.objects.create(user=other, name='Theirs')
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'category': foreign.id}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rule_create_applies_retroactively(self):
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'migros', 'category': self.category.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.category, self.category)
+
+    def test_monthly_report_endpoint(self):
+        resp = self.client.get(reverse('spending_monthly'), {'months': 2, 'mode': 'actual'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data['months']), 2)
+        self.assertEqual(resp.data['base_currency'], self.user.profile.base_currency)
+
+
+class AiCategorizationClientTests(TestCase):
+    """Gemini client: pricing lookup, model listing, suggestion parsing."""
+
+    def test_price_prefix_matching_prefers_longest(self):
+        from portfolio.ai_categorization import price_for_model
+        self.assertEqual(price_for_model('gemini-3.5-flash-lite-001'), (0.30, 2.50))
+        self.assertEqual(price_for_model('gemini-3.5-flash'), (1.50, 9.00))
+        self.assertIsNone(price_for_model('gemini-unknown-model'))
+
+    @patch('portfolio.ai_categorization.requests.get')
+    def test_list_models_filters_and_prices(self, m_get):
+        from portfolio.ai_categorization import list_models
+        m_get.return_value = MagicMock(status_code=200, json=lambda: {'models': [
+            {'name': 'models/gemini-3.6-flash', 'displayName': 'Gemini 3.6 Flash',
+             'supportedGenerationMethods': ['generateContent']},
+            {'name': 'models/gemini-embedding-001', 'displayName': 'Embedding',
+             'supportedGenerationMethods': ['embedContent']},
+            {'name': 'models/imagen-4', 'displayName': 'Imagen',
+             'supportedGenerationMethods': ['generateContent']},
+        ]})
+        models = list_models('key')
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]['id'], 'gemini-3.6-flash')
+        self.assertEqual(models[0]['input_price_per_1m'], 0.75)
+
+    @patch('portfolio.ai_categorization.requests.get')
+    def test_list_models_invalid_key_is_friendly(self, m_get):
+        from portfolio.ai_categorization import GeminiError, list_models
+        m_get.return_value = MagicMock(status_code=400, json=lambda: {
+            'error': {'message': 'API key not valid. Please pass a valid API key.'}})
+        with self.assertRaises(GeminiError) as ctx:
+            list_models('bad')
+        self.assertIn('not valid', str(ctx.exception))
+
+    @patch('portfolio.ai_categorization.requests.post')
+    def test_suggest_parses_assignments_rules_and_cost(self, m_post):
+        import json as jsonlib
+        from portfolio.ai_categorization import suggest_categories
+        m_post.return_value = MagicMock(status_code=200, json=lambda: {
+            'candidates': [{'content': {'parts': [{'text': jsonlib.dumps({
+                'assignments': [{'id': 1, 'category': 'Health'}, {'bogus': True}],
+                'rules': [{'match_text': 'apotheke', 'category': 'Health'}, {'match_text': ''}],
+            })}]}}],
+            'usageMetadata': {'promptTokenCount': 1000, 'candidatesTokenCount': 500},
+        })
+        result = suggest_categories(
+            'key', 'gemini-3.6-flash',
+            [{'id': 1, 'counterparty': 'Apotheke', 'description': '', 'amount': '-10', 'currency': 'EUR'}],
+            ['Groceries'],
+        )
+        self.assertEqual(result['assignments'], [{'id': 1, 'category': 'Health'}])
+        self.assertEqual(result['rules'], [{'match_text': 'apotheke', 'category': 'Health'}])
+        self.assertAlmostEqual(result['usage']['estimated_cost_usd'], 0.002625)
+
+
+class AiEndpointTests(APITestCase):
+    def setUp(self):
+        from portfolio.models import Transaction
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.tx = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-19.90'), currency='EUR', counterparty='Apotheke am Markt',
+            source='camt053', dedup_key='ref:A1',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def test_config_roundtrip_stores_key_encrypted(self):
+        resp = self.client.put(reverse('ai_config'), {
+            'api_key': 'AIza-test', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.user.profile.refresh_from_db()
+        self.assertTrue(self.user.profile.encrypted_gemini_key)
+        self.assertNotIn(b'AIza-test', bytes(self.user.profile.encrypted_gemini_key))
+        resp = self.client.get(reverse('ai_config'))
+        self.assertTrue(resp.data['configured'])
+        self.assertEqual(resp.data['model'], 'gemini-3.6-flash')
+        self.assertTrue(resp.data['disclosed_fields'])
+
+    def test_config_requires_kek(self):
+        self.client.credentials()  # drop X-KEK
+        resp = self.client.put(reverse('ai_config'), {'api_key': 'x'}, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_returns_disclosure_and_flags_new_categories(self, m_suggest):
+        from portfolio.models import TransactionCategory
+        TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [
+                {'id': self.tx.id, 'category': 'Health'},
+                {'id': 999999, 'category': 'Ignored'},
+            ],
+            'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            'usage': {'input_tokens': 10, 'output_tokens': 5, 'estimated_cost_usd': 0.0001},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['suggestions']), 1)
+        self.assertTrue(resp.data['suggestions'][0]['is_new_category'])
+        self.assertEqual(resp.data['sent_count'], 1)
+        self.assertTrue(resp.data['disclosed_fields'])
+        # The suggestion is NOT persisted without confirmation.
+        self.tx.refresh_from_db()
+        self.assertIsNone(self.tx.category)
+
+    def test_apply_confirmed_suggestions(self):
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+        other = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 2),
+            amount=Decimal('-5.00'), currency='EUR', counterparty='Apotheke Nord',
+            source='camt053', dedup_key='ref:A2',
+        )
+        resp = self.client.post(reverse('ai_apply'), {
+            'assignments': [{'transaction_id': self.tx.id, 'category': 'Health'}],
+            'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['assigned'], 1)
+        self.assertEqual(resp.data['rules_created'], 1)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.category.name, 'Health')
+        self.assertTrue(self.tx.category_manual)
+        # The created rule immediately categorized the other apotheke transaction.
+        other.refresh_from_db()
+        self.assertEqual(other.category.name, 'Health')
+        self.assertEqual(TransactionCategory.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 1)
+
+    def test_apply_cannot_touch_other_users_transactions(self):
+        from portfolio.models import Transaction
+        other_user, _, _ = make_kek_user(username='bob')
+        foreign_account = FinancialAccount.objects.create(
+            user=other_user, broker=self.broker, name='Foreign', currency='EUR',
+        )
+        foreign_tx = Transaction.objects.create(
+            account=foreign_account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-1.00'), currency='EUR', source='camt053', dedup_key='x',
+        )
+        resp = self.client.post(reverse('ai_apply'), {
+            'assignments': [{'transaction_id': foreign_tx.id, 'category': 'Hijack'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['assigned'], 0)
+        foreign_tx.refresh_from_db()
+        self.assertIsNone(foreign_tx.category)
+
+
+class TransactionBackfillTests(APITestCase):
+    """Dated transaction backfill (web-only feature)."""
+
+    def setUp(self):
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93', encrypted_credentials=b'x',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def _url(self):
+        return reverse('transaction_backfill', kwargs={'pk': self.account.pk})
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_sync_credentials')
+    @patch('portfolio.views.FinancialAccount.objects.get')
+    def test_rejects_bad_dates(self, _m_get, m_creds):
+        m_creds.return_value = {}
+        _m_get.return_value = self.account
+        resp = self.client.post(self._url(), {'start': 'nope'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('ISO dates', resp.data['error'])
+
+        resp = self.client.post(
+            self._url(), {'start': '2026-08-01', 'end': '2026-01-01'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('before end date', resp.data['error'])
+
+    def test_manual_account_rejected(self):
+        self.account.is_manual = True
+        self.account.save()
+        resp = self.client.post(self._url(), {'start': '2026-01-01'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_sync_credentials')
+    def test_enqueues_task(self, m_creds):
+        m_creds.return_value = {'keyring_pem': 'x'}
+        resp = self.client.post(
+            self._url(), {'start': '2026-01-01', 'end': '2026-06-30'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'queued')
+        self.assertIn('task_id', resp.data)
+
+
+class BackfillImporterTests(TestCase):
+    def setUp(self):
+        from brokers.integrations.base import TransactionInfo
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+            account_identifier='CH93',
+        )
+        self.TransactionInfo = TransactionInfo
+
+    def _integration(self, infos):
+        calls = []
+
+        class Fake:
+            def supports_transactions(self):
+                return True
+
+            def get_transactions(self, identifier, start, end):
+                calls.append((start, end))
+                return infos
+
+        fake = Fake()
+        fake.calls = calls
+        return fake
+
+    def test_backfill_uses_requested_range_and_is_idempotent(self):
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import backfill_account_transactions
+        infos = [self.TransactionInfo(
+            booking_date=date(2025, 3, 5), amount=Decimal('-20'), currency='CHF',
+            counterparty='Old Shop', external_id='OLD1',
+        )]
+        integration = self._integration(infos)
+        created = backfill_account_transactions(
+            self.account, integration, date(2025, 1, 1), date(2025, 12, 31))
+        self.assertEqual(created, 1)
+        self.assertEqual(integration.calls[0], (date(2025, 1, 1), date(2025, 12, 31)))
+        # Re-running the same range imports nothing new.
+        self.assertEqual(
+            backfill_account_transactions(
+                self.account, integration, date(2025, 1, 1), date(2025, 12, 31)),
+            0,
+        )
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)

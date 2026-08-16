@@ -2,7 +2,14 @@ from rest_framework import serializers
 
 from brokers.serializers import BrokerSerializer
 
-from .models import AccountSnapshot, FinancialAccount, PortfolioPosition
+from .models import (
+    AccountSnapshot,
+    CategoryRule,
+    FinancialAccount,
+    PortfolioPosition,
+    Transaction,
+    TransactionCategory,
+)
 
 
 class PortfolioPositionSerializer(serializers.ModelSerializer):
@@ -38,6 +45,99 @@ class AccountSnapshotCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['snapshot_source'] = 'manual'
         return super().create(validated_data)
+
+
+class TransactionCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TransactionCategory
+        fields = ['id', 'name']
+
+
+class CategoryRuleSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+
+    class Meta:
+        model = CategoryRule
+        fields = ['id', 'match_text', 'category', 'category_name', 'spread_months']
+
+    def validate_category(self, category):
+        request = self.context.get('request')
+        if request and category.user_id != request.user.id:
+            raise serializers.ValidationError('Category not found')
+        return category
+
+
+class TransactionSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+
+    class Meta:
+        model = Transaction
+        fields = [
+            'id', 'account', 'booking_date', 'value_date', 'amount', 'currency',
+            'counterparty', 'counterparty_account', 'description', 'source',
+            'external_id', 'category', 'category_name', 'spread_months',
+            'is_transfer', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'account', 'source', 'external_id', 'category',
+            'category_name', 'spread_months', 'is_transfer', 'created_at'
+        ]
+
+
+class TransactionClassificationSerializer(serializers.ModelSerializer):
+    """Classification-only updates — allowed on every transaction, including
+    imported ones (the bank's facts stay read-only; what they *mean* is the
+    user's). Setting a field flips the matching ``*_manual`` flag so rule
+    application and transfer detection keep their hands off afterwards.
+    """
+
+    class Meta:
+        model = Transaction
+        fields = ['category', 'spread_months', 'is_transfer']
+
+    def validate_category(self, category):
+        request = self.context.get('request')
+        if category and request and category.user_id != request.user.id:
+            raise serializers.ValidationError('Category not found')
+        return category
+
+    def update(self, instance, validated_data):
+        if 'category' in validated_data:
+            instance.category_manual = True
+        if 'is_transfer' in validated_data:
+            instance.transfer_manual = True
+        return super().update(instance, validated_data)
+
+
+class TransactionCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating/updating manual transactions.
+
+    ``currency`` may be omitted — the view defaults it to the account currency.
+    """
+    class Meta:
+        model = Transaction
+        fields = [
+            'booking_date', 'value_date', 'amount', 'currency',
+            'counterparty', 'counterparty_account', 'description'
+        ]
+        extra_kwargs = {'currency': {'required': False}}
+
+    def create(self, validated_data):
+        import uuid
+        validated_data['source'] = 'manual'
+        validated_data['dedup_key'] = f'manual:{uuid.uuid4().hex}'
+        return super().create(validated_data)
+
+
+class ManualTransactionUpdateSerializer(TransactionClassificationSerializer):
+    """Full update for manual transactions: financial fields plus classification."""
+
+    class Meta(TransactionClassificationSerializer.Meta):
+        fields = [
+            'booking_date', 'value_date', 'amount', 'currency', 'counterparty',
+            'counterparty_account', 'description', 'category', 'spread_months',
+            'is_transfer'
+        ]
 
 
 class FinancialAccountSerializer(serializers.ModelSerializer):

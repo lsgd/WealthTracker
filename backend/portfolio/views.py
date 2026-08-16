@@ -55,12 +55,24 @@ from rest_framework.views import APIView
 from core.kek_auth import KEKAuthenticationMixin
 from exchange_rates.models import ExchangeRate
 
-from .models import AccountSnapshot, FinancialAccount
+from .models import (
+    AccountSnapshot,
+    CategoryRule,
+    FinancialAccount,
+    Transaction,
+    TransactionCategory,
+)
 from .serializers import (
     AccountSnapshotCreateSerializer,
     AccountSnapshotSerializer,
+    CategoryRuleSerializer,
     FinancialAccountCreateSerializer,
     FinancialAccountSerializer,
+    ManualTransactionUpdateSerializer,
+    TransactionCategorySerializer,
+    TransactionClassificationSerializer,
+    TransactionCreateSerializer,
+    TransactionSerializer,
 )
 
 
@@ -177,6 +189,15 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 account, integration, base_currency,
             )
 
+        # Import booked transactions if supported. A transaction-import failure must
+        # never fail the balance sync that already succeeded — log and move on.
+        imported_tx_count = 0
+        try:
+            from .transaction_importer import import_account_transactions
+            imported_tx_count = import_account_transactions(account, integration)
+        except Exception:
+            logger.exception("Transaction import failed for account %s", account.id)
+
         account.status = 'active'
         account.last_sync_at = timezone.now()
         account.last_sync_error = ''
@@ -186,6 +207,8 @@ def _sync_single_account(*, account_id, credentials, base_currency):
         message = 'Sync completed' if created else 'No change (snapshot already exists)'
         if backfilled_count > 0:
             message += f' + {backfilled_count} historical snapshots backfilled'
+        if imported_tx_count > 0:
+            message += f' + {imported_tx_count} transactions imported'
 
         return {
             'status': 'success',
@@ -312,6 +335,13 @@ def _sync_all_accounts(*, account_creds, base_currency):
                 if integration.supports_historical_data():
                     _backfill_historical(account, integration, base_currency)
 
+                # Import booked transactions; a failure here must not fail the sync.
+                try:
+                    from .transaction_importer import import_account_transactions
+                    import_account_transactions(account, integration)
+                except Exception:
+                    logger.exception("Transaction import failed for account %s", account.id)
+
                 account.status = 'active'
                 account.last_sync_at = timezone.now()
                 account.last_sync_error = ''
@@ -416,6 +446,116 @@ def _backfill_historical(account, integration, base_currency):
     except Exception as e:
         logger.warning(f"Failed to backfill historical data for {account.name}: {e}")
         return 0
+
+
+def _backfill_transactions_worker(*, account_id, credentials, start_date, end_date):
+    """Run on the sync worker thread: fetch transactions for an explicit range."""
+    import django
+    django.db.connections.close_all()
+
+    from brokers.integrations import get_broker_integration
+
+    from .transaction_importer import backfill_account_transactions
+
+    account = FinancialAccount.objects.get(pk=account_id)
+    integration = get_broker_integration(account.broker, credentials, account_id=account.id)
+    try:
+        auth_result = integration.authenticate()
+        if not auth_result.success:
+            return {
+                'status': 'error',
+                'error': auth_result.error_message or 'Authentication failed',
+            }
+        if not integration.supports_transactions():
+            return {
+                'status': 'error',
+                'error': f'{account.broker.name} does not support transaction download.',
+            }
+        imported = backfill_account_transactions(
+            account, integration, start_date, end_date,
+        )
+        return {
+            'status': 'success',
+            'imported': imported,
+            'message': f'{imported} new transactions imported',
+        }
+    finally:
+        integration.close()
+
+
+class AccountTransactionBackfillView(KEKAuthenticationMixin, APIView):
+    """Fetch historical transactions for an explicit date range (web only).
+
+    The regular sync only walks forward from the newest stored transaction; this
+    pulls an arbitrary past window on demand. Storage is idempotent, so an
+    overlapping range adds nothing. Whether a bank actually re-serves old data is
+    bank-specific (EBICS dated downloads often do; FinTS usually has a limit of
+    ~90 days).
+
+    Body: ``start`` and ``end`` as ISO dates (``end`` defaults to today).
+    Returns a queued task id — poll it via the existing sync-task endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from .sync_queue import sync_queue
+
+        try:
+            account = FinancialAccount.objects.get(pk=pk, user=request.user)
+        except FinancialAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if account.is_manual:
+            return Response(
+                {'error': 'Manual accounts have no transaction feed'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not account.encrypted_credentials and not account.ebics_credential_id:
+            return Response({'error': 'No credentials configured'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if account.ebics_credential_id and account.ebics_credential.state != 'active':
+            return Response({'error': 'EBICS access is not active yet.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            start_date = date.fromisoformat(request.data['start'])
+            end_date = (
+                date.fromisoformat(request.data['end'])
+                if request.data.get('end') else date.today()
+            )
+        except (KeyError, TypeError, ValueError):
+            return Response(
+                {'error': 'Provide "start" (and optionally "end") as ISO dates, e.g. 2025-01-01'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if start_date > end_date:
+            return Response({'error': 'Start date must be before end date'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        existing = sync_queue.has_pending_task(request.user.id)
+        if existing:
+            return Response({
+                'status': 'queued', 'task_id': existing,
+                'message': 'A sync is already in progress',
+            })
+
+        try:
+            credentials = self.decrypt_sync_credentials(request, account)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        task_id = sync_queue.enqueue(
+            request.user.id,
+            _backfill_transactions_worker,
+            account_id=account.id,
+            credentials=credentials,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return Response({
+            'status': 'queued', 'task_id': task_id,
+            'message': f'Fetching transactions from {start_date} to {end_date}',
+        })
 
 
 class AccountSyncView(KEKAuthenticationMixin, APIView):
@@ -842,6 +982,369 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
             snapshot.base_currency = user_profile.base_currency
             snapshot.exchange_rate_used = Decimal('1')
         snapshot.save()
+
+
+class AccountTransactionListCreateView(generics.ListCreateAPIView):
+    """List transactions for an account or create a manual one.
+
+    Optional query params: ``start`` / ``end`` (ISO dates, filter on booking_date).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return TransactionCreateSerializer
+        return TransactionSerializer
+
+    def get_queryset(self):
+        qs = Transaction.objects.filter(
+            account_id=self.kwargs['account_id'],
+            account__user=self.request.user,
+        )
+        start = self.request.query_params.get('start')
+        end = self.request.query_params.get('end')
+        if start:
+            qs = qs.filter(booking_date__gte=start)
+        if end:
+            qs = qs.filter(booking_date__lte=end)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        """Override to return full transaction data after creation."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            TransactionSerializer(serializer.instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def perform_create(self, serializer):
+        account = FinancialAccount.objects.get(
+            pk=self.kwargs['account_id'], user=self.request.user,
+        )
+        currency = serializer.validated_data.get('currency') or account.currency
+        serializer.save(account=account, currency=currency)
+
+
+class TransactionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Get, update, or delete a transaction.
+
+    Imported rows mirror the bank's statement: their financial fields are
+    read-only and they cannot be deleted (they would be re-imported on the next
+    sync anyway) — but their *classification* (category, spread, transfer flag)
+    is always the user's to change. Manual transactions are fully editable.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method in ('PUT', 'PATCH'):
+            if self.get_object().source == 'manual':
+                return ManualTransactionUpdateSerializer
+            return TransactionClassificationSerializer
+        return TransactionSerializer
+
+    def get_queryset(self):
+        return Transaction.objects.filter(account__user=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        """Override to return the full transaction after a partial update."""
+        super().update(request, *args, **kwargs)
+        return Response(TransactionSerializer(self.get_object()).data)
+
+    def perform_destroy(self, instance):
+        if instance.source != 'manual':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'detail': 'Only manual transactions can be deleted. '
+                          'Imported transactions mirror the bank statement.'
+            })
+        instance.delete()
+
+
+class TransactionCategoryListCreateView(generics.ListCreateAPIView):
+    """List or create the user's spending categories."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionCategorySerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return TransactionCategory.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class TransactionCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionCategorySerializer
+
+    def get_queryset(self):
+        return TransactionCategory.objects.filter(user=self.request.user)
+
+
+class CategoryRuleListCreateView(generics.ListCreateAPIView):
+    """List or create category rules. Creating a rule applies it retroactively
+    to all still-uncategorized transactions."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = CategoryRuleSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return CategoryRule.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+        from .classification import apply_rules
+        apply_rules(self.request.user)
+
+
+class CategoryRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CategoryRuleSerializer
+
+    def get_queryset(self):
+        return CategoryRule.objects.filter(user=self.request.user)
+
+
+class DetectTransfersView(APIView):
+    """Re-run transfer detection across all of the user's accounts."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .classification import detect_transfers
+        marked = detect_transfers(request.user)
+        return Response({'status': 'success', 'marked': marked})
+
+
+class AiConfigView(KEKAuthenticationMixin, APIView):
+    """Configure Gemini-assisted categorization (API key + model).
+
+    The API key is a user secret and is stored encrypted under the per-user key
+    (same KEK scheme as account credentials), so reads/writes require the KEK.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .ai_categorization import DISCLOSED_FIELDS
+        profile = request.user.profile
+        return Response({
+            'configured': bool(profile.encrypted_gemini_key),
+            'model': profile.gemini_model,
+            'disclosed_fields': DISCLOSED_FIELDS,
+        })
+
+    def put(self, request):
+        profile = request.user.profile
+        api_key = request.data.get('api_key')
+        model = request.data.get('model')
+        if api_key:
+            profile.encrypted_gemini_key = self.encrypt_blob(request, {'api_key': api_key})
+        if model is not None:
+            profile.gemini_model = model
+        profile.save()
+        return Response({'status': 'success', 'configured': bool(profile.encrypted_gemini_key),
+                         'model': profile.gemini_model})
+
+    def delete(self, request):
+        profile = request.user.profile
+        profile.encrypted_gemini_key = None
+        profile.gemini_model = ''
+        profile.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AiModelsView(KEKAuthenticationMixin, APIView):
+    """List Gemini models available to the user's key, with known prices.
+
+    Accepts an ``api_key`` in the body (pre-save validation while configuring)
+    or falls back to the stored key.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import GeminiError, list_models
+
+        api_key = request.data.get('api_key')
+        if not api_key:
+            profile = request.user.profile
+            if not profile.encrypted_gemini_key:
+                return Response({'error': 'No Gemini API key configured'}, status=400)
+            api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        try:
+            return Response({'models': list_models(api_key)})
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+
+class AiSuggestView(KEKAuthenticationMixin, APIView):
+    """Ask Gemini to suggest categories for uncategorized transactions.
+
+    Nothing is persisted: the response is a proposal the user reviews and
+    applies (or not) via AiApplyView. The response also states exactly which
+    data was transferred to Google.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import (
+            DISCLOSED_FIELDS,
+            MAX_TRANSACTIONS,
+            GeminiError,
+            suggest_categories,
+        )
+
+        profile = request.user.profile
+        if not profile.encrypted_gemini_key or not profile.gemini_model:
+            return Response({'error': 'Gemini is not configured'}, status=400)
+        api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        qs = (
+            Transaction.objects
+            .filter(
+                account__user=request.user,
+                category__isnull=True,
+                category_manual=False,
+                is_transfer=False,
+            )
+            .order_by('-booking_date')
+        )
+        total = qs.count()
+        transactions = list(qs[:MAX_TRANSACTIONS])
+        if not transactions:
+            return Response({
+                'suggestions': [], 'rules': [], 'sent_count': 0, 'total_uncategorized': 0,
+                'disclosed_fields': DISCLOSED_FIELDS,
+            })
+
+        categories = list(
+            TransactionCategory.objects.filter(user=request.user).values_list('name', flat=True)
+        )
+        payload = [
+            {
+                'id': t.id, 'counterparty': t.counterparty,
+                'description': t.description, 'amount': str(t.amount), 'currency': t.currency,
+            }
+            for t in transactions
+        ]
+
+        try:
+            result = suggest_categories(api_key, profile.gemini_model, payload, categories)
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+        by_id = {t.id: t for t in transactions}
+        existing = {c.lower() for c in categories}
+        suggestions = []
+        for assignment in result['assignments']:
+            tx = by_id.get(assignment['id'])
+            if tx is None:
+                continue  # never act on ids we did not send
+            name = str(assignment['category']).strip()[:64]
+            suggestions.append({
+                'transaction_id': tx.id,
+                'booking_date': tx.booking_date,
+                'counterparty': tx.counterparty,
+                'description': tx.description,
+                'amount': str(tx.amount),
+                'currency': tx.currency,
+                'category': name,
+                'is_new_category': name.lower() not in existing,
+            })
+
+        rules = [
+            {
+                'match_text': str(r['match_text']).strip().lower()[:128],
+                'category': str(r['category']).strip()[:64],
+                'is_new_category': str(r['category']).strip().lower() not in existing,
+            }
+            for r in result['rules']
+        ]
+
+        return Response({
+            'suggestions': suggestions,
+            'rules': rules,
+            'sent_count': len(transactions),
+            'total_uncategorized': total,
+            'disclosed_fields': DISCLOSED_FIELDS,
+            'usage': result['usage'],
+        })
+
+
+class AiApplyView(APIView):
+    """Persist the user-confirmed subset of AI suggestions.
+
+    Body: ``assignments`` [{transaction_id, category}] and ``rules``
+    [{match_text, category}]. Categories are created on demand; confirmed
+    assignments are marked ``category_manual`` (a human decision, sticky);
+    created rules immediately apply to remaining uncategorized transactions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .classification import apply_rules
+
+        def category_for(name):
+            name = str(name).strip()[:64]
+            if not name:
+                return None
+            category, _ = TransactionCategory.objects.get_or_create(
+                user=request.user, name=name,
+            )
+            return category
+
+        assigned = 0
+        for item in request.data.get('assignments', []):
+            category = category_for(item.get('category'))
+            if category is None:
+                continue
+            updated = Transaction.objects.filter(
+                pk=item.get('transaction_id'), account__user=request.user,
+            ).update(category=category, category_manual=True)
+            assigned += updated
+
+        rules_created = 0
+        for item in request.data.get('rules', []):
+            match_text = str(item.get('match_text', '')).strip().lower()[:128]
+            category = category_for(item.get('category'))
+            if not match_text or category is None:
+                continue
+            _, created = CategoryRule.objects.get_or_create(
+                user=request.user, match_text=match_text,
+                defaults={'category': category, 'spread_months': 1},
+            )
+            rules_created += created
+
+        rule_applied = apply_rules(request.user) if rules_created else 0
+        return Response({
+            'status': 'success',
+            'assigned': assigned,
+            'rules_created': rules_created,
+            'rule_applied': rule_applied,
+        })
+
+
+class SpendingMonthlyView(APIView):
+    """Month-to-month spending report.
+
+    Query params: ``months`` (default 12, max 60), ``mode`` (``normalized`` |
+    ``actual``, default ``normalized``).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .spending import monthly_spending
+
+        try:
+            months = min(max(int(request.query_params.get('months', 12)), 1), 60)
+        except ValueError:
+            months = 12
+        mode = request.query_params.get('mode', 'normalized')
+        if mode not in ('normalized', 'actual'):
+            mode = 'normalized'
+
+        return Response(monthly_spending(request.user, months=months, mode=mode))
 
 
 class WealthSummaryView(APIView):

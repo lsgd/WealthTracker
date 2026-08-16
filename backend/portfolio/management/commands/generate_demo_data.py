@@ -198,6 +198,9 @@ class Command(BaseCommand):
         # Create demo accounts
         self._create_demo_accounts(user, profile)
 
+        # Create demo transactions with categories, rules and a transfer pair
+        self._create_demo_transactions(user)
+
     def _setup_user_encryption(self, profile, password):
         """Set up per-user encryption for a demo user."""
         from argon2.low_level import Type, hash_secret_raw
@@ -243,6 +246,91 @@ class Command(BaseCommand):
         profile.encryption_migrated = True
 
         self.stdout.write('  Set up per-user encryption')
+
+    def _create_demo_transactions(self, user):
+        """Seed ~13 months of realistic transactions on the checking account.
+
+        Includes a monthly savings transfer pair (checking -> savings), a yearly
+        insurance bill (amortized over 12 months via a rule), and category rules
+        so the spending report renders fully classified out of the box.
+        """
+        from portfolio.classification import apply_rules, detect_transfers
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+
+        try:
+            checking = FinancialAccount.objects.get(user=user, name='DKB Girokonto')
+            savings = FinancialAccount.objects.get(user=user, name='Commerzbank Tagesgeld')
+        except FinancialAccount.DoesNotExist:
+            self.stdout.write(self.style.WARNING(
+                '  Checking/savings demo accounts missing, skipping transactions'
+            ))
+            return
+
+        categories = {
+            name: TransactionCategory.objects.create(user=user, name=name)
+            for name in ['Rent', 'Groceries', 'Insurance', 'Subscriptions', 'Dining Out', 'Phone']
+        }
+        rules = [
+            ('hausverwaltung', 'Rent', 1),
+            ('rewe', 'Groceries', 1), ('edeka', 'Groceries', 1), ('lidl', 'Groceries', 1),
+            ('axa', 'Insurance', 12),
+            ('netflix', 'Subscriptions', 1),
+            ('telekom', 'Phone', 1),
+            ('restaurant', 'Dining Out', 1), ('sushi', 'Dining Out', 1), ('cafe', 'Dining Out', 1),
+        ]
+        for match_text, category_name, spread in rules:
+            CategoryRule.objects.create(
+                user=user, match_text=match_text,
+                category=categories[category_name], spread_months=spread,
+            )
+
+        rng = random.Random(user.username)  # deterministic per user
+        today = date.today()
+        grocery_shops = ['REWE Markt', 'EDEKA', 'Lidl']
+        dining_spots = ['Restaurant Roma', 'Sushi Bar Tokyo', 'Cafe Central']
+
+        rows = []
+
+        def add(account, day, amount, counterparty, description):
+            if day > today:
+                return
+            rows.append(Transaction(
+                account=account, booking_date=day, value_date=day,
+                amount=Decimal(str(amount)), currency='EUR',
+                counterparty=counterparty, description=description,
+                source='fints', dedup_key=f'demo:{len(rows)}',
+            ))
+
+        for months_back in range(13, -1, -1):
+            month_index = (today.year * 12 + today.month - 1) - months_back
+            year, month = month_index // 12, month_index % 12 + 1
+
+            def on(day):
+                return date(year, month, day)
+
+            add(checking, on(1), '-1250.00', 'Hausverwaltung Meier', 'Miete')
+            add(checking, on(3), '-12.90', 'Netflix', 'Abo')
+            add(checking, on(15), '-49.99', 'Telekom Deutschland', 'Mobilfunk Rechnung')
+            add(checking, on(25), '3450.00', 'ACME GmbH', 'Gehalt')
+            # Monthly savings transfer pair — detected and excluded from spending.
+            add(checking, on(26), '-500.00', 'Eigenübertrag', 'Dauerauftrag Sparen')
+            add(savings, on(min(27, 28)), '500.00', 'Eigenübertrag', 'Dauerauftrag Sparen')
+            for _ in range(rng.randint(6, 9)):
+                add(checking, on(rng.randint(2, 28)),
+                    f'-{rng.uniform(15, 95):.2f}', rng.choice(grocery_shops), 'Einkauf')
+            for _ in range(rng.randint(2, 4)):
+                add(checking, on(rng.randint(2, 28)),
+                    f'-{rng.uniform(18, 60):.2f}', rng.choice(dining_spots), '')
+            if month == 8:  # yearly insurance bill, amortized via the AXA rule
+                add(checking, on(10), '-948.00', 'AXA Versicherung', 'Jahresbeitrag Haftpflicht KFZ')
+
+        Transaction.objects.bulk_create(rows)
+        categorized = apply_rules(user)
+        transfers = detect_transfers(user)
+        self.stdout.write(
+            f'  Created {len(rows)} transactions '
+            f'({categorized} categorized, {transfers} marked as transfers)'
+        )
 
     def _create_demo_accounts(self, user, profile):
         """Create demo accounts with historical snapshots."""
