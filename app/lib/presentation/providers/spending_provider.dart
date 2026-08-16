@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/ai_categorization.dart';
 import '../../data/models/spending.dart';
+import '../../data/models/transactions.dart';
 import '../../data/repositories/spending_repository.dart';
 import 'core_providers.dart';
 
@@ -60,4 +62,38 @@ final spendingReportProvider = FutureProvider<SpendingReport>((ref) async {
     months: ref.watch(spendingRangeProvider),
     mode: ref.watch(spendingModeProvider),
   );
+});
+
+/// The user's spending categories.
+final categoriesProvider =
+    FutureProvider<List<TransactionCategory>>((ref) async {
+  return ref.watch(spendingRepositoryProvider).getCategories();
+});
+
+/// Auto-categorization rules, in evaluation order (first match wins).
+final categoryRulesProvider = FutureProvider<List<CategoryRule>>((ref) async {
+  return ref.watch(spendingRepositoryProvider).getRules();
+});
+
+/// Account whose transactions are listed; null until accounts have loaded.
+final transactionsAccountProvider =
+    NotifierProvider<TransactionsAccountNotifier, int?>(
+        TransactionsAccountNotifier.new);
+
+class TransactionsAccountNotifier extends Notifier<int?> {
+  @override
+  int? build() => null;
+
+  void set(int? value) => state = value;
+}
+
+/// First page of transactions for an account.
+final accountTransactionsProvider =
+    FutureProvider.family<TransactionPage, int>((ref, accountId) async {
+  return ref.watch(spendingRepositoryProvider).getAccountTransactions(accountId);
+});
+
+/// Gemini configuration (key presence, selected model, price snapshot).
+final aiConfigProvider = FutureProvider<AiConfig>((ref) async {
+  return ref.watch(spendingRepositoryProvider).getAiConfig();
 });

@@ -1,0 +1,296 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../data/models/ai_categorization.dart';
+import '../providers/spending_provider.dart';
+
+/// Review screen for Gemini's proposals.
+///
+/// Nothing here is stored until the user confirms: every suggestion and rule is
+/// individually selectable, and only the ticked ones are sent to the apply
+/// endpoint.
+class AiSuggestionsScreen extends ConsumerStatefulWidget {
+  const AiSuggestionsScreen({super.key});
+
+  @override
+  ConsumerState<AiSuggestionsScreen> createState() =>
+      _AiSuggestionsScreenState();
+}
+
+class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
+  AiSuggestResponse? _result;
+  final _acceptedTx = <int>{};
+  final _acceptedRules = <int>{};
+  bool _busy = false;
+  String? _error;
+  String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    // The request is the point of the screen — start it immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _suggest());
+  }
+
+  Future<void> _suggest() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final result =
+          await ref.read(spendingRepositoryProvider).suggestCategories();
+      setState(() {
+        _result = result;
+        _acceptedTx
+          ..clear()
+          ..addAll(result.suggestions.map((s) => s.transactionId));
+        _acceptedRules
+          ..clear()
+          ..addAll(List.generate(result.rules.length, (i) => i));
+        _busy = false;
+        if (result.sentCount == 0) {
+          _notice = 'Nothing to categorize — everything already has a category.';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  Future<void> _apply() async {
+    final result = _result;
+    if (result == null) return;
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final outcome =
+          await ref.read(spendingRepositoryProvider).applyAiSuggestions(
+                assignments: result.suggestions
+                    .where((s) => _acceptedTx.contains(s.transactionId))
+                    .toList(),
+                rules: [
+                  for (var i = 0; i < result.rules.length; i++)
+                    if (_acceptedRules.contains(i)) result.rules[i],
+                ],
+              );
+      ref.invalidate(spendingReportProvider);
+      ref.invalidate(categoriesProvider);
+      ref.invalidate(categoryRulesProvider);
+      final accountId = ref.read(transactionsAccountProvider);
+      if (accountId != null) {
+        ref.invalidate(accountTransactionsProvider(accountId));
+      }
+      messenger.showSnackBar(SnackBar(
+        content: Text('${outcome['assigned']} categorized, '
+            '${outcome['rules_created']} rules created'),
+      ));
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final result = _result;
+    final selected = _acceptedTx.length + _acceptedRules.length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('AI suggestions'),
+        actions: [
+          if (result != null)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Ask again',
+              onPressed: _busy ? null : _suggest,
+            ),
+        ],
+      ),
+      body: _busy && result == null
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('Asking Gemini…'),
+                ],
+              ),
+            )
+          : _error != null
+              ? _ErrorBody(message: _error!, onRetry: _suggest)
+              : result == null
+                  ? const SizedBox.shrink()
+                  : _Review(
+                      result: result,
+                      notice: _notice,
+                      acceptedTx: _acceptedTx,
+                      acceptedRules: _acceptedRules,
+                      onToggleTx: (id) => setState(() =>
+                          _acceptedTx.contains(id)
+                              ? _acceptedTx.remove(id)
+                              : _acceptedTx.add(id)),
+                      onToggleRule: (i) => setState(() =>
+                          _acceptedRules.contains(i)
+                              ? _acceptedRules.remove(i)
+                              : _acceptedRules.add(i)),
+                    ),
+      bottomNavigationBar: result == null || result.suggestions.isEmpty
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: FilledButton(
+                  onPressed: _busy || selected == 0 ? null : _apply,
+                  child: Text('Apply selected ($selected)'),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _Review extends StatelessWidget {
+  final AiSuggestResponse result;
+  final String? notice;
+  final Set<int> acceptedTx;
+  final Set<int> acceptedRules;
+  final void Function(int) onToggleTx;
+  final void Function(int) onToggleRule;
+
+  const _Review({
+    required this.result,
+    required this.notice,
+    required this.acceptedTx,
+    required this.acceptedRules,
+    required this.onToggleTx,
+    required this.onToggleRule,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ListView(
+      children: [
+        if (notice != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(notice!),
+          ),
+        if (result.suggestions.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              'Categories for ${result.suggestions.length} of '
+              '${result.sentCount} transactions'
+              '${result.totalUncategorized > result.sentCount ? ' · ${result.totalUncategorized - result.sentCount} more remain uncategorized' : ''}',
+              style: theme.textTheme.labelMedium,
+            ),
+          ),
+          for (final s in result.suggestions)
+            CheckboxListTile(
+              value: acceptedTx.contains(s.transactionId),
+              onChanged: (_) => onToggleTx(s.transactionId),
+              title: Text(
+                s.counterparty.isEmpty ? s.description : s.counterparty,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text('${s.bookingDate} · ${s.amount} ${s.currency}'),
+              secondary: _CategoryLabel(
+                  name: s.category, isNew: s.isNewCategory),
+            ),
+        ],
+        if (result.rules.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              'Rules — these categorize future transactions without AI',
+              style: theme.textTheme.labelMedium,
+            ),
+          ),
+          for (var i = 0; i < result.rules.length; i++)
+            CheckboxListTile(
+              value: acceptedRules.contains(i),
+              onChanged: (_) => onToggleRule(i),
+              title: Text(result.rules[i].matchText),
+              subtitle: Text('→ ${result.rules[i].category}'),
+              secondary: result.rules[i].isNewCategory
+                  ? const _CategoryLabel(name: 'NEW', isNew: true)
+                  : null,
+            ),
+        ],
+        if (result.usage != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'Tokens: ${result.usage!.inputTokens} in / '
+              '${result.usage!.outputTokens} out'
+              '${result.usage!.estimatedCostUsd != null ? ' — about \$${result.usage!.estimatedCostUsd}' : ''}',
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CategoryLabel extends StatelessWidget {
+  final String name;
+  final bool isNew;
+  const _CategoryLabel({required this.name, required this.isNew});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isNew ? const Color(0xFFA3E635) : theme.dividerColor,
+        ),
+      ),
+      child: Text(
+        name,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: isNew ? const Color(0xFFA3E635) : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBody extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorBody({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const SizedBox(height: 60),
+        Icon(Icons.error_outline,
+            color: Theme.of(context).colorScheme.error, size: 40),
+        const SizedBox(height: 12),
+        Text(message, textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        Center(
+          child: OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+        ),
+      ],
+    );
+  }
+}

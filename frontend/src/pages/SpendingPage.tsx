@@ -52,6 +52,9 @@ const MODES = [
 
 const RANGES = [6, 12, 24];
 
+// Default history window for a one-off import.
+const DEFAULT_BACKFILL_MONTHS = 15;
+
 interface AccountOption {
   id: number;
   name: string;
@@ -99,6 +102,7 @@ export default function SpendingPage() {
   const [backfillAccount, setBackfillAccount] = useState<number | ''>('');
   const [backfillStart, setBackfillStart] = useState('');
   const [backfillEnd, setBackfillEnd] = useState('');
+  const [backfillDefaultRange, setBackfillDefaultRange] = useState(true);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillNotice, setBackfillNotice] = useState('');
 
@@ -312,15 +316,24 @@ export default function SpendingPage() {
     }
   };
 
+  // Default window: the last DEFAULT_BACKFILL_MONTHS months up to today, so a
+  // full year of history plus the current partial month is covered in one go.
+  const defaultBackfillStart = () => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - DEFAULT_BACKFILL_MONTHS);
+    return d.toISOString().slice(0, 10);
+  };
+
   const handleBackfill = async () => {
-    if (backfillAccount === '' || !backfillStart) return;
+    if (backfillAccount === '') return;
+    const start = backfillDefaultRange ? defaultBackfillStart() : backfillStart;
+    const end = backfillDefaultRange ? undefined : (backfillEnd || undefined);
+    if (!start) return;
     setError('');
     setBackfillNotice('');
     setBackfillBusy(true);
     try {
-      const outcome = await backfillTransactions(
-        backfillAccount, backfillStart, backfillEnd || undefined,
-      );
+      const outcome = await backfillTransactions(backfillAccount, start, end);
       if (outcome.status === 'error') {
         setError(outcome.error || 'Backfill failed');
       } else {
@@ -750,22 +763,37 @@ export default function SpendingPage() {
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
-            <input
-              type="date"
-              aria-label="Start date"
-              value={backfillStart}
-              onChange={(e) => setBackfillStart(e.target.value)}
-            />
-            <input
-              type="date"
-              aria-label="End date (defaults to today)"
-              value={backfillEnd}
-              onChange={(e) => setBackfillEnd(e.target.value)}
-            />
+            <label className="spending-switch">
+              <input
+                type="checkbox"
+                checked={backfillDefaultRange}
+                onChange={(e) => setBackfillDefaultRange(e.target.checked)}
+              />
+              Last {DEFAULT_BACKFILL_MONTHS} months
+            </label>
+            {!backfillDefaultRange && (
+              <>
+                <input
+                  type="date"
+                  aria-label="Start date"
+                  value={backfillStart}
+                  onChange={(e) => setBackfillStart(e.target.value)}
+                />
+                <input
+                  type="date"
+                  aria-label="End date (defaults to today)"
+                  value={backfillEnd}
+                  onChange={(e) => setBackfillEnd(e.target.value)}
+                />
+              </>
+            )}
             <button
               className="btn btn-sm btn-primary"
               onClick={handleBackfill}
-              disabled={backfillBusy || backfillAccount === '' || !backfillStart}
+              disabled={
+                backfillBusy || backfillAccount === ''
+                || (!backfillDefaultRange && !backfillStart)
+              }
             >
               <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
             </button>

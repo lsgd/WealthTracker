@@ -8,6 +8,10 @@ class ApiConfig {
   /// FinTS banks like DKB poll for up to 5 minutes waiting for push approval.
   static const Duration syncTimeout = Duration(minutes: 6);
 
+  /// A Gemini suggestion round covers up to 100 transactions; the model can
+  /// take well over the default 30s to answer.
+  static const Duration aiSuggestTimeout = Duration(minutes: 3);
+
   /// API endpoints
   static const String loginPath = '/api/auth/login/';
   static const String refreshPath = '/api/auth/refresh/';
@@ -34,6 +38,15 @@ class ApiConfig {
   static const String syncAllPath = '/api/accounts/sync/';
 
   static const String spendingMonthlyPath = '/api/spending/monthly/';
+  static const String spendingCategoriesPath = '/api/spending/categories/';
+  static const String spendingRulesPath = '/api/spending/rules/';
+  static const String spendingRulesReorderPath = '/api/spending/rules/reorder/';
+  static const String transactionsPath = '/api/transactions/';
+  static const String aiConfigPath = '/api/spending/ai/config/';
+  static const String aiModelsPath = '/api/spending/ai/models/';
+  static const String aiRefreshPricingPath = '/api/spending/ai/refresh-pricing/';
+  static const String aiSuggestPath = '/api/spending/ai/suggest/';
+  static const String aiApplyPath = '/api/spending/ai/apply/';
 
   static String syncTaskStatusPath(String taskId) =>
       '/api/accounts/sync/$taskId/';

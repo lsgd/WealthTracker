@@ -6,6 +6,8 @@
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
 - Sync results (synced count or per-account errors) are now also shown after automatic syncs
 - New Spending screen (chart icon on the start screen): month-to-month spending by category, with a normalized view that spreads yearly bills across their months, and a per-month breakdown you can step through
+- Spending screen now has a Transactions tab: pick an account and assign a category to any transaction by tapping it
+- Spending settings (tune icon): manage categorization rules including drag-to-reorder, and request Gemini category suggestions to review and confirm (the Gemini key and model are still configured in the web app)
 - Bug fixes and improvements.
 
 ## 1.3.8

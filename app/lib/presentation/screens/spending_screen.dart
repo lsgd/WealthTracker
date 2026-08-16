@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/models/spending.dart';
 import '../providers/spending_provider.dart';
+import '../widgets/transactions_tab.dart';
+import 'spending_config_screen.dart';
 
 /// Category palette. Deliberately excludes the income color so the income line
 /// never shares a color with a category (same rule as the web UI).
@@ -31,16 +33,42 @@ class SpendingScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final report = ref.watch(spendingReportProvider);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Spending')),
-      body: RefreshIndicator(
-        onRefresh: () async => ref.refresh(spendingReportProvider.future),
-        child: report.when(
-          data: (data) => data.months.isEmpty
-              ? const _EmptyState()
-              : _SpendingBody(report: data),
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => _ErrorState(message: e.toString()),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Spending'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.tune),
+              tooltip: 'Rules and AI',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const SpendingConfigScreen()),
+              ),
+            ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Insights'),
+              Tab(text: 'Transactions'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            RefreshIndicator(
+              onRefresh: () async => ref.refresh(spendingReportProvider.future),
+              child: report.when(
+                data: (data) => data.months.isEmpty
+                    ? const _EmptyState()
+                    : _SpendingBody(report: data),
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => _ErrorState(message: e.toString()),
+              ),
+            ),
+            const TransactionsTab(),
+          ],
         ),
       ),
     );

@@ -2441,3 +2441,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   min-width: 260px;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
+
+.spending-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  white-space: nowrap;
+}
