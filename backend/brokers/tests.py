@@ -1069,3 +1069,64 @@ class FinTSTransactionTests(TestCase):
             integration.get_transactions('DE02120300000000202051', date(2026, 8, 1), date(2026, 8, 3)),
             [],
         )
+
+
+class ZKBEbicsDatedTransactionTests(TestCase):
+    """History backfill must request the period explicitly (dated, non-consuming)."""
+
+    def setUp(self):
+        self.integration = ZKBEbicsIntegration({})
+        self.integration._client = MagicMock()
+
+    def test_dated_range_download_is_non_consuming(self):
+        from ebicsclient import ReceiptPolicy
+        self.integration._client.download.return_value = CAMT053_SAMPLE
+        txs = self.integration.get_transactions_for_range(
+            'CH9300762011623852957', date(2026, 7, 1), date(2026, 7, 31),
+        )
+        self.assertEqual(len(txs), 2)
+        # HPB must run before a download, and the read must not consume the data.
+        self.integration._client.hpb.assert_called_once()
+        kwargs = self.integration._client.download.call_args.kwargs
+        self.assertEqual(kwargs['receipt_policy'], ReceiptPolicy.KEEP)
+        self.assertEqual(
+            (kwargs['date_range'].start, kwargs['date_range'].end),
+            (date(2026, 7, 1), date(2026, 7, 31)),
+        )
+        # ...and it must NOT fall back to the pending delivery.
+        self.assertIsNone(self.integration._raw)
+
+    def test_dated_range_filters_out_of_range_entries(self):
+        self.integration._client.download.return_value = CAMT053_SAMPLE
+        txs = self.integration.get_transactions_for_range(
+            'CH9300762011623852957', date(2026, 7, 28), date(2026, 7, 31),
+        )
+        self.assertEqual([t.external_id for t in txs], ['REF-001'])
+
+    def test_no_data_for_period_is_empty_not_an_error(self):
+        from ebicsclient import ReturnCodeError
+        self.integration._client.download.side_effect = ReturnCodeError(code='090005')
+        self.assertEqual(
+            self.integration.get_transactions_for_range(
+                'CH9300762011623852957', date(2020, 1, 1), date(2020, 12, 31),
+            ),
+            [],
+        )
+
+    def test_bank_ignoring_the_range_fails_with_a_clear_message(self):
+        from ebicsclient import DateRangeMismatchError
+        self.integration._client.download.side_effect = DateRangeMismatchError('mismatch')
+        with self.assertRaises(ValueError) as ctx:
+            self.integration.get_transactions_for_range(
+                'CH9300762011623852957', date(2020, 1, 1), date(2020, 12, 31),
+            )
+        self.assertIn('ignored the requested period', str(ctx.exception))
+
+    def test_default_implementation_delegates_to_get_transactions(self):
+        """FinTS-style integrations query the range directly — default must pass through."""
+        from brokers.integrations.fints_integration import FinTSIntegration
+        integration = FinTSIntegration({'username': 'u', 'pin': 'p'}, 'BLZ', 'https://x')
+        with patch.object(integration, 'get_transactions', return_value=['sentinel']) as m:
+            result = integration.get_transactions_for_range('DE00', date(2026, 1, 1), date(2026, 2, 1))
+        self.assertEqual(result, ['sentinel'])
+        m.assert_called_once_with('DE00', date(2026, 1, 1), date(2026, 2, 1))

@@ -1124,6 +1124,11 @@ class BackfillImporterTests(TestCase):
             def supports_transactions(self):
                 return True
 
+            # Backfill goes through get_transactions_for_range (dated request),
+            # which defaults to get_transactions for range-querying feeds.
+            def get_transactions_for_range(self, identifier, start, end):
+                return self.get_transactions(identifier, start, end)
+
             def get_transactions(self, identifier, start, end):
                 calls.append((start, end))
                 return infos

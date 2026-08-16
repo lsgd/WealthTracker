@@ -104,7 +104,11 @@ def backfill_account_transactions(account, integration, start_date, end_date) ->
     if not integration.supports_transactions():
         return 0
 
-    infos = integration.get_transactions(account.account_identifier, start_date, end_date)
+    # Not get_transactions(): backfill must query the period explicitly, which for
+    # some feeds (EBICS) is a different request than the regular sync's.
+    infos = integration.get_transactions_for_range(
+        account.account_identifier, start_date, end_date,
+    )
     if not infos:
         return 0
 

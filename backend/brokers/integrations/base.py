@@ -153,6 +153,22 @@ class BrokerIntegrationBase(ABC):
         """
         return []
 
+    def get_transactions_for_range(
+        self,
+        account_identifier: str,
+        start_date: date,
+        end_date: date
+    ) -> List['TransactionInfo']:
+        """
+        Fetch transactions for an explicit PAST range (history backfill).
+
+        Defaults to ``get_transactions``, which is correct for brokers that
+        query the range directly (e.g. FinTS). Override where the normal sync
+        reads a pending delivery instead of a queried period (e.g. EBICS, which
+        needs a dated download to see anything older than the current delivery).
+        """
+        return self.get_transactions(account_identifier, start_date, end_date)
+
     def get_historical_balances(
         self,
         account_identifier: str,

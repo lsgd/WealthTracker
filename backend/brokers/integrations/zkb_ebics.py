@@ -89,15 +89,20 @@ def _statement_to_balance(stmt, bal) -> BalanceInfo:
     )
 
 
-def _download_raw_or_none(client, *, receipt_policy=None):
+def _download_raw_or_none(client, *, date_range=None, receipt_policy=None):
     """``client.download(CAMT_053, ...)`` returning the raw order-data bytes, or ``None``
-    when the bank reports "no data available" (090005 — a routine empty result)."""
+    when the bank reports "no data available" (090005 — a routine empty result).
+
+    ``date_range`` requests a specific reporting period (dated download) instead of
+    the not-yet-delivered data.
+    """
     from ebicsclient import CAMT_053, ReceiptPolicy, ReturnCodeError
 
+    kwargs = {'receipt_policy': receipt_policy or ReceiptPolicy.ACKNOWLEDGE}
+    if date_range is not None:
+        kwargs['date_range'] = date_range
     try:
-        return client.download(
-            CAMT_053, receipt_policy=receipt_policy or ReceiptPolicy.ACKNOWLEDGE,
-        )
+        return client.download(CAMT_053, **kwargs)
     except ReturnCodeError as e:
         if getattr(e, 'code', None) == _EBICS_NO_DOWNLOAD_DATA_AVAILABLE:
             logger.info('EBICS: no statement to download (090005) — treating as empty')
@@ -370,7 +375,40 @@ class ZKBEbicsIntegration(BrokerIntegrationBase):
         self._get_statements()  # ensure the raw order data is fetched (or confirmed empty)
         if self._raw is None:
             return []
-        by_iban = parse_camt053_transactions(self._raw)
+        return self._entries_in_range(self._raw, account_identifier, start_date, end_date)
+
+    def get_transactions_for_range(self, account_identifier, start_date, end_date):
+        """Booked entries for a PAST period via a dated, non-consuming download.
+
+        The regular sync reads whatever the bank has queued for delivery, which
+        cannot reach further back than the current delivery — so history backfill
+        must request the period explicitly. ``ReceiptPolicy.KEEP`` means this does
+        not consume anything a later sync still needs. Whether the bank re-serves
+        an already-delivered period is bank-specific (ZKB does).
+        """
+        from ebicsclient import DateRange, DateRangeMismatchError, ReceiptPolicy
+
+        if self._client is None:
+            self._client = self._build_client()
+        self._client.hpb(pinned=self._pinned_hashes())
+        try:
+            raw = _download_raw_or_none(
+                self._client,
+                date_range=DateRange(start_date, end_date),
+                receipt_policy=ReceiptPolicy.KEEP,
+            )
+        except DateRangeMismatchError:
+            raise ValueError(
+                'The bank ignored the requested period and returned other data — '
+                'no transactions were imported. Try a shorter or more recent range.'
+            )
+        if raw is None:
+            return []
+        return self._entries_in_range(raw, account_identifier, start_date, end_date)
+
+    @staticmethod
+    def _entries_in_range(raw, account_identifier, start_date, end_date):
+        by_iban = parse_camt053_transactions(raw)
         return [
             info for info in by_iban.get(account_identifier, [])
             if start_date <= info.booking_date <= end_date
