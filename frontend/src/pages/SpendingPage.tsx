@@ -410,8 +410,8 @@ export default function SpendingPage() {
                 <XAxis dataKey="month" stroke="#8b93a7" fontSize={12} />
                 <YAxis stroke="#8b93a7" fontSize={12} />
                 <Tooltip
-                  formatter={(value: number | string, name: string) =>
-                    [formatAmount(Number(value), currency), name]}
+                  formatter={(value, name) =>
+                    [formatAmount(Number(value ?? 0), currency), String(name)]}
                   // Income first, then categories in report order (largest total first).
                   itemSorter={(item) => (item.name === 'Income'
                     ? -1
