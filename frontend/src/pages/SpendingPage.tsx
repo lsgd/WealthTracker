@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowLeftRight, ChevronLeft, ChevronRight, History, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import type {
   CategoryRule,
@@ -33,6 +33,7 @@ import {
   getCategories,
   getCategoryRules,
   getSpendingMonthly,
+  reorderCategoryRules,
 } from '../api/client';
 
 // Category palette. Deliberately does NOT contain INCOME_COLOR so the income
@@ -89,6 +90,7 @@ export default function SpendingPage() {
   const [ruleText, setRuleText] = useState('');
   const [ruleCategory, setRuleCategory] = useState<number | '' | '__new__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
+  const [draggedRule, setDraggedRule] = useState<number | null>(null);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [savingRule, setSavingRule] = useState(false);
@@ -279,6 +281,25 @@ export default function SpendingPage() {
       await saveRule(category.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create category');
+    }
+  };
+
+  // Drag-and-drop rule ordering: rules are first-match-wins, so a more specific
+  // rule has to be able to sit above a broader one.
+  const handleRuleDrop = async (targetIndex: number) => {
+    const from = draggedRule;
+    setDraggedRule(null);
+    if (from === null || from === targetIndex) return;
+    const next = [...rules];
+    const [moved] = next.splice(from, 1);
+    next.splice(targetIndex, 0, moved);
+    setRules(next); // optimistic — the server echoes the persisted order back
+    try {
+      setRules(await reorderCategoryRules(next.map((r) => r.id)));
+      loadReport();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to reorder rules');
+      getCategoryRules().then(setRules).catch(() => {});
     }
   };
 
@@ -644,11 +665,23 @@ export default function SpendingPage() {
           <p className="form-hint">
             Match text is compared against counterparty and description. New rules apply
             to all still-uncategorized transactions. A spread of 12 shows a yearly bill
-            as one twelfth per month in the normalized view.
+            as one twelfth per month in the normalized view. Rules are checked top to
+            bottom and the first match wins — drag to reorder, so a specific rule can sit
+            above a broader one.
           </p>
           <div className="spending-rules">
-            {rules.map((rule) => (
-              <div key={rule.id} className="spending-rule-row">
+            {rules.map((rule, index) => (
+              <div
+                key={rule.id}
+                className={`spending-rule-row spending-rule-draggable ${draggedRule === index ? 'dragging' : ''}`}
+                draggable
+                onDragStart={() => setDraggedRule(index)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => handleRuleDrop(index)}
+                onDragEnd={() => setDraggedRule(null)}
+              >
+                <GripVertical size={14} className="spending-rule-grip" />
+                <span className="spending-rule-index">{index + 1}</span>
                 <code>{rule.match_text}</code>
                 <span>→ {rule.category_name}</span>
                 {rule.spread_months > 1 && <span className="spending-spread-badge">/{rule.spread_months} months</span>}

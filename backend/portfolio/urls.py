@@ -22,12 +22,14 @@ urlpatterns = [
     path('spending/categories/', views.TransactionCategoryListCreateView.as_view(), name='category_list'),
     path('spending/categories/<int:pk>/', views.TransactionCategoryDetailView.as_view(), name='category_detail'),
     path('spending/rules/', views.CategoryRuleListCreateView.as_view(), name='rule_list'),
+    path('spending/rules/reorder/', views.CategoryRuleReorderView.as_view(), name='rule_reorder'),
     path('spending/rules/<int:pk>/', views.CategoryRuleDetailView.as_view(), name='rule_detail'),
     path('spending/detect-transfers/', views.DetectTransfersView.as_view(), name='detect_transfers'),
     path('spending/monthly/', views.SpendingMonthlyView.as_view(), name='spending_monthly'),
     # AI categorization (Gemini)
     path('spending/ai/config/', views.AiConfigView.as_view(), name='ai_config'),
     path('spending/ai/models/', views.AiModelsView.as_view(), name='ai_models'),
+    path('spending/ai/refresh-pricing/', views.AiRefreshPricingView.as_view(), name='ai_refresh_pricing'),
     path('spending/ai/suggest/', views.AiSuggestView.as_view(), name='ai_suggest'),
     path('spending/ai/apply/', views.AiApplyView.as_view(), name='ai_apply'),
     # Account bulk create (discover is in brokers/urls.py to avoid <str:code> catch-all)

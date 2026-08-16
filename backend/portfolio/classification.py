@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 TRANSFER_WINDOW_DAYS = 3
 
 
+def next_rule_position(user) -> int:
+    """Position that appends a new rule after the existing ones."""
+    from django.db.models import Max
+
+    from .models import CategoryRule
+
+    highest = CategoryRule.objects.filter(user=user).aggregate(Max('position'))['position__max']
+    return 0 if highest is None else highest + 1
+
+
 def apply_rules(user, transactions=None) -> int:
     """Apply the user's category rules. Returns the number of transactions updated.
 
@@ -23,7 +33,8 @@ def apply_rules(user, transactions=None) -> int:
     """
     from .models import Transaction
 
-    rules = list(user.category_rules.select_related('category'))
+    # Explicit ordering: first match wins, and the user controls that order.
+    rules = list(user.category_rules.select_related('category').order_by('position', 'id'))
     if not rules:
         return 0
 

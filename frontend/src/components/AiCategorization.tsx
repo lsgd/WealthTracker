@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Check, Sparkles, Trash2 } from 'lucide-react';
-import type { AiConfig, AiModel, AiSuggestResponse } from '../api/client';
+import { Check, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import type { AiConfig, AiModel, AiPricing, AiSuggestResponse } from '../api/client';
 import {
   aiApply,
   aiSuggest,
   deleteAiConfig,
   getAiConfig,
   listAiModels,
+  refreshAiPricing,
   saveAiConfig,
 } from '../api/client';
 
@@ -15,9 +16,16 @@ interface Props {
   onApplied: () => void;
 }
 
-function formatPrice(model: AiModel): string {
+function formatPrice(model: AiModel | AiPricing): string {
   if (model.input_price_per_1m === null) return 'pricing not listed';
   return `$${model.input_price_per_1m} in / $${model.output_price_per_1m} out per 1M tokens`;
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export default function AiCategorization({ onApplied }: Props) {
@@ -62,13 +70,41 @@ export default function AiCategorization({ onApplied }: Props) {
       await saveAiConfig({
         ...(apiKey ? { api_key: apiKey } : {}),
         model: selectedModel,
+        display_name: models?.find((m) => m.id === selectedModel)?.display_name,
       });
       setConfig(await getAiConfig());
-      setEditing(false);
-      setApiKey('');
-      setModels(null);
+      cancelEditing();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setApiKey('');
+    setModels(null);
+    setSelectedModel('');
+    setError('');
+  };
+
+  const refreshPricing = async () => {
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const outcome = await refreshAiPricing();
+      setConfig(await getAiConfig());
+      if (!outcome.model_still_available) {
+        setNotice('Your key no longer lists this model — pick another one under "Change".');
+      } else if (outcome.changed) {
+        setNotice('Pricing updated.');
+      } else {
+        setNotice('Pricing is unchanged.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to refresh pricing');
     } finally {
       setBusy(false);
     }
@@ -158,6 +194,32 @@ export default function AiCategorization({ onApplied }: Props) {
         )}
       </div>
 
+      {config?.configured && config.pricing && !editing && (
+        <div className="ai-model-banner">
+          <div>
+            <div className="ai-model-name">{config.pricing.display_name}</div>
+            <div className="ai-model-price">{formatPrice(config.pricing)}</div>
+            <div className="ai-model-meta">
+              <code>{config.model}</code>
+              {' · prices checked '}{formatDate(config.pricing.checked_at)}
+              {' · from the rate table shipped with this app ('}
+              <a href={config.pricing_source_url} target="_blank" rel="noreferrer">
+                Google's pricing page
+              </a>
+              {')'}
+            </div>
+          </div>
+          <button
+            className="btn btn-sm btn-ghost"
+            title="Re-check the listed price for this model"
+            onClick={refreshPricing}
+            disabled={busy}
+          >
+            <RefreshCw size={14} /> {busy ? 'Checking…' : 'Check prices'}
+          </button>
+        </div>
+      )}
+
       {config && (
         <div className="ai-disclosure">
           <strong>Data sent to Google when you request suggestions:</strong>
@@ -190,6 +252,11 @@ export default function AiCategorization({ onApplied }: Props) {
             >
               {busy ? 'Loading…' : 'Load models'}
             </button>
+            {editing && (
+              <button className="btn btn-sm btn-ghost" onClick={cancelEditing}>
+                Cancel
+              </button>
+            )}
           </div>
           {models && (
             <div className="spending-rule-row spending-rule-new">
@@ -207,11 +274,6 @@ export default function AiCategorization({ onApplied }: Props) {
               >
                 Save
               </button>
-              {editing && (
-                <button className="btn btn-sm btn-ghost" onClick={() => { setEditing(false); setModels(null); setApiKey(''); }}>
-                  Cancel
-                </button>
-              )}
             </div>
           )}
           {!models && (
@@ -223,9 +285,6 @@ export default function AiCategorization({ onApplied }: Props) {
         </div>
       )}
 
-      {config?.configured && !editing && (
-        <p className="form-hint">Model: <code>{config.model}</code></p>
-      )}
 
       {result && result.suggestions.length > 0 && (
         <div className="ai-suggestions">

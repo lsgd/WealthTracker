@@ -133,6 +133,15 @@ class UserProfile(models.Model):
         default='',
         help_text='Selected Gemini model id for category suggestions'
     )
+    gemini_pricing = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Snapshot of the selected model’s listed price, taken when the user '
+            'picked the model or last checked for new prices: '
+            '{display_name, input_price_per_1m, output_price_per_1m, checked_at}'
+        )
+    )
 
     # Demo mode flag
     is_demo_user = models.BooleanField(

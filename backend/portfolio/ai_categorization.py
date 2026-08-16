@@ -82,6 +82,33 @@ def _friendly_error(response) -> str:
     return f'Gemini API error ({response.status_code}): {message}'
 
 
+PRICING_SOURCE_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
+
+# When MODEL_PRICING was last reviewed against Google's published rates. Bump
+# this together with the table; the UI shows it so a stale table is visible
+# rather than silently trusted.
+PRICING_TABLE_UPDATED = '2026-08-14'
+
+
+def pricing_snapshot(model_id: str, display_name=None) -> dict:
+    """The model's listed price plus when this app's price table was reviewed.
+
+    Google exposes no pricing API, so this reads the local table. ``checked_at``
+    records when the user last confirmed it (picking a model or hitting refresh).
+    """
+    from django.utils import timezone
+
+    price = price_for_model(model_id)
+    return {
+        'model': model_id,
+        'display_name': display_name or model_id,
+        'input_price_per_1m': price[0] if price else None,
+        'output_price_per_1m': price[1] if price else None,
+        'checked_at': timezone.now().isoformat(),
+        'table_updated': PRICING_TABLE_UPDATED,
+    }
+
+
 def price_for_model(model_id: str):
     """(input_usd, output_usd) per 1M tokens by longest prefix match, or None."""
     best = None

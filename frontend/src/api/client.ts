@@ -797,6 +797,7 @@ export interface CategoryRule {
   category: number;
   category_name: string;
   spread_months: number;
+  position: number;
 }
 
 export interface Transaction {
@@ -883,6 +884,16 @@ export async function createCategoryRule(fields: {
   return data;
 }
 
+// Rules are evaluated first-match-wins, so their order matters.
+export async function reorderCategoryRules(ids: number[]): Promise<CategoryRule[]> {
+  const res = await fetchWithAuth('/api/spending/rules/reorder/', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error('Failed to reorder rules');
+  return res.json();
+}
+
 export async function deleteCategoryRule(ruleId: number): Promise<void> {
   const res = await fetchWithAuth(`/api/spending/rules/${ruleId}/`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) throw new Error('Failed to delete rule');
@@ -943,9 +954,20 @@ export async function backfillTransactions(
 
 // AI categorization (Gemini)
 
+export interface AiPricing {
+  model: string;
+  display_name: string;
+  input_price_per_1m: number | null;
+  output_price_per_1m: number | null;
+  checked_at: string;
+  table_updated: string;
+}
+
 export interface AiConfig {
   configured: boolean;
   model: string;
+  pricing: AiPricing | null;
+  pricing_source_url: string;
   disclosed_fields: string[];
 }
 
@@ -999,7 +1021,21 @@ export async function getAiConfig(): Promise<AiConfig> {
   return jsonOrThrow(res, 'Failed to load AI configuration');
 }
 
-export async function saveAiConfig(fields: { api_key?: string; model?: string }) {
+export async function refreshAiPricing(): Promise<{
+  pricing: AiPricing;
+  changed: boolean;
+  previous: AiPricing | null;
+  model_still_available: boolean;
+}> {
+  const res = await fetchWithAuth('/api/spending/ai/refresh-pricing/', { method: 'POST' });
+  return jsonOrThrow(res, 'Failed to refresh pricing');
+}
+
+export async function saveAiConfig(fields: {
+  api_key?: string;
+  model?: string;
+  display_name?: string;
+}) {
   const res = await fetchWithAuth('/api/spending/ai/config/', {
     method: 'PUT',
     body: JSON.stringify(fields),

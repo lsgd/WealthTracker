@@ -232,11 +232,17 @@ class CategoryRule(models.Model):
         default=1,
         help_text='Spread matched transactions over this many months (1 = no spread)'
     )
+    position = models.PositiveIntegerField(
+        default=0,
+        help_text='Evaluation order — the first matching rule wins'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'category_rules'
-        ordering = ['id']
+        # Rules are evaluated first-match-wins, so order is meaningful and
+        # user-controlled; id is only the tie-breaker for equal positions.
+        ordering = ['position', 'id']
 
     def __str__(self):
         return f"'{self.match_text}' -> {self.category.name}"

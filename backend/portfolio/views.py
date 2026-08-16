@@ -1094,8 +1094,9 @@ class CategoryRuleListCreateView(generics.ListCreateAPIView):
         return CategoryRule.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-        from .classification import apply_rules
+        from .classification import apply_rules, next_rule_position
+
+        serializer.save(user=self.request.user, position=next_rule_position(self.request.user))
         apply_rules(self.request.user)
 
 
@@ -1105,6 +1106,30 @@ class CategoryRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return CategoryRule.objects.filter(user=self.request.user)
+
+
+class CategoryRuleReorderView(APIView):
+    """Set the evaluation order of the user's rules.
+
+    Body: ``ids`` — the rule ids in the desired order. Rules the payload omits
+    keep their relative order after the listed ones, so a partial or stale list
+    can never drop a rule out of the ordering.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ids = request.data.get('ids')
+        if not isinstance(ids, list):
+            return Response({'error': 'Provide "ids" as a list of rule ids'}, status=400)
+
+        rules = {r.id: r for r in CategoryRule.objects.filter(user=request.user)}
+        ordered = [rules[i] for i in ids if i in rules]
+        ordered += [r for r in rules.values() if r.id not in set(ids)]
+
+        for position, rule in enumerate(ordered):
+            rule.position = position
+        CategoryRule.objects.bulk_update(ordered, ['position'])
+        return Response(CategoryRuleSerializer(ordered, many=True).data)
 
 
 class DetectTransfersView(APIView):
@@ -1126,32 +1151,88 @@ class AiConfigView(KEKAuthenticationMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from .ai_categorization import DISCLOSED_FIELDS
+        from .ai_categorization import DISCLOSED_FIELDS, PRICING_SOURCE_URL
         profile = request.user.profile
         return Response({
             'configured': bool(profile.encrypted_gemini_key),
             'model': profile.gemini_model,
+            'pricing': profile.gemini_pricing,
+            'pricing_source_url': PRICING_SOURCE_URL,
             'disclosed_fields': DISCLOSED_FIELDS,
         })
 
     def put(self, request):
+        from .ai_categorization import pricing_snapshot
+
         profile = request.user.profile
         api_key = request.data.get('api_key')
         model = request.data.get('model')
         if api_key:
             profile.encrypted_gemini_key = self.encrypt_blob(request, {'api_key': api_key})
-        if model is not None:
+        if model is not None and model != profile.gemini_model:
             profile.gemini_model = model
+            # Snapshot what the price was when the user picked this model, so the
+            # UI can show how old that figure is.
+            profile.gemini_pricing = pricing_snapshot(
+                model, request.data.get('display_name'),
+            )
         profile.save()
         return Response({'status': 'success', 'configured': bool(profile.encrypted_gemini_key),
-                         'model': profile.gemini_model})
+                         'model': profile.gemini_model, 'pricing': profile.gemini_pricing})
 
     def delete(self, request):
         profile = request.user.profile
         profile.encrypted_gemini_key = None
         profile.gemini_model = ''
+        profile.gemini_pricing = None
         profile.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AiRefreshPricingView(KEKAuthenticationMixin, APIView):
+    """Re-check the selected model's listed price and stamp the check time.
+
+    Prices are not available from any Google API, so they come from a table
+    maintained in this app (updated with each release). This re-reads that table,
+    confirms the model is still offered to the user's key, and records when the
+    check happened — so the UI can show how current the figure is.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import GeminiError, list_models, pricing_snapshot
+
+        profile = request.user.profile
+        if not profile.encrypted_gemini_key or not profile.gemini_model:
+            return Response({'error': 'Gemini is not configured'}, status=400)
+        api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        try:
+            models = list_models(api_key)
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+        match = next((m for m in models if m['id'] == profile.gemini_model), None)
+        previous = profile.gemini_pricing or {}
+        profile.gemini_pricing = pricing_snapshot(
+            profile.gemini_model,
+            match['display_name'] if match else previous.get('display_name'),
+        )
+        profile.save(update_fields=['gemini_pricing'])
+
+        changed = (
+            previous.get('input_price_per_1m') != profile.gemini_pricing['input_price_per_1m']
+            or previous.get('output_price_per_1m') != profile.gemini_pricing['output_price_per_1m']
+        )
+        return Response({
+            'status': 'success',
+            'pricing': profile.gemini_pricing,
+            'changed': changed,
+            'previous': previous or None,
+            # A model Google no longer offers to this key can still be stored;
+            # say so instead of silently keeping a dead selection.
+            'model_still_available': match is not None,
+        })
 
 
 class AiModelsView(KEKAuthenticationMixin, APIView):
@@ -1283,7 +1364,7 @@ class AiApplyView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from .classification import apply_rules
+        from .classification import apply_rules, next_rule_position
 
         def category_for(name):
             name = str(name).strip()[:64]
@@ -1312,7 +1393,10 @@ class AiApplyView(APIView):
                 continue
             _, created = CategoryRule.objects.get_or_create(
                 user=request.user, match_text=match_text,
-                defaults={'category': category, 'spread_months': 1},
+                defaults={
+                    'category': category, 'spread_months': 1,
+                    'position': next_rule_position(request.user),
+                },
             )
             rules_created += created
 

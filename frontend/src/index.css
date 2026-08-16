@@ -2376,3 +2376,57 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: #a3e635;
   border: 1px solid rgba(163, 230, 53, 0.5);
 }
+
+.ai-model-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.ai-model-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.ai-model-price {
+  font-size: 0.95rem;
+  color: var(--color-success);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.ai-model-meta {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+}
+
+.spending-rule-draggable {
+  cursor: grab;
+  border-radius: 6px;
+  padding-left: 4px;
+}
+.spending-rule-draggable:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.spending-rule-draggable.dragging {
+  opacity: 0.4;
+}
+
+.spending-rule-grip {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.spending-rule-index {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  min-width: 16px;
+  text-align: right;
+}

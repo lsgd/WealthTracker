@@ -1209,3 +1209,142 @@ class AiModelFilterTests(TestCase):
             ('gemini-3.6-flash-001', 'Gemini 3.6 Flash'),
         ])
         self.assertEqual(len(models), 1)
+
+
+class RuleOrderingTests(APITestCase):
+    """Rules are first-match-wins, so their order is user-controlled."""
+
+    def setUp(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.travel = TransactionCategory.objects.create(user=self.user, name='Travel')
+        self.fuel = TransactionCategory.objects.create(user=self.user, name='Fuel')
+        self.CategoryRule = CategoryRule
+        self.client.force_authenticate(user=self.user)
+
+    def _rule(self, match_text, category, position):
+        return self.CategoryRule.objects.create(
+            user=self.user, match_text=match_text, category=category, position=position,
+        )
+
+    def _tx(self, counterparty):
+        from portfolio.models import Transaction
+        return Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1), amount=Decimal('-60'),
+            currency='EUR', counterparty=counterparty, source='camt053',
+            dedup_key=f'k-{counterparty}',
+        )
+
+    def test_first_matching_rule_wins_by_position(self):
+        from portfolio.classification import apply_rules
+        # 'shell' is more specific than 'she'... use a realistic overlap instead:
+        self._rule('tank', self.fuel, position=0)
+        self._rule('tankstelle shop', self.travel, position=1)
+        tx = self._tx('Tankstelle Shop A5')
+        apply_rules(self.user)
+        tx.refresh_from_db()
+        self.assertEqual(tx.category, self.fuel)
+
+    def test_reorder_changes_which_rule_wins(self):
+        from portfolio.classification import apply_rules
+        broad = self._rule('tank', self.fuel, position=0)
+        specific = self._rule('tankstelle shop', self.travel, position=1)
+        resp = self.client.post(
+            reverse('rule_reorder'), {'ids': [specific.id, broad.id]}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual([r['id'] for r in resp.data], [specific.id, broad.id])
+        tx = self._tx('Tankstelle Shop A5')
+        apply_rules(self.user)
+        tx.refresh_from_db()
+        self.assertEqual(tx.category, self.travel)
+
+    def test_reorder_keeps_rules_missing_from_the_payload(self):
+        a = self._rule('aaa', self.fuel, position=0)
+        b = self._rule('bbb', self.fuel, position=1)
+        c = self._rule('ccc', self.fuel, position=2)
+        resp = self.client.post(reverse('rule_reorder'), {'ids': [c.id]}, format='json')
+        self.assertEqual([r['id'] for r in resp.data], [c.id, a.id, b.id])
+
+    def test_reorder_ignores_other_users_rule_ids(self):
+        from portfolio.models import TransactionCategory
+        mine = self._rule('mine', self.fuel, position=0)
+        other, _, _ = make_kek_user(username='bob')
+        foreign_cat = TransactionCategory.objects.create(user=other, name='Theirs')
+        foreign = self.CategoryRule.objects.create(
+            user=other, match_text='theirs', category=foreign_cat, position=0,
+        )
+        resp = self.client.post(
+            reverse('rule_reorder'), {'ids': [foreign.id, mine.id]}, format='json',
+        )
+        self.assertEqual([r['id'] for r in resp.data], [mine.id])
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.position, 0)
+
+    def test_new_rules_are_appended_last(self):
+        self._rule('first', self.fuel, position=0)
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'second', 'category': self.fuel.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['position'], 1)
+
+    def test_legacy_rules_without_positions_keep_creation_order(self):
+        # Existing rows migrate in with position 0; id must break the tie.
+        first = self._rule('aaa', self.fuel, position=0)
+        second = self._rule('bbb', self.travel, position=0)
+        self.assertEqual(
+            [r.id for r in self.CategoryRule.objects.filter(user=self.user)],
+            [first.id, second.id],
+        )
+
+
+class AiPricingRefreshTests(APITestCase):
+    def setUp(self):
+        self.user, self.kek, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash', 'display_name': 'Gemini 3.6 Flash',
+        }, format='json')
+
+    def test_saving_a_model_snapshots_its_price_with_a_timestamp(self):
+        resp = self.client.get(reverse('ai_config'))
+        pricing = resp.data['pricing']
+        self.assertEqual(pricing['display_name'], 'Gemini 3.6 Flash')
+        self.assertEqual(pricing['input_price_per_1m'], 0.75)
+        self.assertEqual(pricing['output_price_per_1m'], 3.75)
+        self.assertTrue(pricing['checked_at'])
+        self.assertTrue(resp.data['pricing_source_url'].startswith('https://'))
+
+    @patch('portfolio.ai_categorization.list_models')
+    def test_refresh_restamps_and_reports_unchanged(self, m_list):
+        m_list.return_value = [{
+            'id': 'gemini-3.6-flash', 'display_name': 'Gemini 3.6 Flash',
+            'input_price_per_1m': 0.75, 'output_price_per_1m': 3.75,
+        }]
+        before = self.client.get(reverse('ai_config')).data['pricing']['checked_at']
+        resp = self.client.post(reverse('ai_refresh_pricing'), {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertFalse(resp.data['changed'])
+        self.assertTrue(resp.data['model_still_available'])
+        self.assertGreaterEqual(resp.data['pricing']['checked_at'], before)
+
+    @patch('portfolio.ai_categorization.list_models')
+    def test_refresh_flags_a_model_the_key_no_longer_offers(self, m_list):
+        m_list.return_value = [{
+            'id': 'gemini-9-flash', 'display_name': 'Other',
+            'input_price_per_1m': None, 'output_price_per_1m': None,
+        }]
+        resp = self.client.post(reverse('ai_refresh_pricing'), {}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.data['model_still_available'])
+
+    def test_refresh_requires_configuration(self):
+        self.client.delete(reverse('ai_config'))
+        resp = self.client.post(reverse('ai_refresh_pricing'), {}, format='json')
+        self.assertEqual(resp.status_code, 400)

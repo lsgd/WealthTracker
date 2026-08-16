@@ -58,7 +58,8 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CategoryRule
-        fields = ['id', 'match_text', 'category', 'category_name', 'spread_months']
+        fields = ['id', 'match_text', 'category', 'category_name', 'spread_months', 'position']
+        read_only_fields = ['position']
 
     def validate_category(self, category):
         request = self.context.get('request')
