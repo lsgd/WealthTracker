@@ -1156,3 +1156,56 @@ class BackfillImporterTests(TestCase):
             0,
         )
         self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+
+
+class AiModelFilterTests(TestCase):
+    """The model picker must only offer general-purpose text models."""
+
+    def _list(self, ids_and_names):
+        from portfolio.ai_categorization import list_models
+        payload = {'models': [
+            {'name': f'models/{mid}', 'displayName': name,
+             'supportedGenerationMethods': ['generateContent']}
+            for mid, name in ids_and_names
+        ]}
+        with patch('portfolio.ai_categorization.requests.get') as m_get:
+            m_get.return_value = MagicMock(status_code=200, json=lambda: payload)
+            return list_models('key')
+
+    def test_excludes_image_speech_robotics_and_tool_variants(self):
+        models = self._list([
+            ('gemini-3.6-flash', 'Gemini 3.6 Flash'),
+            ('gemini-2.5-flash-image', 'Nano Banana'),
+            ('gemini-3-pro-image-preview', 'Nano Banana Pro'),
+            ('gemini-2.5-flash-preview-tts', 'Gemini 2.5 Flash Preview TTS'),
+            ('gemini-robotics-er-2-preview', 'Gemini Robotics-ER 2 Preview'),
+            ('gemini-2.5-computer-use-preview-10-2025', 'Gemini 2.5 Computer Use'),
+            ('gemini-2.5-flash-native-audio-dialog', 'Gemini Live'),
+            ('gemini-embedding-001', 'Gemini Embedding'),
+            ('gemini-3.1-pro-preview-custom-tools', 'Gemini 3.1 Pro Custom Tools'),
+        ])
+        self.assertEqual([m['id'] for m in models], ['gemini-3.6-flash'])
+
+    def test_image_model_never_inherits_a_text_models_price(self):
+        # 'gemini-2.5-flash-image' prefix-matches the 'gemini-2.5-flash' price row.
+        from portfolio.ai_categorization import is_text_model
+        self.assertFalse(is_text_model('gemini-2.5-flash-image'))
+        self.assertEqual(self._list([('gemini-2.5-flash-image', 'Nano Banana')]), [])
+
+    def test_keeps_current_text_models_including_previews_and_aliases(self):
+        models = self._list([
+            ('gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview'),
+            ('gemini-3.5-flash-lite', 'Gemini 3.5 Flash Lite'),
+            ('gemini-flash-latest', 'Gemini Flash Latest'),
+        ])
+        self.assertEqual(
+            sorted(m['id'] for m in models),
+            ['gemini-3.1-pro-preview', 'gemini-3.5-flash-lite', 'gemini-flash-latest'],
+        )
+
+    def test_deduplicates_aliases_of_the_same_model(self):
+        models = self._list([
+            ('gemini-3.6-flash', 'Gemini 3.6 Flash'),
+            ('gemini-3.6-flash-001', 'Gemini 3.6 Flash'),
+        ])
+        self.assertEqual(len(models), 1)

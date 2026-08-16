@@ -184,11 +184,11 @@ export default function AiCategorization({ onApplied }: Props) {
               onChange={(e) => setApiKey(e.target.value)}
             />
             <button
-              className="btn btn-sm btn-ghost"
+              className="btn btn-sm btn-primary"
               onClick={loadModels}
               disabled={busy || (!apiKey && !config?.configured)}
             >
-              Load models
+              {busy ? 'Loading…' : 'Load models'}
             </button>
           </div>
           {models && (

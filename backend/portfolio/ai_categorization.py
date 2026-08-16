@@ -50,6 +50,24 @@ MODEL_PRICING = {
 }
 
 
+# ListModels advertises `generateContent` for image, speech, robotics and
+# computer-use models too, so capability has to be inferred from the model id.
+# Anything matching these is not a general text model and must never appear in
+# the picker (Nano Banana = the `*-image` models; they would also prefix-match a
+# text model's price row and show a wrong price).
+_NON_TEXT_MARKERS = (
+    'image', 'tts', 'audio', 'live', 'dialog', 'robotics', 'computer-use',
+    'embedding', 'aqa', 'vision', 'custom-tool',
+)
+
+
+def is_text_model(model_id: str) -> bool:
+    """True for general-purpose text models — the only ones usable for categorization."""
+    return model_id.startswith('gemini') and not any(
+        marker in model_id for marker in _NON_TEXT_MARKERS
+    )
+
+
 class GeminiError(Exception):
     """A Gemini API call failed; the message is safe to show to the user."""
 
@@ -87,13 +105,20 @@ def list_models(api_key: str) -> list:
         raise GeminiError(_friendly_error(response))
 
     models = []
+    seen_labels = set()
     for model in response.json().get('models', []):
         model_id = model.get('name', '').removeprefix('models/')
-        if not model_id.startswith('gemini'):
+        if not is_text_model(model_id):
             continue
         if 'generateContent' not in model.get('supportedGenerationMethods', []):
             continue
         price = price_for_model(model_id)
+        # Google publishes the same model under several ids (dated snapshots,
+        # aliases); one entry per name+price keeps the picker short.
+        label = (model.get('displayName', model_id), price)
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
         models.append({
             'id': model_id,
             'display_name': model.get('displayName', model_id),
