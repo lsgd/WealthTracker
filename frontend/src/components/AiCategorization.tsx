@@ -196,14 +196,22 @@ export default function AiCategorization({ onApplied }: Props) {
 
       {/* Stays visible while editing too — otherwise you lose sight of what is
           configured exactly when you are about to change it. */}
-      {config?.configured && config.pricing && (
+      {/* Rendered whenever a model is configured — a missing price snapshot
+          must not hide which model is selected. */}
+      {config?.configured && config.model && (
         <div className="ai-model-banner">
           <div>
-            <div className="ai-model-name">{config.pricing.display_name}</div>
-            <div className="ai-model-price">{formatPrice(config.pricing)}</div>
+            <div className="ai-model-name">
+              {config.pricing?.display_name ?? config.model}
+            </div>
+            <div className="ai-model-price">
+              {config.pricing ? formatPrice(config.pricing) : 'price not checked yet'}
+            </div>
             <div className="ai-model-meta">
               <code>{config.model}</code>
-              {' · prices checked '}{formatDate(config.pricing.checked_at)}
+              {config.pricing
+                ? ` · prices checked ${formatDate(config.pricing.checked_at)}`
+                : ' · press “Check prices” to look up the rate'}
               {' · from the rate table shipped with this app ('}
               <a href={config.pricing_source_url} target="_blank" rel="noreferrer">
                 Google's pricing page

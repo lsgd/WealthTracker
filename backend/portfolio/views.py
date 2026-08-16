@@ -1151,8 +1151,18 @@ class AiConfigView(KEKAuthenticationMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from .ai_categorization import DISCLOSED_FIELDS, PRICING_SOURCE_URL
+        from .ai_categorization import (
+            DISCLOSED_FIELDS,
+            PRICING_SOURCE_URL,
+            pricing_snapshot,
+        )
         profile = request.user.profile
+        # A model selected before pricing snapshots existed has none stored.
+        # Fill it in from the local rate table (no API call) so the UI can
+        # always show what the selected model costs.
+        if profile.gemini_model and not profile.gemini_pricing:
+            profile.gemini_pricing = pricing_snapshot(profile.gemini_model)
+            profile.save(update_fields=['gemini_pricing'])
         return Response({
             'configured': bool(profile.encrypted_gemini_key),
             'model': profile.gemini_model,

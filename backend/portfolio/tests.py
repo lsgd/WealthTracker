@@ -1348,3 +1348,37 @@ class AiPricingRefreshTests(APITestCase):
         self.client.delete(reverse('ai_config'))
         resp = self.client.post(reverse('ai_refresh_pricing'), {}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+
+class AiPricingBackfillTests(APITestCase):
+    """A model chosen before pricing snapshots existed must still show a price."""
+
+    def setUp(self):
+        self.user, self.kek, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def test_config_get_fills_a_missing_pricing_snapshot(self):
+        profile = self.user.profile
+        profile.encrypted_gemini_key = b'blob'
+        profile.gemini_model = 'gemini-3.7-flash'
+        profile.gemini_pricing = None  # pre-existing configuration
+        profile.save()
+
+        resp = self.client.get(reverse('ai_config'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['pricing']['input_price_per_1m'], 0.75)
+        self.assertEqual(resp.data['pricing']['model'], 'gemini-3.7-flash')
+        # Persisted, so the timestamp does not move on every read.
+        profile.refresh_from_db()
+        self.assertIsNotNone(profile.gemini_pricing)
+        stamped = profile.gemini_pricing['checked_at']
+        self.assertEqual(
+            self.client.get(reverse('ai_config')).data['pricing']['checked_at'],
+            stamped,
+        )
+
+    def test_no_model_means_no_snapshot(self):
+        resp = self.client.get(reverse('ai_config'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.data['pricing'])

@@ -750,8 +750,9 @@ export default function SpendingPage() {
           <p className="form-hint">
             A sync only fetches transactions newer than the ones already stored. Use this
             to pull an older period once. Re-importing a period you already have changes
-            nothing. How far back a bank serves is bank-specific — EBICS often allows
-            years, FinTS/DKB typically about 90 days.
+            nothing. The default asks for the last {DEFAULT_BACKFILL_MONTHS} months — that
+            is the requested maximum, banks that keep less simply return what they have
+            (EBICS often serves years, FinTS/DKB typically about 90 days).
           </p>
           <div className="spending-rule-row spending-rule-new">
             <select
@@ -769,7 +770,7 @@ export default function SpendingPage() {
                 checked={backfillDefaultRange}
                 onChange={(e) => setBackfillDefaultRange(e.target.checked)}
               />
-              Last {DEFAULT_BACKFILL_MONTHS} months
+              Last {DEFAULT_BACKFILL_MONTHS} months (max)
             </label>
             {!backfillDefaultRange && (
               <>
