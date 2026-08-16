@@ -1,3 +1,4 @@
-- Added Zürcher Kantonalbank (ZKB) as a broker: accounts connect via EBICS and sync end-of-day balances. EBICS credentials are set up once on the web app (one-time key exchange) and shared across all your ZKB accounts.
-- A ZKB account behaves like a manual account until its EBICS key exchange is activated by the bank: it prompts you to add snapshots by hand instead of showing a sync action that would fail.
+- Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
+- A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
+- Sync results (synced count or per-account errors) are now also shown after automatic syncs
 - Bug fixes and improvements.

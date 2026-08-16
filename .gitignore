@@ -27,7 +27,9 @@ docker/.env
 # IDE
 .idea/
 .vscode/
-.claude/
+# Claude Code: keep local state ignored, but track committed skills
+.claude/*
+!.claude/skills/
 *.swp
 *.swo
 *~
