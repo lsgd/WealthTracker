@@ -1145,17 +1145,365 @@ class BackfillImporterTests(TestCase):
             counterparty='Old Shop', external_id='OLD1',
         )]
         integration = self._integration(infos)
-        created = backfill_account_transactions(
+        result = backfill_account_transactions(
             self.account, integration, date(2025, 1, 1), date(2025, 12, 31))
-        self.assertEqual(created, 1)
+        self.assertEqual(result.imported, 1)
         self.assertEqual(integration.calls[0], (date(2025, 1, 1), date(2025, 12, 31)))
         # Re-running the same range imports nothing new.
         self.assertEqual(
             backfill_account_transactions(
-                self.account, integration, date(2025, 1, 1), date(2025, 12, 31)),
+                self.account, integration, date(2025, 1, 1), date(2025, 12, 31)).imported,
             0,
         )
         self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+
+    def test_backfill_reports_the_span_the_bank_actually_served(self):
+        """A bank that serves only the tail of the requested window must say so.
+
+        ZKB's EBICS archive starts at subscriber activation, so a 15-month request
+        can come back with 7 weeks. Reporting only the imported count made that look
+        like a complete import of the requested period.
+        """
+        from portfolio.transaction_importer import backfill_account_transactions
+        infos = [
+            self.TransactionInfo(
+                booking_date=date(2025, 11, 3), amount=Decimal('-20'), currency='CHF',
+                counterparty='Shop', external_id='A1',
+            ),
+            self.TransactionInfo(
+                booking_date=date(2025, 12, 20), amount=Decimal('-35'), currency='CHF',
+                counterparty='Shop', external_id='A2',
+            ),
+        ]
+        result = backfill_account_transactions(
+            self.account, self._integration(infos), date(2025, 1, 1), date(2025, 12, 31))
+
+        self.assertEqual(result.imported, 2)
+        self.assertEqual(result.fetched, 2)
+        self.assertEqual(result.covered_start, date(2025, 11, 3))
+        self.assertEqual(result.covered_end, date(2025, 12, 20))
+        self.assertTrue(result.is_truncated)
+        self.assertIn('2025-11-03', result.describe())
+        self.assertIn("short of the requested", result.describe())
+
+    def test_backfill_covering_the_window_is_not_flagged_truncated(self):
+        from portfolio.transaction_importer import backfill_account_transactions
+        infos = [self.TransactionInfo(
+            booking_date=date(2025, 1, 9), amount=Decimal('-20'), currency='CHF',
+            counterparty='Shop', external_id='B1',
+        )]
+        result = backfill_account_transactions(
+            self.account, self._integration(infos), date(2025, 1, 1), date(2025, 12, 31))
+        self.assertFalse(result.is_truncated)
+        self.assertNotIn('short of the requested', result.describe())
+
+    def test_backfill_with_no_data_says_so(self):
+        from portfolio.transaction_importer import backfill_account_transactions
+        result = backfill_account_transactions(
+            self.account, self._integration([]), date(2025, 1, 1), date(2025, 12, 31))
+        self.assertEqual(result.imported, 0)
+        self.assertFalse(result.is_truncated)
+        self.assertIn('No transactions were returned', result.describe())
+
+
+class StorePositionsTests(TestCase):
+    def setUp(self):
+        from brokers.integrations.base import PositionInfo
+        self.user, _, _ = make_kek_user()
+        broker = Broker.objects.create(code='ibkr', name='IBKR', integration_type='rest')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=broker, name='IBKR', currency='USD',
+        )
+        self.snapshot = AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('1000'), currency='USD',
+            snapshot_date=date(2026, 8, 1),
+        )
+        self.PositionInfo = PositionInfo
+
+    def _info(self, symbol='VT', value='500', quantity='4'):
+        return self.PositionInfo(
+            symbol=symbol, name=f'{symbol} ETF', quantity=Decimal(quantity),
+            price_per_unit=Decimal(value) / Decimal(quantity),
+            market_value=Decimal(value), currency='USD',
+            isin='US9220427424', asset_class='equity',
+        )
+
+    def test_store_positions_replaces_wholesale(self):
+        from portfolio.snapshot_writer import store_positions
+        store_positions(self.snapshot, [self._info('VT'), self._info('VXUS')])
+        self.assertEqual(self.snapshot.positions.count(), 2)
+        # A later sync where VXUS was sold must remove its row.
+        store_positions(self.snapshot, [self._info('VT', value='600')])
+        names = list(self.snapshot.positions.values_list('symbol', flat=True))
+        self.assertEqual(names, ['VT'])
+        self.assertEqual(self.snapshot.positions.get().market_value, Decimal('600'))
+
+    def test_empty_list_does_not_erase_existing_positions(self):
+        from portfolio.snapshot_writer import store_positions
+        store_positions(self.snapshot, [self._info('VT')])
+        self.assertEqual(store_positions(self.snapshot, []), 0)
+        self.assertEqual(self.snapshot.positions.count(), 1)
+
+
+class WealthHoldingsEndpointTests(APITestCase):
+    def setUp(self):
+        self.user, _, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+        broker = Broker.objects.create(code='ibkr', name='IBKR', integration_type='rest')
+        self.acc_a = FinancialAccount.objects.create(
+            user=self.user, broker=broker, name='IBKR', currency='CHF',
+        )
+        self.acc_b = FinancialAccount.objects.create(
+            user=self.user, broker=broker, name='MS', currency='CHF',
+        )
+
+    def _snap_with_position(self, account, snapshot_date, *, isin, symbol, value, quantity):
+        snap = AccountSnapshot.objects.create(
+            account=account, balance=Decimal(value), currency='CHF',
+            snapshot_date=snapshot_date,
+        )
+        PortfolioPosition.objects.create(
+            snapshot=snap, symbol=symbol, isin=isin, name=f'{symbol} ETF',
+            quantity=Decimal(quantity), price_per_unit=Decimal(value) / Decimal(quantity),
+            market_value=Decimal(value), currency='CHF', asset_class='equity',
+        )
+        return snap
+
+    def test_merges_same_isin_across_accounts(self):
+        self._snap_with_position(
+            self.acc_a, date(2026, 8, 1), isin='US9220427424', symbol='VT',
+            value='500', quantity='4')
+        self._snap_with_position(
+            self.acc_b, date(2026, 8, 2), isin='US9220427424', symbol='VT',
+            value='250', quantity='2')
+        resp = self.client.get(reverse('wealth_holdings'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data['holdings']), 1)
+        holding = resp.data['holdings'][0]
+        self.assertEqual(holding['quantity'], 6.0)
+        self.assertEqual(holding['value_base_currency'], 750.0)
+        self.assertEqual(sorted(holding['accounts']), ['IBKR', 'MS'])
+        self.assertEqual(resp.data['as_of'], '2026-08-02')
+
+    def test_uses_latest_snapshot_that_has_positions(self):
+        self._snap_with_position(
+            self.acc_a, date(2026, 8, 1), isin='US9220427424', symbol='VT',
+            value='500', quantity='4')
+        # A newer balance-only snapshot (e.g. from a balance-only sync) must not
+        # hide the holdings that are still current.
+        AccountSnapshot.objects.create(
+            account=self.acc_a, balance=Decimal('510'), currency='CHF',
+            snapshot_date=date(2026, 8, 5),
+        )
+        resp = self.client.get(reverse('wealth_holdings'))
+        self.assertEqual(len(resp.data['holdings']), 1)
+
+    def test_empty_when_no_positions_anywhere(self):
+        resp = self.client.get(reverse('wealth_holdings'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['holdings'], [])
+        self.assertIsNone(resp.data['as_of'])
+
+
+class SimulationEngineTests(TestCase):
+    def _run(self, **overrides):
+        from portfolio.simulation import run_simulation
+        params = dict(
+            start_wealth=100_000, monthly_contribution=1_000,
+            expected_return=0.05, volatility=0.12, inflation=0.02,
+            years=10, paths=500, seed=42,
+        )
+        params.update(overrides)
+        return run_simulation(**params)
+
+    def test_seeded_run_is_deterministic(self):
+        self.assertEqual(self._run(), self._run())
+
+    def test_percentiles_are_monotonic(self):
+        for band in self._run()['bands']:
+            self.assertLessEqual(band['p5'], band['p25'])
+            self.assertLessEqual(band['p25'], band['p50'])
+            self.assertLessEqual(band['p50'], band['p75'])
+            self.assertLessEqual(band['p75'], band['p95'])
+
+    def test_zero_volatility_matches_compound_interest(self):
+        import math
+        result = self._run(volatility=0, years=10, paths=100)
+        # With sigma=0 every path is the deterministic monthly compounding of the
+        # real return (5% - 2% = 3%) plus contributions.
+        rate = math.exp(0.03 / 12)
+        wealth = 100_000.0
+        for _ in range(120):
+            wealth = wealth * rate + 1_000
+        band = result['bands'][-1]
+        self.assertAlmostEqual(band['p50'], wealth, delta=0.01)  # bands round to 2 dp
+        self.assertEqual(band['p5'], band['p95'])
+
+    def test_target_probability_and_median_year(self):
+        result = self._run(target_amount=150_000)
+        target = result['target']
+        self.assertGreaterEqual(target['probability'], 0)
+        self.assertLessEqual(target['probability'], 1)
+        # 100k at 3% real + 12k/year reaches 150k comfortably within 10 years.
+        self.assertIsNotNone(target['median_reached_year'])
+        # An absurd target is (a) never reached by the median and (b) ~0 probability.
+        result = self._run(target_amount=10**12)
+        self.assertIsNone(result['target']['median_reached_year'])
+        self.assertEqual(result['target']['probability'], 0)
+
+    def test_wealth_is_floored_at_zero(self):
+        result = self._run(
+            start_wealth=1_000, monthly_contribution=-5_000, volatility=0,
+            years=2, paths=100,
+        )
+        self.assertEqual(result['bands'][-1]['p50'], 0)
+
+    def test_paths_and_years_are_clamped(self):
+        result = self._run(years=500, paths=5)
+        self.assertEqual(result['years'], 50)
+        self.assertEqual(result['paths'], 100)
+
+
+class SimulationDefaultsTests(TestCase):
+    def setUp(self):
+        self.user, _, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='ibkr', name='IBKR', integration_type='rest')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='IBKR', currency='CHF',
+        )
+
+    def test_market_assumptions_blend_from_holdings(self):
+        from portfolio.simulation import ASSET_CLASS_ASSUMPTIONS, derive_market_assumptions
+        snap = AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('1000'), currency='CHF',
+            snapshot_date=date(2026, 8, 1),
+        )
+        for asset_class, value in (('equity', '600'), ('fixed_income', '400')):
+            PortfolioPosition.objects.create(
+                snapshot=snap, name=asset_class, quantity=Decimal('1'),
+                price_per_unit=Decimal(value), market_value=Decimal(value),
+                currency='CHF', asset_class=asset_class,
+            )
+        expected_return, volatility, weights = derive_market_assumptions(self.user)
+        eq = ASSET_CLASS_ASSUMPTIONS['equity']
+        fi = ASSET_CLASS_ASSUMPTIONS['fixed_income']
+        self.assertAlmostEqual(expected_return, 0.6 * eq[0] + 0.4 * fi[0], places=4)
+        self.assertAlmostEqual(volatility, 0.6 * eq[1] + 0.4 * fi[1], places=4)
+        self.assertAlmostEqual(weights['equity'], 0.6, places=4)
+
+    def test_market_assumptions_fall_back_without_holdings(self):
+        from portfolio.simulation import DEFAULT_RETURN, DEFAULT_VOLATILITY, derive_market_assumptions
+        expected_return, volatility, weights = derive_market_assumptions(self.user)
+        self.assertEqual(expected_return, DEFAULT_RETURN)
+        self.assertEqual(volatility, DEFAULT_VOLATILITY)
+        self.assertEqual(weights, {})
+
+    def test_start_wealth_uses_latest_snapshots(self):
+        from portfolio.simulation import derive_start_wealth
+        AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('500'), currency='CHF',
+            snapshot_date=date(2026, 7, 1),
+        )
+        AccountSnapshot.objects.create(
+            account=self.account, balance=Decimal('750'), currency='CHF',
+            snapshot_date=date(2026, 8, 1),
+        )
+        self.assertEqual(derive_start_wealth(self.user), 750.0)
+
+
+class SimulationEndpointTests(APITestCase):
+    def setUp(self):
+        self.user, _, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+
+    def test_simulation_endpoint_returns_bands_and_parameters(self):
+        resp = self.client.get(reverse('wealth_simulation'), {'seed': 1, 'paths': 200})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data['bands']), resp.data['years'] + 1)
+        for name in ('start_wealth', 'monthly_contribution', 'expected_return',
+                     'volatility', 'inflation'):
+            self.assertIn(name, resp.data['parameters'])
+        # Nothing supplied -> everything derived.
+        self.assertTrue(resp.data['parameters']['start_wealth']['derived'])
+
+    def test_supplied_parameters_are_echoed_as_not_derived(self):
+        resp = self.client.get(reverse('wealth_simulation'), {
+            'seed': 1, 'paths': 200, 'expected_return': '0.06', 'target_amount': '1000',
+        })
+        self.assertEqual(resp.data['parameters']['expected_return']['value'], 0.06)
+        self.assertFalse(resp.data['parameters']['expected_return']['derived'])
+        self.assertIn('target', resp.data)
+
+    def test_invalid_parameter_is_a_400(self):
+        resp = self.client.get(reverse('wealth_simulation'), {'years': 'soon'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('years', resp.data['error'])
+
+
+class SimulationPersistenceTests(APITestCase):
+    """Explicitly sent parameters persist as overrides; untouched ones re-derive."""
+
+    def setUp(self):
+        self.user, _, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('wealth_simulation')
+
+    def _profile(self):
+        self.user.profile.refresh_from_db()
+        return self.user.profile
+
+    def test_sent_parameters_are_stored_and_reused(self):
+        self.client.get(self.url, {'paths': 100, 'expected_return': '0.06', 'years': 20})
+        stored = self._profile().simulation_params
+        self.assertEqual(stored, {'expected_return': 0.06, 'years': 20})
+
+        # A later bare request applies the stored overrides.
+        resp = self.client.get(self.url, {'paths': 100})
+        self.assertEqual(resp.data['years'], 20)
+        parameter = resp.data['parameters']['expected_return']
+        self.assertEqual(parameter['value'], 0.06)
+        self.assertFalse(parameter['derived'])
+        # Untouched parameters still count as derived.
+        self.assertTrue(resp.data['parameters']['volatility']['derived'])
+
+    def test_unsent_parameters_keep_rederiving(self):
+        """A stored override must not freeze the others — esp. start_wealth."""
+        broker = Broker.objects.create(code='viac', name='VIAC', integration_type='rest')
+        account = FinancialAccount.objects.create(
+            user=self.user, broker=broker, name='Acct', currency='CHF',
+        )
+        AccountSnapshot.objects.create(
+            account=account, balance=Decimal('1000'), currency='CHF',
+            snapshot_date=date(2026, 8, 1),
+        )
+        self.client.get(self.url, {'paths': 100, 'expected_return': '0.06'})
+        # Wealth changes: a new snapshot arrives.
+        AccountSnapshot.objects.create(
+            account=account, balance=Decimal('2000'), currency='CHF',
+            snapshot_date=date(2026, 8, 10),
+        )
+        resp = self.client.get(self.url, {'paths': 100})
+        self.assertEqual(resp.data['parameters']['start_wealth']['value'], 2000.0)
+        self.assertTrue(resp.data['parameters']['start_wealth']['derived'])
+
+    def test_empty_parameter_clears_the_override(self):
+        self.client.get(self.url, {'paths': 100, 'volatility': '0.3'})
+        self.assertEqual(self._profile().simulation_params, {'volatility': 0.3})
+        resp = self.client.get(self.url, {'paths': 100, 'volatility': ''})
+        self.assertIsNone(self._profile().simulation_params)
+        self.assertTrue(resp.data['parameters']['volatility']['derived'])
+
+    def test_target_amount_persists_and_clears(self):
+        self.client.get(self.url, {'paths': 100, 'target_amount': '500000'})
+        resp = self.client.get(self.url, {'paths': 100})
+        self.assertEqual(resp.data['target']['amount'], 500000.0)
+        self.client.get(self.url, {'paths': 100, 'target_amount': ''})
+        resp = self.client.get(self.url, {'paths': 100})
+        self.assertNotIn('target', resp.data)
+
+    def test_paths_and_seed_are_never_persisted(self):
+        self.client.get(self.url, {'paths': 100, 'seed': 5})
+        self.assertIsNone(self._profile().simulation_params)
 
 
 class AiModelFilterTests(TestCase):

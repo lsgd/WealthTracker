@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../data/models/holdings.dart';
 import '../../data/models/wealth_summary.dart';
 import '../../data/repositories/wealth_repository.dart';
 import 'core_providers.dart';
@@ -80,6 +81,12 @@ class ChartGranularityNotifier extends Notifier<String> {
 
   bool get isForced => _forced;
 }
+
+/// Current per-asset holdings (empty until a positions-capable broker synced).
+final wealthHoldingsProvider = FutureProvider<HoldingsReport>((ref) async {
+  final repository = ref.watch(wealthRepositoryProvider);
+  return repository.getHoldings();
+});
 
 /// Provider for wealth history based on current chart settings.
 final wealthHistoryProvider =

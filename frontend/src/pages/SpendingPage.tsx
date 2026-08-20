@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import type {
   CategoryRule,
@@ -105,6 +105,9 @@ export default function SpendingPage() {
   const [backfillDefaultRange, setBackfillDefaultRange] = useState(true);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillNotice, setBackfillNotice] = useState('');
+  // A short-served range is not an error, but it must not read like a success either:
+  // the chart's earlier months stay empty and only this notice explains why.
+  const [backfillTruncated, setBackfillTruncated] = useState(false);
 
   const loadReport = useCallback(async () => {
     try {
@@ -331,6 +334,7 @@ export default function SpendingPage() {
     if (!start) return;
     setError('');
     setBackfillNotice('');
+    setBackfillTruncated(false);
     setBackfillBusy(true);
     try {
       const outcome = await backfillTransactions(backfillAccount, start, end);
@@ -340,6 +344,7 @@ export default function SpendingPage() {
         setBackfillNotice(
           outcome.message || `${outcome.imported ?? 0} new transactions imported`,
         );
+        setBackfillTruncated(Boolean(outcome.truncated));
         loadReport();
         if (accountId !== null) loadTransactions(accountId, 1);
       }
@@ -620,6 +625,7 @@ export default function SpendingPage() {
                     <th>Counterparty</th>
                     <th>Description</th>
                     <th>Category</th>
+                    <th title="Exclude from the spending report">Transfer</th>
                     <th className="spending-amount-col">Amount</th>
                   </tr>
                 </thead>
@@ -647,6 +653,18 @@ export default function SpendingPage() {
                             <option key={c.id} value={c.id}>{c.name}</option>
                           ))}
                         </select>
+                      </td>
+                      <td>
+                        {/* Auto-detection only pairs entries between two accounts that
+                            both have a feed, so broker funding (e.g. a wire to IBKR)
+                            can never be detected — it has to be markable by hand. */}
+                        <input
+                          type="checkbox"
+                          aria-label="Mark as transfer"
+                          title="Transfers are excluded from the spending report"
+                          checked={tx.is_transfer}
+                          onChange={(e) => handleClassify(tx, { is_transfer: e.target.checked })}
+                        />
                       </td>
                       <td className={`spending-amount-col ${Number(tx.amount) < 0 ? 'spending-neg' : 'spending-pos'}`}>
                         {formatAmount(Number(tx.amount), tx.currency)}
@@ -799,7 +817,11 @@ export default function SpendingPage() {
               <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
             </button>
           </div>
-          {backfillNotice && <p className="form-hint">{backfillNotice}</p>}
+          {backfillNotice && (
+            <p className={backfillTruncated ? 'form-hint form-hint-warning' : 'form-hint'}>
+              {backfillTruncated && <AlertTriangle size={14} />} {backfillNotice}
+            </p>
+          )}
         </div>
 
         <AiCategorization onApplied={() => {

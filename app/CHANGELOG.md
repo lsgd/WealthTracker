@@ -2,6 +2,12 @@
 
 ## Next: 1.4.0
 
+- Transactions can now be marked as transfers by hand (checkbox in the web transaction list, switch in the app's category sheet), excluding them from the spending report — needed for broker funding that auto-detection cannot pair
+- Importing historical transactions now reports the date range the bank actually served and warns when it is shorter than requested
+- Syncs for brokers that report holdings (IBKR, Morgan Stanley) now record per-asset positions; a Holdings card on the dashboard (web and app) shows them merged across accounts
+- New wealth simulation (chart icon on the start screen): Monte Carlo projection of total wealth with percentile bands, in today's purchasing power; defaults derived from your accounts, spending, and holdings, all adjustable, with an optional target amount and the probability of reaching it
+- Simulation assumptions you change are saved to your profile and shared between web and app; assumptions you leave untouched keep updating from your data, and clearing a field goes back to the derived value
+
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
 - Sync results (synced count or per-account errors) are now also shown after automatic syncs

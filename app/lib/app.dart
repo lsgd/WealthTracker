@@ -10,6 +10,7 @@ import 'presentation/screens/imprint_screen.dart';
 import 'presentation/screens/login_screen.dart';
 import 'presentation/screens/server_config_screen.dart';
 import 'presentation/screens/settings_screen.dart';
+import 'presentation/screens/simulation_screen.dart';
 import 'presentation/screens/spending_screen.dart';
 import 'presentation/screens/splash_screen.dart';
 import 'presentation/theme/app_theme.dart';
@@ -74,6 +75,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/spending',
         builder: (context, state) => const SpendingScreen(),
+      ),
+      GoRoute(
+        path: '/simulation',
+        builder: (context, state) => const SimulationScreen(),
       ),
       GoRoute(
         path: '/settings',

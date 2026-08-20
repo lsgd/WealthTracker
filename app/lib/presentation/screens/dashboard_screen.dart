@@ -13,6 +13,7 @@ import '../providers/auth_provider.dart';
 import '../providers/sync_provider.dart';
 import '../providers/wealth_provider.dart';
 import '../widgets/account_card.dart';
+import '../widgets/holdings_card.dart';
 import '../widgets/quick_snapshot_sheet.dart';
 import '../widgets/wealth_line_chart.dart';
 import '../widgets/wealth_summary_card.dart';
@@ -140,6 +141,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   Future<void> _refresh() async {
     ref.invalidate(wealthSummaryProvider);
     ref.invalidate(wealthHistoryProvider);
+    ref.invalidate(wealthHoldingsProvider);
     ref.invalidate(accountsProvider);
     ref.invalidate(accountsNeedingSnapshotsProvider);
   }
@@ -367,6 +369,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             onPressed: () => context.push('/spending'),
           ),
           IconButton(
+            icon: const Icon(Icons.query_stats),
+            tooltip: 'Simulation',
+            onPressed: () => context.push('/simulation'),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => context.push('/settings'),
           ),
@@ -420,6 +427,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   loading: () => const _LoadingCard(height: 250),
                   error: (e, _) => _ErrorCard(message: e.toString()),
                 ),
+              ),
+            ),
+
+            // Per-asset holdings (renders nothing until a broker reports them)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: HoldingsCard(),
               ),
             ),
 

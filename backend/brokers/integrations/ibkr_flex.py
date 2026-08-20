@@ -477,6 +477,10 @@ class IBKRFlexIntegration(BrokerIntegrationBase):
             }
         )
 
+    def supports_positions(self) -> bool:
+        """Open positions come with the Flex report already fetched for the balance."""
+        return True
+
     def get_positions(self, account_identifier: str) -> List[PositionInfo]:
         """Get positions from the Flex report."""
         if not self._last_report:

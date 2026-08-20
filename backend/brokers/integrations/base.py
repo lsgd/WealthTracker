@@ -127,6 +127,13 @@ class BrokerIntegrationBase(ABC):
         """
         pass
 
+    def supports_positions(self) -> bool:
+        """
+        Returns True if this integration can fetch per-asset holdings.
+        Override in subclasses that implement get_positions().
+        """
+        return False
+
     def get_positions(self, account_identifier: str) -> List[PositionInfo]:
         """
         Fetch positions for an investment account.

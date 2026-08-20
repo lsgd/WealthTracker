@@ -7,6 +7,7 @@ import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
 import SpendingPage from './pages/SpendingPage'
+import SimulationPage from './pages/SimulationPage'
 import EbicsPage from './pages/EbicsPage'
 import ImprintPage from './pages/ImprintPage'
 
@@ -41,6 +42,14 @@ function App() {
           element={
             <ProtectedRoute>
               <SpendingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/simulation"
+          element={
+            <ProtectedRoute>
+              <SimulationPage />
             </ProtectedRoute>
           }
         />

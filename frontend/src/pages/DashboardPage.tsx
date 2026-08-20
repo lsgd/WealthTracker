@@ -10,6 +10,7 @@ import WealthSummaryCard from '../components/WealthSummaryCard';
 import WealthChart from '../components/WealthChart';
 import BreakdownChart from '../components/BreakdownChart';
 import RecentChanges from '../components/RecentChanges';
+import HoldingsTable from '../components/HoldingsTable';
 import AccountsTable, { type Account } from '../components/AccountsTable';
 
 interface Summary {
@@ -37,8 +38,11 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [defaultChartRange, setDefaultChartRange] = useState(365);
   const [defaultChartGranularity, setDefaultChartGranularity] = useState<'daily' | 'monthly'>('daily');
+  // Bumped on every full refresh so HoldingsTable refetches after a sync.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchAll = useCallback(async () => {
+    setRefreshKey((k) => k + 1);
     // Try to fetch profile for chart preferences, but use defaults if it fails
     let chartRange = 365;
     let chartGranularity: 'daily' | 'monthly' = 'daily';
@@ -127,6 +131,8 @@ export default function DashboardPage() {
           baseCurrency={baseCurrency}
         />
       </div>
+
+      <HoldingsTable refreshKey={refreshKey} />
 
       <AccountsTable
         accounts={accounts}

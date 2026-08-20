@@ -347,6 +347,85 @@ export async function getWealthBreakdown(by: string) {
   return res.json();
 }
 
+export interface Holding {
+  isin: string;
+  symbol: string;
+  name: string;
+  asset_class: string;
+  quantity: number;
+  value_base_currency: number;
+  price_base_currency: number | null;
+  percentage: number;
+  accounts: string[];
+}
+
+export interface HoldingsReport {
+  base_currency: string;
+  as_of: string | null;
+  total: number;
+  holdings: Holding[];
+  by_asset_class: { asset_class: string; amount: number; percentage: number }[];
+}
+
+export async function getWealthHoldings(): Promise<HoldingsReport> {
+  const res = await fetchWithAuth('/api/wealth/holdings/');
+  if (!res.ok) throw new Error('Failed to fetch holdings');
+  return res.json();
+}
+
+// Monte Carlo wealth simulation
+
+export interface SimulationBand {
+  year: number;
+  p5: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p95: number;
+}
+
+export interface SimulationParameter {
+  value: number;
+  derived: boolean;
+}
+
+export interface SimulationResult {
+  years: number;
+  paths: number;
+  base_currency: string;
+  bands: SimulationBand[];
+  parameters: Record<string, SimulationParameter>;
+  asset_class_weights: Record<string, number>;
+  target?: {
+    amount: number;
+    probability: number;
+    median_reached_year: number | null;
+  };
+}
+
+/**
+ * Only send parameters the user explicitly changed: the server persists sent
+ * parameters as overrides on the profile, an empty-string value clears an
+ * override, and unsent parameters are re-derived fresh (stored override first).
+ */
+export type SimulationParams = Record<string, number | string>;
+
+export async function getWealthSimulation(
+  params: SimulationParams = {},
+): Promise<SimulationResult> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    query.set(key, String(value));
+  }
+  const qs = query.toString();
+  const res = await fetchWithAuth(`/api/wealth/simulation/${qs ? `?${qs}` : ''}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'Simulation failed');
+  }
+  return data;
+}
+
 // Broker API
 export interface Broker {
   id: number;
@@ -937,7 +1016,16 @@ export async function backfillTransactions(
   accountId: number,
   start: string,
   end?: string,
-): Promise<{ status: string; imported?: number; message?: string; error?: string }> {
+): Promise<{
+  status: string;
+  imported?: number;
+  fetched?: number;
+  covered_start?: string | null;
+  covered_end?: string | null;
+  truncated?: boolean;
+  message?: string;
+  error?: string;
+}> {
   const res = await fetchWithAuth(`/api/accounts/${accountId}/transactions/backfill/`, {
     method: 'POST',
     body: JSON.stringify({ start, ...(end ? { end } : {}) }),

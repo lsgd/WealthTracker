@@ -24,6 +24,8 @@ class ApiConfig {
   static const String accountsPath = '/api/accounts/';
   static const String wealthSummaryPath = '/api/wealth/summary/';
   static const String wealthHistoryPath = '/api/wealth/history/';
+  static const String wealthHoldingsPath = '/api/wealth/holdings/';
+  static const String wealthSimulationPath = '/api/wealth/simulation/';
   static const String deviceRegisterPath = '/api/devices/register/';
 
   static String accountSnapshotsPath(int accountId) =>

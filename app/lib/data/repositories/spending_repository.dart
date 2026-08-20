@@ -51,6 +51,22 @@ class SpendingRepository {
     return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
   }
 
+  /// Mark (or unmark) a transaction as a transfer between own accounts,
+  /// excluding it from the spending report. Stored as a manual decision, so
+  /// automatic transfer detection never overrides it — needed for transfers
+  /// auto-detection cannot pair, e.g. funding a broker that has no
+  /// transaction feed.
+  Future<TransactionRecord> setTransfer(
+    int transactionId, {
+    required bool isTransfer,
+  }) async {
+    final response = await _apiClient.patch(
+      '${ApiConfig.transactionsPath}$transactionId/',
+      data: {'is_transfer': isTransfer},
+    );
+    return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
+  }
+
   // ---- categories and rules ------------------------------------------------
 
   Future<List<TransactionCategory>> getCategories() async {

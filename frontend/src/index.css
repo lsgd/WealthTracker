@@ -791,6 +791,31 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-size: 0.85rem;
 }
 
+/* Simulation assumptions: label-above-input grid that collapses on small screens. */
+.simulation-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.simulation-param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+/* A backfill the bank served only partially: not an error, but it must not be
+   mistaken for a clean success — the missing months are invisible otherwise. */
+.form-hint-warning {
+  color: var(--color-warning, #e0a030);
+}
+
+.form-hint-warning svg {
+  vertical-align: -2px;
+}
+
 .form-notice {
   background: rgba(79, 140, 255, 0.1);
   border: 1px solid rgba(79, 140, 255, 0.3);

@@ -16,7 +16,9 @@ Dedup strategy (per account):
 """
 import hashlib
 import logging
+from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,11 @@ DEFAULT_LOOKBACK_DAYS = 365
 # Re-request this many days before the newest imported transaction so late-booked
 # entries around the boundary are not missed. Dedup makes the overlap free.
 OVERLAP_DAYS = 5
+
+# A backfill counts as truncated when the oldest entry the bank served is more than
+# this many days after the requested start. Slack, because an account legitimately
+# opened mid-window — or simply quiet over the new year — is not a truncation.
+TRUNCATION_SLACK_DAYS = 31
 
 # Broker integration_type -> Transaction.source
 _SOURCE_BY_INTEGRATION_TYPE = {
@@ -95,14 +102,60 @@ def store_transactions(account, infos) -> int:
     return created_count
 
 
-def backfill_account_transactions(account, integration, start_date, end_date) -> int:
+@dataclass
+class BackfillResult:
+    """Outcome of one dated backfill, including what the bank actually served.
+
+    Banks routinely honour a dated request only partially — EBICS archives start at
+    subscriber activation, FinTS usually caps at ~90 days. The importer cannot tell
+    "you have no older transactions" from "the bank would not give them to me", so it
+    reports the covered span and lets the caller say so out loud. Reporting only the
+    imported count reads as "your 15 months are complete" when it was really 7 weeks.
+    """
+
+    imported: int = 0
+    fetched: int = 0
+    requested_start: Optional[date] = None
+    requested_end: Optional[date] = None
+    covered_start: Optional[date] = None
+    covered_end: Optional[date] = None
+
+    @property
+    def is_truncated(self) -> bool:
+        """True when the served span starts materially later than requested."""
+        if self.covered_start is None or self.requested_start is None:
+            return False
+        return (self.covered_start - self.requested_start).days > TRUNCATION_SLACK_DAYS
+
+    def describe(self) -> str:
+        if not self.fetched:
+            return (
+                'No transactions were returned for that period. The bank may not '
+                're-serve statements that far back.'
+            )
+        message = f'{self.imported} new transactions imported'
+        if self.imported != self.fetched:
+            message += f' ({self.fetched} fetched, the rest were already stored)'
+        message += f'. The bank served {self.covered_start} to {self.covered_end}'
+        if self.is_truncated:
+            message += (
+                f' — short of the requested {self.requested_start}, so the months '
+                'before that stay empty in the spending report.'
+            )
+        else:
+            message += '.'
+        return message
+
+
+def backfill_account_transactions(account, integration, start_date, end_date) -> BackfillResult:
     """Fetch and store transactions for an explicit date range.
 
     Same idempotent storage as the incremental import — re-running an
     overlapping range creates nothing new. Also classifies what arrived.
     """
+    result = BackfillResult(requested_start=start_date, requested_end=end_date)
     if not integration.supports_transactions():
-        return 0
+        return result
 
     # Not get_transactions(): backfill must query the period explicitly, which for
     # some feeds (EBICS) is a different request than the regular sync's.
@@ -110,19 +163,26 @@ def backfill_account_transactions(account, integration, start_date, end_date) ->
         account.account_identifier, start_date, end_date,
     )
     if not infos:
-        return 0
+        return result
 
-    created_count = store_transactions(account, infos)
-    if created_count:
+    booking_dates = [info.booking_date for info in infos if info.booking_date]
+    result.fetched = len(infos)
+    result.covered_start = min(booking_dates) if booking_dates else None
+    result.covered_end = max(booking_dates) if booking_dates else None
+    result.imported = store_transactions(account, infos)
+
+    if result.imported:
         from .classification import apply_rules, detect_transfers
         apply_rules(account.user)
         detect_transfers(account.user)
 
     logger.info(
-        'Backfilled %d new transactions for %s (%d fetched, %s to %s)',
-        created_count, account.name, len(infos), start_date, end_date,
+        'Backfilled %d new transactions for %s (%d fetched, requested %s to %s, '
+        'bank served %s to %s)',
+        result.imported, account.name, result.fetched, start_date, end_date,
+        result.covered_start, result.covered_end,
     )
-    return created_count
+    return result
 
 
 def import_account_transactions(account, integration) -> int:

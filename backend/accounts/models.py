@@ -143,6 +143,17 @@ class UserProfile(models.Model):
         )
     )
 
+    # Monte Carlo simulation: the parameters the user explicitly overrode
+    # (subset of years/start_wealth/monthly_contribution/expected_return/
+    # volatility/inflation/target_amount). Parameters NOT stored here keep
+    # being derived fresh on every run — deliberately, so e.g. start_wealth
+    # follows the actual balances instead of freezing at an old value.
+    simulation_params = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='User-overridden simulation parameters; missing ones are derived'
+    )
+
     # Demo mode flag
     is_demo_user = models.BooleanField(
         default=False,

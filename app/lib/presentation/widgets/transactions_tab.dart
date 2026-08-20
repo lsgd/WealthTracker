@@ -155,12 +155,23 @@ class _TransactionTile extends ConsumerWidget {
     final categories = await ref.read(categoriesProvider.future);
     if (!context.mounted) return;
 
-    final choice = await showModalBottomSheet<_CategoryChoice>(
+    final choice = await showModalBottomSheet<_SheetChoice>(
       context: context,
       showDragHandle: true,
       builder: (context) => ListView(
         shrinkWrap: true,
         children: [
+          // Transfers between own accounts are excluded from spending. Manual
+          // marking is the only way in for transfers auto-detection cannot see
+          // (e.g. a wire to a broker without a transaction feed).
+          SwitchListTile(
+            title: const Text('Transfer between own accounts'),
+            subtitle: const Text('Excluded from the spending report'),
+            value: transaction.isTransfer,
+            onChanged: (value) =>
+                Navigator.pop(context, _SheetChoice.transfer(value)),
+          ),
+          const Divider(height: 1),
           const ListTile(
             dense: true,
             title: Text('Category'),
@@ -172,13 +183,13 @@ class _TransactionTile extends ConsumerWidget {
                   ? const Icon(Icons.check)
                   : null,
               onTap: () =>
-                  Navigator.pop(context, _CategoryChoice(id: category.id)),
+                  Navigator.pop(context, _SheetChoice.category(category.id)),
             ),
           if (transaction.category != null)
             ListTile(
               leading: const Icon(Icons.clear),
               title: const Text('Remove category'),
-              onTap: () => Navigator.pop(context, const _CategoryChoice()),
+              onTap: () => Navigator.pop(context, _SheetChoice.category(null)),
             ),
         ],
       ),
@@ -187,9 +198,14 @@ class _TransactionTile extends ConsumerWidget {
 
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref
-          .read(spendingRepositoryProvider)
-          .classifyTransaction(transaction.id, categoryId: choice.id);
+      final repo = ref.read(spendingRepositoryProvider);
+      if (choice.isTransferChoice) {
+        await repo.setTransfer(transaction.id,
+            isTransfer: choice.transferValue!);
+      } else {
+        await repo.classifyTransaction(transaction.id,
+            categoryId: choice.categoryId);
+      }
       ref.invalidate(accountTransactionsProvider(accountId));
       ref.invalidate(spendingReportProvider);
     } catch (e) {
@@ -198,9 +214,15 @@ class _TransactionTile extends ConsumerWidget {
   }
 }
 
-class _CategoryChoice {
-  final int? id;
-  const _CategoryChoice({this.id});
+/// What the bottom sheet resolved to: a category assignment or a transfer flip.
+class _SheetChoice {
+  final int? categoryId;
+  final bool? transferValue;
+
+  const _SheetChoice.category(this.categoryId) : transferValue = null;
+  const _SheetChoice.transfer(this.transferValue) : categoryId = null;
+
+  bool get isTransferChoice => transferValue != null;
 }
 
 class _Chip extends StatelessWidget {

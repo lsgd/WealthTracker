@@ -4,12 +4,18 @@ One place that turns a broker ``BalanceInfo`` into an ``AccountSnapshot`` for a 
 day, including base-currency conversion. Used by the sync/backfill path today, and by
 the EBICS dated-download backfill later — so gap-fill vs. overwrite semantics live here,
 not scattered across callers.
+
+``store_positions`` sits here for the same reason: a snapshot's holdings are part of
+what that day's snapshot *is*, so they are written next to it rather than by callers.
 """
+import logging
 from decimal import Decimal
 
 from exchange_rates.services import ExchangeRateService
 
-from .models import AccountSnapshot
+from .models import AccountSnapshot, PortfolioPosition
+
+logger = logging.getLogger(__name__)
 
 
 def upsert_daily_snapshot(account, bal_info, base_currency, *, source='auto', overwrite=False):
@@ -58,3 +64,37 @@ def upsert_daily_snapshot(account, bal_info, base_currency, *, source='auto', ov
 
     snap.save()
     return snap, True
+
+
+def store_positions(snapshot, position_infos) -> int:
+    """Replace ``snapshot``'s holdings with ``position_infos``. Returns the row count.
+
+    Wholesale replace rather than upsert: a broker's position list is a complete
+    picture of the account at that moment, so a holding that disappeared from the
+    feed must disappear here too. Merging would leave sold-out positions behind
+    forever. Re-syncing the same day is therefore idempotent.
+
+    An empty list is treated as "no position data" and leaves existing rows alone —
+    a broker that reports nothing (an auth hiccup, a feed that went quiet) must not
+    silently erase a snapshot's holdings.
+    """
+    if not position_infos:
+        return 0
+
+    PortfolioPosition.objects.filter(snapshot=snapshot).delete()
+    PortfolioPosition.objects.bulk_create([
+        PortfolioPosition(
+            snapshot=snapshot,
+            symbol=(info.symbol or '')[:20],
+            isin=(info.isin or '')[:12],
+            name=(info.name or '')[:200],
+            quantity=info.quantity,
+            price_per_unit=info.price_per_unit,
+            market_value=info.market_value,
+            currency=info.currency,
+            cost_basis=info.cost_basis,
+            asset_class=info.asset_class or 'other',
+        )
+        for info in position_infos
+    ])
+    return len(position_infos)

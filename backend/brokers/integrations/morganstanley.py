@@ -1100,6 +1100,10 @@ class MorganStanleyIntegration(BrokerIntegrationBase):
             logger.error(f"Failed to fetch balance: {e}")
             raise RuntimeError(f"Failed to fetch portfolio balance: {str(e)}")
 
+    def supports_positions(self) -> bool:
+        """Stock grants, options and other holdings are available over GraphQL."""
+        return True
+
     def get_positions(self, account_identifier: str) -> List[PositionInfo]:
         """
         Fetch portfolio positions using GraphQL.

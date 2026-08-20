@@ -189,6 +189,19 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 account, integration, base_currency,
             )
 
+        # Record the per-asset holdings behind this balance, where the broker reports
+        # them. Same rule as the transaction import: never fail a balance sync that
+        # already succeeded over a secondary fetch.
+        position_count = 0
+        if integration.supports_positions():
+            try:
+                from .snapshot_writer import store_positions
+                position_count = store_positions(
+                    snapshot, integration.get_positions(account.account_identifier),
+                )
+            except Exception:
+                logger.exception("Position import failed for account %s", account.id)
+
         # Import booked transactions if supported. A transaction-import failure must
         # never fail the balance sync that already succeeded — log and move on.
         imported_tx_count = 0
@@ -209,6 +222,8 @@ def _sync_single_account(*, account_id, credentials, base_currency):
             message += f' + {backfilled_count} historical snapshots backfilled'
         if imported_tx_count > 0:
             message += f' + {imported_tx_count} transactions imported'
+        if position_count > 0:
+            message += f' + {position_count} positions recorded'
 
         return {
             'status': 'success',
@@ -471,13 +486,17 @@ def _backfill_transactions_worker(*, account_id, credentials, start_date, end_da
                 'status': 'error',
                 'error': f'{account.broker.name} does not support transaction download.',
             }
-        imported = backfill_account_transactions(
+        result = backfill_account_transactions(
             account, integration, start_date, end_date,
         )
         return {
             'status': 'success',
-            'imported': imported,
-            'message': f'{imported} new transactions imported',
+            'imported': result.imported,
+            'fetched': result.fetched,
+            'covered_start': result.covered_start.isoformat() if result.covered_start else None,
+            'covered_end': result.covered_end.isoformat() if result.covered_end else None,
+            'truncated': result.is_truncated,
+            'message': result.describe(),
         }
     finally:
         integration.close()
@@ -1682,6 +1701,209 @@ class WealthBreakdownView(APIView):
             'total': float(total),
             'breakdown': result,
         })
+
+
+class WealthHoldingsView(APIView):
+    """Current per-asset holdings across every account that reports them.
+
+    Reads each account's most recent snapshot that actually carries positions —
+    not simply ``latest_snapshot``, because a balance-only sync (or a manual entry)
+    would otherwise hide holdings that are still perfectly current.
+
+    Rows for the same instrument held at several brokers are merged: quantities add
+    up, and the blended price is derived from the base-currency value so mixed-currency
+    listings of one ISIN stay coherent.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        base_currency = request.user.profile.base_currency
+        accounts = FinancialAccount.objects.filter(user=request.user).select_related('broker')
+
+        merged = {}
+        as_of = None
+        for account in accounts:
+            snapshot = (
+                AccountSnapshot.objects
+                .filter(account=account, positions__isnull=False)
+                .distinct()
+                .order_by('-snapshot_date', '-created_at', '-id')
+                .first()
+            )
+            if snapshot is None:
+                continue
+            if as_of is None or snapshot.snapshot_date > as_of:
+                as_of = snapshot.snapshot_date
+
+            for pos in snapshot.positions.all():
+                if pos.currency == base_currency:
+                    value = pos.market_value
+                else:
+                    rate = ExchangeRate.get_rate(
+                        pos.currency, base_currency, snapshot.snapshot_date,
+                    )
+                    value = pos.market_value * rate if rate else Decimal('0')
+
+                # ISIN is the stable identity; symbols differ per venue. Fall back to
+                # the symbol, then the name, so instruments without an ISIN still merge.
+                key = pos.isin or pos.symbol or pos.name
+                row = merged.setdefault(key, {
+                    'isin': pos.isin,
+                    'symbol': pos.symbol,
+                    'name': pos.name,
+                    'asset_class': pos.asset_class,
+                    'quantity': Decimal('0'),
+                    'value_base': Decimal('0'),
+                    'accounts': [],
+                })
+                row['quantity'] += pos.quantity
+                row['value_base'] += value
+                if account.name not in row['accounts']:
+                    row['accounts'].append(account.name)
+
+        total = sum((row['value_base'] for row in merged.values()), Decimal('0'))
+        holdings = [
+            {
+                'isin': row['isin'],
+                'symbol': row['symbol'],
+                'name': row['name'],
+                'asset_class': row['asset_class'],
+                'quantity': float(row['quantity']),
+                'value_base_currency': float(row['value_base']),
+                'price_base_currency': (
+                    float(row['value_base'] / row['quantity']) if row['quantity'] else None
+                ),
+                'percentage': float(row['value_base'] / total * 100) if total else 0,
+                'accounts': row['accounts'],
+            }
+            for row in sorted(merged.values(), key=lambda r: -r['value_base'])
+        ]
+
+        by_class = {}
+        for row in merged.values():
+            by_class[row['asset_class']] = by_class.get(row['asset_class'], Decimal('0')) \
+                + row['value_base']
+
+        return Response({
+            'base_currency': base_currency,
+            'as_of': as_of.isoformat() if as_of else None,
+            'total': float(total),
+            'holdings': holdings,
+            'by_asset_class': [
+                {
+                    'asset_class': name,
+                    'amount': float(value),
+                    'percentage': float(value / total * 100) if total else 0,
+                }
+                for name, value in sorted(by_class.items(), key=lambda kv: -kv[1])
+            ],
+        })
+
+
+class WealthSimulationView(APIView):
+    """Monte Carlo wealth projection (percentile fan, in today's purchasing power).
+
+    Every parameter is optional. Resolution order per parameter:
+    query param > stored override (``UserProfile.simulation_params``) > derived
+    from the user's data. Explicitly sent parameters are persisted as overrides;
+    an explicitly EMPTY parameter (``?volatility=``) clears the stored override.
+    Parameters that were never overridden keep being derived fresh each run —
+    deliberately, so start_wealth follows the actual balances.
+
+    The echo under ``parameters`` flags each value: ``derived`` is True only when
+    it came from derivation (neither sent now nor stored earlier).
+
+    Query params: ``years, paths, start_wealth, monthly_contribution,
+    expected_return, volatility, inflation, target_amount, seed``
+    (``paths``/``seed`` are never persisted).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .simulation import (
+            DEFAULT_INFLATION,
+            derive_market_assumptions,
+            derive_monthly_contribution,
+            derive_start_wealth,
+            run_simulation,
+        )
+
+        profile = request.user.profile
+        stored = dict(profile.simulation_params or {})
+        original_stored = dict(stored)
+
+        def resolve(name, cast, derived_default=None):
+            """(value, derived) with query > stored > derived, updating ``stored``."""
+            raw = request.query_params.get(name)
+            if raw is None:
+                if name in stored:
+                    try:
+                        return cast(stored[name]), False
+                    except (TypeError, ValueError):
+                        stored.pop(name)  # corrupt entry: drop and re-derive
+                return derived_default, True
+            if raw == '':
+                stored.pop(name, None)
+                return derived_default, True
+            try:
+                value = cast(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f'Invalid value for "{name}"')
+            stored[name] = value
+            return value, False
+
+        def transient(name, cast, default=None):
+            raw = request.query_params.get(name)
+            if raw is None or raw == '':
+                return default
+            try:
+                return cast(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f'Invalid value for "{name}"')
+
+        d_return, d_vol, weights = derive_market_assumptions(request.user)
+        defaults = {
+            'start_wealth': derive_start_wealth(request.user),
+            'monthly_contribution': derive_monthly_contribution(request.user),
+            'expected_return': d_return,
+            'volatility': d_vol,
+            'inflation': DEFAULT_INFLATION,
+        }
+
+        try:
+            years, _ = resolve('years', int, 15)
+            target_amount, _ = resolve('target_amount', float)
+            paths = transient('paths', int, 2000)
+            seed = transient('seed', int)
+            values = {}
+            derived = {}
+            for name in defaults:
+                values[name], derived[name] = resolve(name, float, defaults[name])
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if stored != original_stored:
+            profile.simulation_params = stored or None
+            profile.save(update_fields=['simulation_params', 'updated_at'])
+
+        result = run_simulation(
+            start_wealth=values['start_wealth'],
+            monthly_contribution=values['monthly_contribution'],
+            expected_return=values['expected_return'],
+            volatility=values['volatility'],
+            inflation=values['inflation'],
+            years=years,
+            paths=paths,
+            target_amount=target_amount,
+            seed=seed,
+        )
+        result['base_currency'] = profile.base_currency
+        result['parameters'] = {
+            name: {'value': round(values[name], 4), 'derived': derived[name]}
+            for name in defaults
+        }
+        result['asset_class_weights'] = {k: round(v, 4) for k, v in weights.items()}
+        return Response(result)
 
 
 class BrokerDiscoverView(APIView):

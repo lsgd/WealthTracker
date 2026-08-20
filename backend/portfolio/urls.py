@@ -40,4 +40,6 @@ urlpatterns = [
     path('wealth/summary/', views.WealthSummaryView.as_view(), name='wealth_summary'),
     path('wealth/history/', views.WealthHistoryView.as_view(), name='wealth_history'),
     path('wealth/breakdown/', views.WealthBreakdownView.as_view(), name='wealth_breakdown'),
+    path('wealth/holdings/', views.WealthHoldingsView.as_view(), name='wealth_holdings'),
+    path('wealth/simulation/', views.WealthSimulationView.as_view(), name='wealth_simulation'),
 ]
