@@ -187,22 +187,26 @@ export default function SimulationPage() {
                   Intl.NumberFormat('de-CH', { notation: 'compact' }).format(v)}
               />
               <Tooltip
-                formatter={(value: number, name: string) => {
+                // The fan areas are excluded via tooltipType="none", so only
+                // p50/p5/p95 ever reach this formatter.
+                formatter={(value, name) => {
                   const labels: Record<string, string> = {
                     p50: 'Median',
                     p5: '5th percentile',
                     p95: '95th percentile',
                   };
-                  if (!(name in labels)) return [null, null];
-                  return [formatAmount(value, currency), labels[name]];
+                  return [
+                    typeof value === 'number' ? formatAmount(value, currency) : '',
+                    labels[String(name)] ?? String(name),
+                  ];
                 }}
                 labelFormatter={(y) => `Year +${y}`}
               />
               {/* Invisible base lifts the stack to p5. */}
-              <Area dataKey="base" stackId="fan" fill="none" stroke="none" />
-              <Area dataKey="outerLow" stackId="fan" fill="#4f8cff" fillOpacity={0.15} stroke="none" />
-              <Area dataKey="inner" stackId="fan" fill="#4f8cff" fillOpacity={0.35} stroke="none" />
-              <Area dataKey="outerHigh" stackId="fan" fill="#4f8cff" fillOpacity={0.15} stroke="none" />
+              <Area dataKey="base" stackId="fan" fill="none" stroke="none" tooltipType="none" />
+              <Area dataKey="outerLow" stackId="fan" fill="#4f8cff" fillOpacity={0.15} stroke="none" tooltipType="none" />
+              <Area dataKey="inner" stackId="fan" fill="#4f8cff" fillOpacity={0.35} stroke="none" tooltipType="none" />
+              <Area dataKey="outerHigh" stackId="fan" fill="#4f8cff" fillOpacity={0.15} stroke="none" tooltipType="none" />
               <Line dataKey="p50" stroke="#4f8cff" strokeWidth={2} dot={false} />
               {/* Hidden series so the tooltip can show the band edges. */}
               <Line dataKey="p5" stroke="none" dot={false} />
