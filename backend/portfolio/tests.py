@@ -1419,7 +1419,10 @@ class SimulationEndpointTests(APITestCase):
     def test_simulation_endpoint_returns_bands_and_parameters(self):
         resp = self.client.get(reverse('wealth_simulation'), {'seed': 1, 'paths': 200})
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(len(resp.data['bands']), resp.data['years'] + 1)
+        # Bands always cover the largest selectable horizon (30y) so clients can
+        # switch horizons by slicing locally; 'years' is the selected horizon.
+        self.assertEqual(resp.data['years'], 15)
+        self.assertEqual(len(resp.data['bands']), 31)
         for name in ('start_wealth', 'monthly_contribution', 'expected_return',
                      'volatility', 'inflation'):
             self.assertIn(name, resp.data['parameters'])
@@ -1433,6 +1436,15 @@ class SimulationEndpointTests(APITestCase):
         self.assertEqual(resp.data['parameters']['expected_return']['value'], 0.06)
         self.assertFalse(resp.data['parameters']['expected_return']['derived'])
         self.assertIn('target', resp.data)
+
+    def test_target_probability_matches_selected_horizon(self):
+        resp = self.client.get(reverse('wealth_simulation'), {
+            'seed': 1, 'paths': 200, 'years': 5, 'target_amount': '1000',
+            'monthly_contribution': '100', 'start_wealth': '0',
+        })
+        target = resp.data['target']
+        self.assertEqual(len(target['probability_by_year']), 31)
+        self.assertEqual(target['probability'], target['probability_by_year'][5])
 
     def test_invalid_parameter_is_a_400(self):
         resp = self.client.get(reverse('wealth_simulation'), {'years': 'soon'})

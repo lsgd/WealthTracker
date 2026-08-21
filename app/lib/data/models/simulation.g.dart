@@ -40,6 +40,11 @@ _SimulationTarget _$SimulationTargetFromJson(Map<String, dynamic> json) =>
     _SimulationTarget(
       amount: (json['amount'] as num).toDouble(),
       probability: (json['probability'] as num).toDouble(),
+      probabilityByYear:
+          (json['probability_by_year'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const <double>[],
       medianReachedYear: (json['median_reached_year'] as num?)?.toInt(),
     );
 
@@ -47,6 +52,7 @@ Map<String, dynamic> _$SimulationTargetToJson(_SimulationTarget instance) =>
     <String, dynamic>{
       'amount': instance.amount,
       'probability': instance.probability,
+      'probability_by_year': instance.probabilityByYear,
       'median_reached_year': instance.medianReachedYear,
     };
 

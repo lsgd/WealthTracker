@@ -207,10 +207,18 @@ def run_simulation(
     result = {'years': years, 'paths': paths, 'bands': bands}
 
     if target_amount is not None:
-        reached = sum(1 for v in end_values if v >= target_amount)
+        from bisect import bisect_left
+
+        # Per-year probabilities so clients can re-slice the horizon without a
+        # new simulation run. wealth_by_year lists are already sorted (bands).
+        probability_by_year = [
+            round((paths - bisect_left(values, target_amount)) / paths, 4)
+            for values in wealth_by_year
+        ]
         result['target'] = {
             'amount': target_amount,
-            'probability': round(reached / paths, 4),
+            'probability': probability_by_year[-1],
+            'probability_by_year': probability_by_year,
             # First year whose median clears the target — None if it never does.
             'median_reached_year': next(
                 (b['year'] for b in bands if b['p50'] >= target_amount), None,

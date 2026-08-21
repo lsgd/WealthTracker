@@ -40,8 +40,8 @@ const ASSET_CLASS_LABELS: Record<string, string> = {
 };
 
 /** Chart rows: stacked deltas so Recharts renders the percentile fan. */
-function toChartData(result: SimulationResult) {
-  return result.bands.map((b) => ({
+function toChartData(result: SimulationResult, years: number) {
+  return result.bands.slice(0, years + 1).map((b) => ({
     year: b.year,
     base: b.p5,
     outerLow: b.p25 - b.p5,
@@ -82,6 +82,8 @@ export default function SimulationPage() {
   const [busy, setBusy] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [targetAmount, setTargetAmount] = useState('');
+  // Horizon picked via the chips this session; null = the server-resolved one.
+  const [displayYears, setDisplayYears] = useState<number | null>(null);
   // Text values as of the last server echo. A field is only SENT when its text
   // differs from this — sent parameters become persistent overrides, so an
   // untouched field must stay unsent to keep re-deriving (e.g. start_wealth
@@ -143,10 +145,23 @@ export default function SimulationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const years = result?.years ?? 15;
+  // The server always simulates the full 30y horizon, so switching chips just
+  // re-slices the cached bands (instant) and persists the choice quietly.
+  const handleYears = (y: number) => {
+    setDisplayYears(y);
+    getWealthSimulation({ years: y, paths: 100 }).catch(() => {});
+  };
+
+  const years = displayYears ?? result?.years ?? 15;
   const currency = result?.base_currency ?? 'CHF';
-  const chartData = result ? toChartData(result) : [];
+  const chartData = result ? toChartData(result, years) : [];
   const target = result?.target;
+  const targetProbability =
+    target?.probability_by_year?.[years] ?? target?.probability ?? 0;
+  const targetReached =
+    target?.median_reached_year != null && target.median_reached_year <= years
+      ? target.median_reached_year
+      : null;
   const weights = Object.entries(result?.asset_class_weights ?? {});
 
   return (
@@ -159,7 +174,7 @@ export default function SimulationPage() {
               <button
                 key={y}
                 className={`btn btn-sm ${years === y ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => run({ years: y })}
+                onClick={() => handleYears(y)}
               >
                 {y}y
               </button>
@@ -214,10 +229,14 @@ export default function SimulationPage() {
               {target && (
                 <ReferenceLine
                   y={target.amount}
-                  stroke="#fbbf24"
+                  stroke="#f87171"
                   strokeDasharray="6 3"
-                  label={{ value: 'Target', fill: '#fbbf24', position: 'insideTopRight' }}
+                  label={{ value: 'Target', fill: '#f87171', position: 'insideTopRight' }}
                 />
+              )}
+              {/* Where the median path crosses the target. */}
+              {targetReached !== null && (
+                <ReferenceLine x={targetReached} stroke="#f87171" strokeDasharray="4 4" />
               )}
             </ComposedChart>
           </ResponsiveContainer>
@@ -226,9 +245,9 @@ export default function SimulationPage() {
         {target && result && (
           <p className="form-hint">
             Probability of reaching {formatAmount(target.amount, currency)} within{' '}
-            {result.years} years: <strong>{(target.probability * 100).toFixed(0)}%</strong>
-            {target.median_reached_year !== null
-              ? ` — the median path gets there in year ${target.median_reached_year}.`
+            {years} years: <strong>{(targetProbability * 100).toFixed(0)}%</strong>
+            {targetReached !== null
+              ? ` — the median path gets there in year ${targetReached}.`
               : ' — the median path does not get there in this horizon.'}
           </p>
         )}

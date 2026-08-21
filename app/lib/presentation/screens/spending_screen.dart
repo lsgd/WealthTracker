@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/chart_axis.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/models/spending.dart';
 import '../providers/spending_provider.dart';
@@ -264,6 +265,11 @@ class _MonthlyChartCard extends StatelessWidget {
           0, (sum, c) => sum + (m.byCategory[c] ?? 0));
       return visible > max ? visible : max;
     });
+    // Nice ticks: without an explicit interval fl_chart adds an extra label at
+    // maxY, which collided with the tick below it (e.g. "31K" on top of "30K").
+    final axis = niceAxis(0, maxExpense <= 0 ? 1 : maxExpense * 1.1);
+    // At most ~6 x-labels, regardless of range.
+    final labelEvery = (months.length / 6).ceil();
 
     return Card(
       child: Padding(
@@ -280,7 +286,7 @@ class _MonthlyChartCard extends StatelessWidget {
               height: 240,
               child: BarChart(
                 BarChartData(
-                  maxY: maxExpense <= 0 ? 1 : maxExpense * 1.15,
+                  maxY: axis.max,
                   barTouchData: BarTouchData(
                     touchCallback: (event, response) {
                       if (event.isInterestedForInteractions &&
@@ -304,6 +310,7 @@ class _MonthlyChartCard extends StatelessWidget {
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
+                    horizontalInterval: axis.interval,
                     getDrawingHorizontalLine: (_) => FlLine(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
                       strokeWidth: 1,
@@ -319,8 +326,9 @@ class _MonthlyChartCard extends StatelessWidget {
                       sideTitles: SideTitles(
                         showTitles: true,
                         reservedSize: 46,
+                        interval: axis.interval,
                         getTitlesWidget: (value, meta) => Text(
-                          formatChartAxisValue(value),
+                          formatChartAxisValue(value, step: axis.interval),
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
                       ),
@@ -334,8 +342,8 @@ class _MonthlyChartCard extends StatelessWidget {
                           if (index < 0 || index >= months.length) {
                             return const SizedBox.shrink();
                           }
-                          // Only every other label on long ranges.
-                          if (months.length > 12 && index.isOdd) {
+                          // Cap at ~6 labels so they never overlap.
+                          if (index % labelEvery != 0) {
                             return const SizedBox.shrink();
                           }
                           return Padding(
@@ -514,7 +522,9 @@ class _BreakdownCard extends ConsumerWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          formatCurrencyCompact(total, currency),
+                          // Full format with thousands separator — the compact
+                          // one rendered mid-size totals as e.g. "CHF 14347".
+                          formatCurrency(total, currency),
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         Text(

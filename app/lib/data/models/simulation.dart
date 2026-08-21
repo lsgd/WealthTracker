@@ -37,6 +37,11 @@ abstract class SimulationTarget with _$SimulationTarget {
   const factory SimulationTarget({
     required double amount,
     required double probability,
+    /// Probability of being at/above the target at each year end (index =
+    /// year). Lets the client re-slice the horizon without a new request.
+    @JsonKey(name: 'probability_by_year')
+    @Default(<double>[])
+    List<double> probabilityByYear,
     @JsonKey(name: 'median_reached_year') int? medianReachedYear,
   }) = _SimulationTarget;
 

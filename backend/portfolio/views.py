@@ -1886,17 +1886,26 @@ class WealthSimulationView(APIView):
             profile.simulation_params = stored or None
             profile.save(update_fields=['simulation_params', 'updated_at'])
 
+        # Always simulate at least the largest selectable horizon: the bands
+        # (and per-year target probabilities) then cover every horizon chip, so
+        # clients switch horizons by slicing locally instead of re-requesting.
+        display_years = max(1, min(years, 50))
         result = run_simulation(
             start_wealth=values['start_wealth'],
             monthly_contribution=values['monthly_contribution'],
             expected_return=values['expected_return'],
             volatility=values['volatility'],
             inflation=values['inflation'],
-            years=years,
+            years=max(display_years, 30),
             paths=paths,
             target_amount=target_amount,
             seed=seed,
         )
+        # ``years`` reports the SELECTED horizon; bands may extend beyond it.
+        result['years'] = display_years
+        if 'target' in result:
+            by_year = result['target']['probability_by_year']
+            result['target']['probability'] = by_year[min(display_years, len(by_year) - 1)]
         result['base_currency'] = profile.base_currency
         result['parameters'] = {
             name: {'value': round(values[name], 4), 'derived': derived[name]}

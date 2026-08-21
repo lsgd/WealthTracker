@@ -559,7 +559,9 @@ as bool,
 /// @nodoc
 mixin _$SimulationTarget {
 
- double get amount; double get probability;@JsonKey(name: 'median_reached_year') int? get medianReachedYear;
+ double get amount; double get probability;/// Probability of being at/above the target at each year end (index =
+/// year). Lets the client re-slice the horizon without a new request.
+@JsonKey(name: 'probability_by_year') List<double> get probabilityByYear;@JsonKey(name: 'median_reached_year') int? get medianReachedYear;
 /// Create a copy of SimulationTarget
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -572,16 +574,16 @@ $SimulationTargetCopyWith<SimulationTarget> get copyWith => _$SimulationTargetCo
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SimulationTarget&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.probability, probability) || other.probability == probability)&&(identical(other.medianReachedYear, medianReachedYear) || other.medianReachedYear == medianReachedYear));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SimulationTarget&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.probability, probability) || other.probability == probability)&&const DeepCollectionEquality().equals(other.probabilityByYear, probabilityByYear)&&(identical(other.medianReachedYear, medianReachedYear) || other.medianReachedYear == medianReachedYear));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,amount,probability,medianReachedYear);
+int get hashCode => Object.hash(runtimeType,amount,probability,const DeepCollectionEquality().hash(probabilityByYear),medianReachedYear);
 
 @override
 String toString() {
-  return 'SimulationTarget(amount: $amount, probability: $probability, medianReachedYear: $medianReachedYear)';
+  return 'SimulationTarget(amount: $amount, probability: $probability, probabilityByYear: $probabilityByYear, medianReachedYear: $medianReachedYear)';
 }
 
 
@@ -592,7 +594,7 @@ abstract mixin class $SimulationTargetCopyWith<$Res>  {
   factory $SimulationTargetCopyWith(SimulationTarget value, $Res Function(SimulationTarget) _then) = _$SimulationTargetCopyWithImpl;
 @useResult
 $Res call({
- double amount, double probability,@JsonKey(name: 'median_reached_year') int? medianReachedYear
+ double amount, double probability,@JsonKey(name: 'probability_by_year') List<double> probabilityByYear,@JsonKey(name: 'median_reached_year') int? medianReachedYear
 });
 
 
@@ -609,11 +611,12 @@ class _$SimulationTargetCopyWithImpl<$Res>
 
 /// Create a copy of SimulationTarget
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? amount = null,Object? probability = null,Object? medianReachedYear = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? amount = null,Object? probability = null,Object? probabilityByYear = null,Object? medianReachedYear = freezed,}) {
   return _then(_self.copyWith(
 amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as double,probability: null == probability ? _self.probability : probability // ignore: cast_nullable_to_non_nullable
-as double,medianReachedYear: freezed == medianReachedYear ? _self.medianReachedYear : medianReachedYear // ignore: cast_nullable_to_non_nullable
+as double,probabilityByYear: null == probabilityByYear ? _self.probabilityByYear : probabilityByYear // ignore: cast_nullable_to_non_nullable
+as List<double>,medianReachedYear: freezed == medianReachedYear ? _self.medianReachedYear : medianReachedYear // ignore: cast_nullable_to_non_nullable
 as int?,
   ));
 }
@@ -699,10 +702,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( double amount,  double probability, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( double amount,  double probability, @JsonKey(name: 'probability_by_year')  List<double> probabilityByYear, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SimulationTarget() when $default != null:
-return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
+return $default(_that.amount,_that.probability,_that.probabilityByYear,_that.medianReachedYear);case _:
   return orElse();
 
 }
@@ -720,10 +723,10 @@ return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( double amount,  double probability, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( double amount,  double probability, @JsonKey(name: 'probability_by_year')  List<double> probabilityByYear, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)  $default,) {final _that = this;
 switch (_that) {
 case _SimulationTarget():
-return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
+return $default(_that.amount,_that.probability,_that.probabilityByYear,_that.medianReachedYear);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -740,10 +743,10 @@ return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( double amount,  double probability, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( double amount,  double probability, @JsonKey(name: 'probability_by_year')  List<double> probabilityByYear, @JsonKey(name: 'median_reached_year')  int? medianReachedYear)?  $default,) {final _that = this;
 switch (_that) {
 case _SimulationTarget() when $default != null:
-return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
+return $default(_that.amount,_that.probability,_that.probabilityByYear,_that.medianReachedYear);case _:
   return null;
 
 }
@@ -755,11 +758,22 @@ return $default(_that.amount,_that.probability,_that.medianReachedYear);case _:
 @JsonSerializable()
 
 class _SimulationTarget implements SimulationTarget {
-  const _SimulationTarget({required this.amount, required this.probability, @JsonKey(name: 'median_reached_year') this.medianReachedYear});
+  const _SimulationTarget({required this.amount, required this.probability, @JsonKey(name: 'probability_by_year') final  List<double> probabilityByYear = const <double>[], @JsonKey(name: 'median_reached_year') this.medianReachedYear}): _probabilityByYear = probabilityByYear;
   factory _SimulationTarget.fromJson(Map<String, dynamic> json) => _$SimulationTargetFromJson(json);
 
 @override final  double amount;
 @override final  double probability;
+/// Probability of being at/above the target at each year end (index =
+/// year). Lets the client re-slice the horizon without a new request.
+ final  List<double> _probabilityByYear;
+/// Probability of being at/above the target at each year end (index =
+/// year). Lets the client re-slice the horizon without a new request.
+@override@JsonKey(name: 'probability_by_year') List<double> get probabilityByYear {
+  if (_probabilityByYear is EqualUnmodifiableListView) return _probabilityByYear;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_probabilityByYear);
+}
+
 @override@JsonKey(name: 'median_reached_year') final  int? medianReachedYear;
 
 /// Create a copy of SimulationTarget
@@ -775,16 +789,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SimulationTarget&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.probability, probability) || other.probability == probability)&&(identical(other.medianReachedYear, medianReachedYear) || other.medianReachedYear == medianReachedYear));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SimulationTarget&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.probability, probability) || other.probability == probability)&&const DeepCollectionEquality().equals(other._probabilityByYear, _probabilityByYear)&&(identical(other.medianReachedYear, medianReachedYear) || other.medianReachedYear == medianReachedYear));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,amount,probability,medianReachedYear);
+int get hashCode => Object.hash(runtimeType,amount,probability,const DeepCollectionEquality().hash(_probabilityByYear),medianReachedYear);
 
 @override
 String toString() {
-  return 'SimulationTarget(amount: $amount, probability: $probability, medianReachedYear: $medianReachedYear)';
+  return 'SimulationTarget(amount: $amount, probability: $probability, probabilityByYear: $probabilityByYear, medianReachedYear: $medianReachedYear)';
 }
 
 
@@ -795,7 +809,7 @@ abstract mixin class _$SimulationTargetCopyWith<$Res> implements $SimulationTarg
   factory _$SimulationTargetCopyWith(_SimulationTarget value, $Res Function(_SimulationTarget) _then) = __$SimulationTargetCopyWithImpl;
 @override @useResult
 $Res call({
- double amount, double probability,@JsonKey(name: 'median_reached_year') int? medianReachedYear
+ double amount, double probability,@JsonKey(name: 'probability_by_year') List<double> probabilityByYear,@JsonKey(name: 'median_reached_year') int? medianReachedYear
 });
 
 
@@ -812,11 +826,12 @@ class __$SimulationTargetCopyWithImpl<$Res>
 
 /// Create a copy of SimulationTarget
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? amount = null,Object? probability = null,Object? medianReachedYear = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? amount = null,Object? probability = null,Object? probabilityByYear = null,Object? medianReachedYear = freezed,}) {
   return _then(_SimulationTarget(
 amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as double,probability: null == probability ? _self.probability : probability // ignore: cast_nullable_to_non_nullable
-as double,medianReachedYear: freezed == medianReachedYear ? _self.medianReachedYear : medianReachedYear // ignore: cast_nullable_to_non_nullable
+as double,probabilityByYear: null == probabilityByYear ? _self._probabilityByYear : probabilityByYear // ignore: cast_nullable_to_non_nullable
+as List<double>,medianReachedYear: freezed == medianReachedYear ? _self.medianReachedYear : medianReachedYear // ignore: cast_nullable_to_non_nullable
 as int?,
   ));
 }

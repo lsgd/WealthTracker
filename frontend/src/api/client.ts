@@ -399,6 +399,7 @@ export interface SimulationResult {
   target?: {
     amount: number;
     probability: number;
+    probability_by_year?: number[];
     median_reached_year: number | null;
   };
 }
