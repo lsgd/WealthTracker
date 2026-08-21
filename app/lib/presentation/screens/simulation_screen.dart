@@ -213,18 +213,26 @@ class _FanChartState extends State<_FanChart> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Fixed-position value display (like the dashboard chart) — cannot be
-        // clipped at the chart edges the way a floating tooltip is.
+        // clipped at the chart edges the way a floating tooltip is. FittedBox
+        // scales the text down rather than letting it wrap into a second line
+        // that would collide with the topmost y-axis label.
         Container(
-          height: 36,
+          height: 32,
+          width: double.infinity,
           alignment: Alignment.center,
           child: displayBand != null
-              ? Text(
-                  '+${displayBand.year}y   '
-                  'Median ${formatChartAxisValue(displayBand.p50)} · '
-                  '75% ${formatChartAxisValue(displayBand.p75)} · '
-                  '95% ${formatChartAxisValue(displayBand.p95)}',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+              ? FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '+${displayBand.year}y   '
+                    'Median ${formatChartAxisValue(displayBand.p50)} · '
+                    '75% ${formatChartAxisValue(displayBand.p75)} · '
+                    '95% ${formatChartAxisValue(displayBand.p95)}',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
                 )
               : Text(
                   'Slide on chart to see values',
@@ -232,7 +240,8 @@ class _FanChartState extends State<_FanChart> {
                       ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
         ),
-        const SizedBox(height: 4),
+        // Clear separation from the topmost y-axis label.
+        const SizedBox(height: 12),
         SizedBox(
           height: 240,
           child: LineChart(
