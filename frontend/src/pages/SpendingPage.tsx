@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
+import { stripLeadingIban } from '../utils/iban';
 import type {
   CategoryRule,
   SpendingReport,
@@ -633,7 +634,7 @@ export default function SpendingPage() {
                   {transactions.map((tx) => (
                     <tr key={tx.id} className={tx.is_transfer ? 'spending-transfer-row' : ''}>
                       <td>{tx.booking_date}</td>
-                      <td>{tx.counterparty}</td>
+                      <td>{stripLeadingIban(tx.counterparty)}</td>
                       <td>
                         {tx.description}
                         {tx.is_transfer && <span className="spending-transfer-badge">Transfer</span>}

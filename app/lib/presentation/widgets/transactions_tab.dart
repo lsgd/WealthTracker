@@ -98,6 +98,9 @@ class _TransactionTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // The IBAN prefix some feeds put in the counterparty says nothing about
+    // WHAT the money was for — show the name, and lean on the description.
+    final name = stripLeadingIban(transaction.counterparty);
     final subtitle = [
       transaction.bookingDate,
       if (transaction.description.isNotEmpty) transaction.description,
@@ -109,18 +112,20 @@ class _TransactionTile extends ConsumerWidget {
       opacity: transaction.isTransfer ? 0.55 : 1,
       child: ListTile(
         title: Text(
-          transaction.counterparty.isEmpty
+          name.isEmpty
               ? (transaction.description.isEmpty
                   ? 'Transaction'
                   : transaction.description)
-              : transaction.counterparty,
+              : name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+            // Two lines: the description is the actual justification of the
+            // booking, so give it room instead of truncating it to a sliver.
+            Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 4),
             Wrap(
               spacing: 6,

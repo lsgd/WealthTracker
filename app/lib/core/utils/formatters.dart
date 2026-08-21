@@ -41,6 +41,53 @@ String formatChartAxisValue(double value, {double? step}) {
   return value.toStringAsFixed(0);
 }
 
+/// IBAN lengths per country, for [stripLeadingIban].
+const _ibanLengths = {
+  'AT': 20, 'BE': 16, 'BG': 22, 'CH': 21, 'CY': 28, 'CZ': 24, 'DE': 22,
+  'DK': 18, 'EE': 20, 'ES': 24, 'FI': 18, 'FR': 27, 'GB': 22, 'GR': 27,
+  'HR': 21, 'HU': 28, 'IE': 22, 'IT': 27, 'LI': 21, 'LT': 20, 'LU': 20,
+  'LV': 21, 'MT': 31, 'NL': 18, 'NO': 15, 'PL': 28, 'PT': 25, 'RO': 24,
+  'SE': 24, 'SI': 19, 'SK': 24,
+};
+
+/// True when [candidate] passes the IBAN mod-97 checksum.
+bool _isValidIban(String candidate) {
+  // Rearrange (first 4 chars to the end), letters -> 10..35, running mod 97.
+  final rearranged = candidate.substring(4) + candidate.substring(0, 4);
+  var remainder = 0;
+  for (final unit in rearranged.codeUnits) {
+    final int value;
+    if (unit >= 0x30 && unit <= 0x39) {
+      value = unit - 0x30;
+    } else if (unit >= 0x41 && unit <= 0x5A) {
+      value = unit - 0x41 + 10;
+    } else {
+      return false;
+    }
+    remainder = value < 10
+        ? (remainder * 10 + value) % 97
+        : (remainder * 100 + value) % 97;
+  }
+  return remainder == 1;
+}
+
+/// Strip a leading IBAN from a counterparty string.
+///
+/// Some feeds (DKB via FinTS) deliver the counterparty as `<IBAN><name>` in
+/// one field — "DE9612…0904WERTGARANTIE". The IBAN adds nothing on screen, so
+/// drop it and keep the name. Only a checksum-valid IBAN of the country's
+/// exact length is stripped; anything else (including names that merely start
+/// with two capitals and digits) stays untouched.
+String stripLeadingIban(String raw) {
+  if (raw.length < 15) return raw;
+  final length = _ibanLengths[raw.substring(0, 2)];
+  if (length == null || raw.length < length) return raw;
+  final candidate = raw.substring(0, length);
+  if (!RegExp(r'^[A-Z]{2}\d{2}[A-Z0-9]+$').hasMatch(candidate)) return raw;
+  if (!_isValidIban(candidate)) return raw;
+  return raw.substring(length).trim();
+}
+
 /// Date formatter for snapshot dates.
 /// [formatSetting] can be: 'system', 'dmy', 'mdy', 'ymd'
 String formatDate(DateTime date, [String formatSetting = 'system']) {

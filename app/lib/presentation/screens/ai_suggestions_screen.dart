@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/formatters.dart';
 import '../../data/models/ai_categorization.dart';
 import '../providers/spending_provider.dart';
 
@@ -98,6 +99,32 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
     }
   }
 
+  /// Everything (suggestions + rules) currently ticked?
+  bool get _allSelected {
+    final result = _result;
+    if (result == null) return false;
+    return _acceptedTx.length == result.suggestions.length &&
+        _acceptedRules.length == result.rules.length;
+  }
+
+  void _toggleAll() {
+    final result = _result;
+    if (result == null) return;
+    setState(() {
+      if (_allSelected) {
+        _acceptedTx.clear();
+        _acceptedRules.clear();
+      } else {
+        _acceptedTx
+          ..clear()
+          ..addAll(result.suggestions.map((s) => s.transactionId));
+        _acceptedRules
+          ..clear()
+          ..addAll(List.generate(result.rules.length, (i) => i));
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = _result;
@@ -107,6 +134,12 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
       appBar: AppBar(
         title: const Text('AI suggestions'),
         actions: [
+          if (result != null && result.suggestions.isNotEmpty)
+            IconButton(
+              icon: Icon(_allSelected ? Icons.deselect : Icons.select_all),
+              tooltip: _allSelected ? 'Deselect all' : 'Select all',
+              onPressed: _busy ? null : _toggleAll,
+            ),
           if (result != null)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -201,11 +234,16 @@ class _Review extends StatelessWidget {
             CheckboxListTile(
               value: acceptedTx.contains(s.transactionId),
               onChanged: (_) => onToggleTx(s.transactionId),
-              title: Text(
-                s.counterparty.isEmpty ? s.description : s.counterparty,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              title: Builder(builder: (context) {
+                // Same rule as the transaction list: the IBAN prefix carries
+                // no meaning on screen — show the name or the booking text.
+                final name = stripLeadingIban(s.counterparty);
+                return Text(
+                  name.isEmpty ? s.description : name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                );
+              }),
               subtitle: Text('${s.bookingDate} · ${s.amount} ${s.currency}'),
               secondary: _CategoryLabel(
                   name: s.category, isNew: s.isNewCategory),

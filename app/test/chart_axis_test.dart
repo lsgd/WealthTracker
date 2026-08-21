@@ -50,4 +50,29 @@ void main() {
       expect(formatChartAxisValue(500000, step: 250000), '500K');
     });
   });
+
+
+  group('stripLeadingIban', () {
+    test('strips a valid German IBAN prefix', () {
+      expect(stripLeadingIban('DE57120300001015708611LUKAS SCHULZE'),
+          'LUKAS SCHULZE');
+    });
+
+    test('keeps strings without an IBAN untouched', () {
+      expect(stripLeadingIban('GOOGLE SWITZERLAND GMBH'),
+          'GOOGLE SWITZERLAND GMBH');
+      expect(stripLeadingIban('Praxis Dr. med. dent. Juliane'),
+          'Praxis Dr. med. dent. Juliane');
+    });
+
+    test('rejects an invalid checksum even when the shape matches', () {
+      // Same as the valid IBAN but with one digit flipped.
+      const broken = 'DE57120300001015708612WERTGARANTIE';
+      expect(stripLeadingIban(broken), broken);
+    });
+
+    test('pure-IBAN counterparty becomes empty', () {
+      expect(stripLeadingIban('DE57120300001015708611'), '');
+    });
+  });
 }

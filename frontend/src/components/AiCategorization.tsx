@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { stripLeadingIban } from '../utils/iban';
 import type { AiConfig, AiModel, AiPricing, AiSuggestResponse } from '../api/client';
 import {
   aiApply,
@@ -338,7 +339,7 @@ export default function AiCategorization({ onApplied }: Props) {
                       />
                     </td>
                     <td>{s.booking_date}</td>
-                    <td>{s.counterparty}</td>
+                    <td>{stripLeadingIban(s.counterparty)}</td>
                     <td>{s.description}</td>
                     <td>
                       {s.category}
