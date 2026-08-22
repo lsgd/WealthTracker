@@ -22,9 +22,16 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
   AiSuggestResponse? _result;
   final _acceptedTx = <int>{};
   final _acceptedRules = <int>{};
+  final _scrollController = ScrollController();
   bool _busy = false;
   String? _error;
   String? _notice;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -168,6 +175,7 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
                       notice: _notice,
                       acceptedTx: _acceptedTx,
                       acceptedRules: _acceptedRules,
+                      scrollController: _scrollController,
                       onToggleTx: (id) => setState(() =>
                           _acceptedTx.contains(id)
                               ? _acceptedTx.remove(id)
@@ -177,14 +185,20 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
                               ? _acceptedRules.remove(i)
                               : _acceptedRules.add(i)),
                     ),
-      bottomNavigationBar: result == null || result.suggestions.isEmpty
+      bottomNavigationBar: result == null ||
+              (result.suggestions.isEmpty && result.rules.isEmpty)
           ? null
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: FilledButton(
                   onPressed: _busy || selected == 0 ? null : _apply,
-                  child: Text('Apply selected ($selected)'),
+                  // Break the count down so applied rules are never invisible:
+                  // "121" hid that 31 of them were rule proposals.
+                  child: Text(result.rules.isEmpty
+                      ? 'Apply selected ($selected)'
+                      : 'Apply selected (${_acceptedTx.length} categories · '
+                          '${_acceptedRules.length} rules)'),
                 ),
               ),
             ),
@@ -197,6 +211,7 @@ class _Review extends StatelessWidget {
   final String? notice;
   final Set<int> acceptedTx;
   final Set<int> acceptedRules;
+  final ScrollController scrollController;
   final void Function(int) onToggleTx;
   final void Function(int) onToggleRule;
 
@@ -205,6 +220,7 @@ class _Review extends StatelessWidget {
     required this.notice,
     required this.acceptedTx,
     required this.acceptedRules,
+    required this.scrollController,
     required this.onToggleTx,
     required this.onToggleRule,
   });
@@ -214,11 +230,53 @@ class _Review extends StatelessWidget {
     final theme = Theme.of(context);
 
     return ListView(
+      controller: scrollController,
       children: [
         if (notice != null)
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(notice!),
+          ),
+        // The rules section sits BELOW the (often long) suggestion list, where
+        // it was routinely scrolled past — announce it up top with a jump.
+        if (result.rules.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Card(
+              color: theme.colorScheme.primaryContainer,
+              margin: EdgeInsets.zero,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => scrollController.animateTo(
+                  scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.auto_awesome,
+                          size: 18,
+                          color: theme.colorScheme.onPrimaryContainer),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '${result.rules.length} rule proposal'
+                          '${result.rules.length == 1 ? '' : 's'} — rules '
+                          'categorize future transactions without AI',
+                          style: TextStyle(
+                              color: theme.colorScheme.onPrimaryContainer),
+                        ),
+                      ),
+                      Icon(Icons.arrow_downward,
+                          size: 18,
+                          color: theme.colorScheme.onPrimaryContainer),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         if (result.suggestions.isNotEmpty) ...[
           Padding(
