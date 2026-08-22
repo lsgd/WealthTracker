@@ -325,11 +325,17 @@ class _MonthlyChartCard extends StatelessWidget {
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        reservedSize: 46,
+                        reservedSize: 50,
                         interval: axis.interval,
-                        getTitlesWidget: (value, meta) => Text(
-                          formatChartAxisValue(value, step: axis.interval),
-                          style: Theme.of(context).textTheme.labelSmall,
+                        getTitlesWidget: (value, meta) => FittedBox(
+                          // Scale down rather than wrap into two lines.
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            formatChartAxisValue(value, step: axis.interval),
+                            maxLines: 1,
+                            softWrap: false,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
                         ),
                       ),
                     ),

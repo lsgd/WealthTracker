@@ -90,8 +90,12 @@ export default function SimulationPage() {
   // follows the actual balances).
   const syncedRef = useRef<Record<string, string>>({});
   const derivedRef = useRef<Record<string, boolean>>({});
+  // Monotonic request id: an older run resolving after a newer one must not
+  // overwrite the newer result (stale-response race).
+  const runSeqRef = useRef(0);
 
   const run = useCallback(async (extra: SimulationParams = {}) => {
+    const seq = ++runSeqRef.current;
     setBusy(true);
     setError('');
     const params: SimulationParams = { ...extra };
@@ -113,6 +117,7 @@ export default function SimulationPage() {
     }
     try {
       const r = await getWealthSimulation(params);
+      if (seq !== runSeqRef.current) return;
       setResult(r);
       derivedRef.current = Object.fromEntries(
         Object.entries(r.parameters).map(([k, p]) => [k, p.derived]),
@@ -133,9 +138,11 @@ export default function SimulationPage() {
       setFields(nextFields);
       setTargetAmount(targetText);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Simulation failed');
+      if (seq === runSeqRef.current) {
+        setError(e instanceof Error ? e.message : 'Simulation failed');
+      }
     } finally {
-      setBusy(false);
+      if (seq === runSeqRef.current) setBusy(false);
     }
   }, [fields, targetAmount]);
 

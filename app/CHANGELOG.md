@@ -11,6 +11,8 @@
 - Spending chart fixes: month labels no longer overlap, y-axis ticks are evenly spaced without duplicate values, and the breakdown total in the donut uses a thousands separator
 - Transaction lists now show the counterparty name instead of a leading IBAN, and the booking text gets two lines instead of one
 - AI suggestions: select or deselect all proposals with one tap in the app bar
+- Categories can now be renamed and deleted in the app under Spending settings
+- Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

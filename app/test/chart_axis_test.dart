@@ -39,15 +39,18 @@ void main() {
       }
     });
 
-    test('fractional M steps use 2 decimals, never a wrong rounding', () {
-      // Step 2.5M: "2.50M", not "3M".
-      expect(formatChartAxisValue(2500000, step: 2500000), '2.50M');
-      expect(formatChartAxisValue(7500000, step: 2500000), '7.50M');
+    test('fractional steps use the SMALLEST uniform decimal count', () {
+      // Step 2.5M needs only 1 decimal: "2.5M"… "10.0M", never "10.00M".
+      expect(formatChartAxisValue(2500000, step: 2500000), '2.5M');
+      expect(formatChartAxisValue(7500000, step: 2500000), '7.5M');
+      expect(formatChartAxisValue(10000000, step: 2500000), '10.0M');
       // Whole-unit steps stay integer.
       expect(formatChartAxisValue(2000000, step: 1000000), '2M');
       expect(formatChartAxisValue(30000, step: 10000), '30K');
       // Mixed-unit axis: the K tick below 1M still formats in K.
       expect(formatChartAxisValue(500000, step: 250000), '500K');
+      // A step needing hundredths gets 2 decimals.
+      expect(formatChartAxisValue(1250000, step: 1250000), '1.25M');
     });
   });
 

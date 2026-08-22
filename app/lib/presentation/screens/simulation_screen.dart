@@ -35,6 +35,9 @@ class _SimulationScreenState extends ConsumerState<SimulationScreen> {
   // Horizon picked via the chips this session; null = whatever the server
   // resolved (stored override or default).
   int? _displayYears;
+  // Monotonic request id: an older run that resolves AFTER a newer one must
+  // not overwrite the newer result (stale-response race).
+  int _requestSeq = 0;
 
   @override
   void initState() {
@@ -44,6 +47,7 @@ class _SimulationScreenState extends ConsumerState<SimulationScreen> {
   }
 
   Future<void> _run([Map<String, String> params = const {}]) async {
+    final seq = ++_requestSeq;
     setState(() {
       _busy = true;
       _error = null;
@@ -52,11 +56,11 @@ class _SimulationScreenState extends ConsumerState<SimulationScreen> {
       final result = await ref
           .read(wealthRepositoryProvider)
           .getSimulation(params: params);
-      if (mounted) setState(() => _result = result);
+      if (mounted && seq == _requestSeq) setState(() => _result = result);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && seq == _requestSeq) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && seq == _requestSeq) setState(() => _busy = false);
     }
   }
 
@@ -332,13 +336,19 @@ class _FanChartState extends State<_FanChart> {
                 leftTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
-                    reservedSize: 48,
+                    reservedSize: 52,
                     interval: axis.interval,
                     getTitlesWidget: (value, meta) => SideTitleWidget(
                       meta: meta,
-                      child: Text(
-                        formatChartAxisValue(value, step: axis.interval),
-                        style: theme.textTheme.labelSmall,
+                      // Scale down rather than wrap, whatever the label length.
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          formatChartAxisValue(value, step: axis.interval),
+                          maxLines: 1,
+                          softWrap: false,
+                          style: theme.textTheme.labelSmall,
+                        ),
                       ),
                     ),
                   ),

@@ -53,6 +53,8 @@ class SpendingConfigScreen extends ConsumerWidget {
             ),
           ),
           const Divider(),
+          const _CategoriesSection(),
+          const Divider(),
           const AiCategorizationCard(),
         ],
       ),
@@ -70,6 +72,161 @@ class SpendingConfigScreen extends ConsumerWidget {
       ref.invalidate(categoryRulesProvider);
       ref.invalidate(categoriesProvider);
       ref.invalidate(spendingReportProvider);
+    }
+  }
+}
+
+/// Manage the flat category list: rename or delete.
+///
+/// Renaming keeps every transaction and rule pointing at the category.
+/// Deleting makes its transactions uncategorized and removes rules that map
+/// to it (the backend cascades those).
+class _CategoriesSection extends ConsumerWidget {
+  const _CategoriesSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categories = ref.watch(categoriesProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('Categories',
+              style: TextStyle(fontWeight: FontWeight.w600)),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            'Renaming keeps all assignments. Deleting makes its transactions '
+            'uncategorized and removes rules that map to it.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ),
+        categories.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (e, _) => Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('$e'),
+          ),
+          data: (list) => list.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Text('No categories yet.'),
+                )
+              : Column(
+                  children: [
+                    for (final category in list)
+                      ListTile(
+                        dense: true,
+                        title: Text(category.name),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 20),
+                              tooltip: 'Rename',
+                              onPressed: () =>
+                                  _rename(context, ref, category),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              tooltip: 'Delete',
+                              onPressed: () =>
+                                  _delete(context, ref, category),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  /// Refresh everything a category name/existence appears in.
+  void _invalidate(WidgetRef ref) {
+    ref.invalidate(categoriesProvider);
+    ref.invalidate(categoryRulesProvider);
+    ref.invalidate(spendingReportProvider);
+    final accountId = ref.read(transactionsAccountProvider);
+    if (accountId != null) {
+      ref.invalidate(accountTransactionsProvider(accountId));
+    }
+  }
+
+  Future<void> _rename(
+      BuildContext context, WidgetRef ref, TransactionCategory category) async {
+    final controller = TextEditingController(text: category.name);
+    final messenger = ScaffoldMessenger.of(context);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename category'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || name == category.name) return;
+    try {
+      await ref
+          .read(spendingRepositoryProvider)
+          .renameCategory(category.id, name);
+      _invalidate(ref);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _delete(
+      BuildContext context, WidgetRef ref, TransactionCategory category) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete "${category.name}"?'),
+        content: const Text(
+          'Its transactions become uncategorized and rules mapping to it '
+          'are deleted. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(spendingRepositoryProvider).deleteCategory(category.id);
+      _invalidate(ref);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 }

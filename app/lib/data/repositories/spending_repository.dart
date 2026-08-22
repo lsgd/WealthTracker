@@ -84,6 +84,21 @@ class SpendingRepository {
     return TransactionCategory.fromJson(response.data as Map<String, dynamic>);
   }
 
+  /// Rename a category. Transactions and rules keep pointing at it.
+  Future<TransactionCategory> renameCategory(int categoryId, String name) async {
+    final response = await _apiClient.patch(
+      '${ApiConfig.spendingCategoriesPath}$categoryId/',
+      data: {'name': name},
+    );
+    return TransactionCategory.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Delete a category. Its transactions become uncategorized; rules mapping
+  /// to it are deleted with it.
+  Future<void> deleteCategory(int categoryId) async {
+    await _apiClient.delete('${ApiConfig.spendingCategoriesPath}$categoryId/');
+  }
+
   Future<List<CategoryRule>> getRules() async {
     final response = await _apiClient.get(ApiConfig.spendingRulesPath);
     return _asList(response.data).map((e) => CategoryRule.fromJson(e)).toList();
