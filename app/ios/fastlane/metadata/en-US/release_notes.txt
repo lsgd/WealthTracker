@@ -6,7 +6,7 @@
 - Simulation polish: readable y-axis labels (K/M, no overlap or duplicates), a red line marking the target amount and the year the median path reaches it, sticky tap-to-inspect showing median/75%/95% values above the chart, an explanation under every assumption field, and instant horizon switching (no recalculation)
 - Spending chart fixes: month labels no longer overlap, y-axis ticks are evenly spaced without duplicate values, and the breakdown total in the donut uses a thousands separator
 - Transaction lists now show the counterparty name instead of a leading IBAN, and the booking text gets two lines instead of one
-- AI suggestions: select or deselect all proposals with one tap in the app bar
+- AI suggestions: select or deselect all proposals with one tap in the app bar, a banner announces proposed rules (previously easy to scroll past below the category list), and the apply button breaks its count into categories and rules
 - Categories can now be renamed and deleted in the app under Spending settings
 - Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
 

@@ -132,6 +132,16 @@ class _Body extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        // Say what a round actually produces BEFORE it runs: not only
+        // category assignments but also rule proposals.
+        Text(
+          'Gemini proposes categories for uncategorized transactions and '
+          'reusable rules for recurring merchants (so future transactions '
+          'are categorized without AI). You review both and can apply or '
+          'skip each individually.',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const AiSuggestionsScreen()),

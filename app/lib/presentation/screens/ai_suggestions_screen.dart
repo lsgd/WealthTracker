@@ -184,6 +184,13 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
                           _acceptedRules.contains(i)
                               ? _acceptedRules.remove(i)
                               : _acceptedRules.add(i)),
+                      onToggleAllRules: (enabled) => setState(() {
+                        _acceptedRules.clear();
+                        if (enabled) {
+                          _acceptedRules.addAll(
+                              List.generate(result.rules.length, (i) => i));
+                        }
+                      }),
                     ),
       bottomNavigationBar: result == null ||
               (result.suggestions.isEmpty && result.rules.isEmpty)
@@ -214,6 +221,7 @@ class _Review extends StatelessWidget {
   final ScrollController scrollController;
   final void Function(int) onToggleTx;
   final void Function(int) onToggleRule;
+  final void Function(bool) onToggleAllRules;
 
   const _Review({
     required this.result,
@@ -223,6 +231,7 @@ class _Review extends StatelessWidget {
     required this.scrollController,
     required this.onToggleTx,
     required this.onToggleRule,
+    required this.onToggleAllRules,
   });
 
   @override
@@ -238,7 +247,8 @@ class _Review extends StatelessWidget {
             child: Text(notice!),
           ),
         // The rules section sits BELOW the (often long) suggestion list, where
-        // it was routinely scrolled past — announce it up top with a jump.
+        // it was routinely scrolled past — announce it up top, with a switch
+        // to skip rule creation entirely and a tap-to-jump for reviewing them.
         if (result.rules.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -253,7 +263,7 @@ class _Review extends StatelessWidget {
                   curve: Curves.easeOut,
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
                   child: Row(
                     children: [
                       Icon(Icons.auto_awesome,
@@ -262,16 +272,19 @@ class _Review extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          '${result.rules.length} rule proposal'
-                          '${result.rules.length == 1 ? '' : 's'} — rules '
-                          'categorize future transactions without AI',
+                          'Also create ${result.rules.length} rule'
+                          '${result.rules.length == 1 ? '' : 's'} for '
+                          'recurring merchants — they categorize future '
+                          'transactions without AI. Tap to review.',
                           style: TextStyle(
                               color: theme.colorScheme.onPrimaryContainer),
                         ),
                       ),
-                      Icon(Icons.arrow_downward,
-                          size: 18,
-                          color: theme.colorScheme.onPrimaryContainer),
+                      // Off = skip rule creation for this round entirely.
+                      Switch(
+                        value: acceptedRules.isNotEmpty,
+                        onChanged: onToggleAllRules,
+                      ),
                     ],
                   ),
                 ),

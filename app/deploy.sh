@@ -8,6 +8,10 @@
 
 LANE="${1:-beta}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Deliberately no Gemfile: Homebrew's fastlane bottle ships its own vendored
+# Ruby, which is isolation enough for a solo local setup. This silences the
+# "Get started using a Gemfile" hint.
+export SKIP_SLOW_FASTLANE_WARNING=1
 IOS_OK=0
 ANDROID_OK=0
 
