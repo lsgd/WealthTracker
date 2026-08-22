@@ -12,6 +12,7 @@
 - Transaction lists now show the counterparty name instead of a leading IBAN, and the booking text gets two lines instead of one
 - AI suggestions: the settings card now explains upfront that a round proposes both categories and rules; a banner at the top announces proposed rules with a switch to skip creating them, select or deselect all with one tap in the app bar, and the apply button breaks its count into categories and rules
 - Categories can now be renamed and deleted in the app under Spending settings
+- Transactions tab now lists all accounts together in chronological order, with a collapsible filter for account and uncategorized-only, account chips on each row, and a load-more footer
 - Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)

@@ -682,6 +682,40 @@ class TransactionEndpointTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['results'], [])
 
+    def test_global_list_spans_accounts_and_filters(self):
+        from portfolio.models import Transaction, TransactionCategory
+        other_account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Zweitkonto', currency='CHF',
+        )
+        category = TransactionCategory.objects.create(user=self.user, name='Food')
+        Transaction.objects.create(
+            account=other_account, booking_date=date(2026, 8, 10),
+            amount=Decimal('-5'), currency='CHF', counterparty='Coop',
+            source='camt053', dedup_key='ref:R2', category=category,
+        )
+        url = reverse('transaction_list_all')
+
+        # All accounts, newest first.
+        resp = self.client.get(url)
+        self.assertEqual(resp.data['count'], 2)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Coop')
+
+        # Restricted to one account.
+        resp = self.client.get(url, {'account': self.account.id})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+        # Only uncategorized: the categorized Coop entry disappears.
+        resp = self.client.get(url, {'uncategorized': '1'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+    def test_global_list_is_scoped_to_the_user(self):
+        other, _, _ = make_kek_user(username='eve')
+        self.client.force_authenticate(user=other)
+        resp = self.client.get(reverse('transaction_list_all'))
+        self.assertEqual(resp.data['count'], 0)
+
     def test_other_users_account_is_empty(self):
         other, _, _ = make_kek_user(username='bob')
         self.client.force_authenticate(user=other)

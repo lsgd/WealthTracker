@@ -22,7 +22,6 @@ const _accounts = [
     syncEnabled: true,
     status: 'active',
   ),
-  // Manual accounts have no feed, so they must not be offered here.
   Account(
     id: 8,
     name: 'Cash',
@@ -35,37 +34,52 @@ const _accounts = [
   ),
 ];
 
-const _page = TransactionPage(
-  count: 2,
-  results: [
-    TransactionRecord(
-      id: 11,
-      account: 7,
-      bookingDate: '2026-08-01',
-      amount: '-25.50',
-      currency: 'EUR',
-      counterparty: 'Migros',
-      description: 'Groceries',
-      categoryName: 'Groceries',
-      category: 1,
-    ),
-    TransactionRecord(
-      id: 12,
-      account: 7,
-      bookingDate: '2026-08-02',
-      amount: '-500.00',
-      currency: 'EUR',
-      counterparty: 'Eigenübertrag',
-      description: 'Sparen',
-      isTransfer: true,
-    ),
-  ],
-);
+const _records = [
+  TransactionRecord(
+    id: 11,
+    account: 7,
+    bookingDate: '2026-08-02',
+    amount: '-25.50',
+    currency: 'EUR',
+    counterparty: 'Migros',
+    description: 'Groceries',
+    categoryName: 'Groceries',
+    category: 1,
+  ),
+  TransactionRecord(
+    id: 12,
+    account: 8,
+    bookingDate: '2026-08-01',
+    amount: '-500.00',
+    currency: 'EUR',
+    counterparty: 'Eigenübertrag',
+    description: 'Sparen',
+    isTransfer: true,
+  ),
+];
 
-Widget _harness({TransactionPage page = _page}) => ProviderScope(
+class _FakeTransactionsNotifier extends TransactionsNotifier {
+  final TransactionsState _fixed;
+  _FakeTransactionsNotifier(this._fixed);
+
+  @override
+  Future<TransactionsState> build() async => _fixed;
+}
+
+Widget _harness({
+  List<TransactionRecord> records = _records,
+  int? totalCount,
+}) =>
+    ProviderScope(
       overrides: [
         accountsProvider.overrideWith((ref) async => _accounts),
-        accountTransactionsProvider(7).overrideWith((ref) async => page),
+        transactionsProvider.overrideWith(() => _FakeTransactionsNotifier(
+              TransactionsState(
+                results: records,
+                totalCount: totalCount ?? records.length,
+                page: 1,
+              ),
+            )),
         categoriesProvider.overrideWith((ref) async => const [
               TransactionCategory(id: 1, name: 'Groceries'),
               TransactionCategory(id: 2, name: 'Rent'),
@@ -76,29 +90,41 @@ Widget _harness({TransactionPage page = _page}) => ProviderScope(
 
 void main() {
   group('TransactionsTab', () {
-    testWidgets('lists transactions with their category and transfer badge',
+    testWidgets('lists transactions of all accounts with account chips',
         (tester) async {
       await tester.pumpWidget(_harness());
       await tester.pumpAndSettle();
 
       expect(find.text('Migros'), findsOneWidget);
-      expect(find.text('Groceries'), findsWidgets);
       expect(find.text('Eigenübertrag'), findsOneWidget);
       expect(find.text('Transfer'), findsOneWidget);
       // An unclassified row is labelled rather than left blank.
       expect(find.text('Uncategorized'), findsOneWidget);
+      // Mixed-account list: each row names its account.
+      expect(find.text('Giro'), findsOneWidget);
+      expect(find.text('Cash'), findsOneWidget);
     });
 
-    testWidgets('only offers accounts that have a transaction feed',
+    testWidgets('filter bar expands to account picker and uncategorized switch',
         (tester) async {
       await tester.pumpWidget(_harness());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(DropdownButtonFormField<int>));
+      expect(find.text('All accounts'), findsOneWidget);
+      await tester.tap(find.text('All accounts'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Giro'), findsWidgets);
-      expect(find.text('Cash'), findsNothing);
+      expect(find.byType(DropdownButtonFormField<int?>), findsOneWidget);
+      expect(find.text('Only uncategorized'), findsOneWidget);
+    });
+
+    testWidgets('load-more footer appears when more pages exist',
+        (tester) async {
+      await tester.pumpWidget(_harness(totalCount: 150));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(find.textContaining('Load more'), 200);
+      expect(find.text('Load more (2/150)'), findsOneWidget);
     });
 
     testWidgets('tapping a transaction opens the category picker',
@@ -113,15 +139,15 @@ void main() {
       expect(find.text('Rent'), findsOneWidget);
       // The already-assigned category can be cleared again.
       expect(find.text('Remove category'), findsOneWidget);
+      // The transfer switch is offered too.
+      expect(find.text('Transfer between own accounts'), findsOneWidget);
     });
 
-    testWidgets('empty account shows a hint', (tester) async {
-      await tester.pumpWidget(
-        _harness(page: const TransactionPage(count: 0)),
-      );
+    testWidgets('empty list shows a hint', (tester) async {
+      await tester.pumpWidget(_harness(records: const []));
       await tester.pumpAndSettle();
 
-      expect(find.text('No transactions for this account.'), findsOneWidget);
+      expect(find.text('No transactions yet.'), findsOneWidget);
     });
   });
 }

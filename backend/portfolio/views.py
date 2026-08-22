@@ -1003,6 +1003,25 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
         snapshot.save()
 
 
+class TransactionListView(generics.ListAPIView):
+    """All of the user's transactions, newest first, across accounts.
+
+    Optional query params: ``account`` (id, restrict to one account) and
+    ``uncategorized`` (truthy, only transactions without a category).
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionSerializer
+
+    def get_queryset(self):
+        qs = Transaction.objects.filter(account__user=self.request.user)
+        account = self.request.query_params.get('account')
+        if account:
+            qs = qs.filter(account_id=account)
+        if self.request.query_params.get('uncategorized') in ('1', 'true'):
+            qs = qs.filter(category__isnull=True)
+        return qs
+
+
 class AccountTransactionListCreateView(generics.ListCreateAPIView):
     """List transactions for an account or create a manual one.
 

@@ -89,10 +89,7 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
       ref.invalidate(spendingReportProvider);
       ref.invalidate(categoriesProvider);
       ref.invalidate(categoryRulesProvider);
-      final accountId = ref.read(transactionsAccountProvider);
-      if (accountId != null) {
-        ref.invalidate(accountTransactionsProvider(accountId));
-      }
+      ref.invalidate(transactionsProvider);
       messenger.showSnackBar(SnackBar(
         content: Text('${outcome['assigned']} categorized, '
             '${outcome['rules_created']} rules created'),
@@ -143,7 +140,9 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
         actions: [
           if (result != null && result.suggestions.isNotEmpty)
             IconButton(
-              icon: Icon(_allSelected ? Icons.deselect : Icons.select_all),
+              // Check-based glyphs read clearer than the abstract
+              // select_all/deselect squares.
+              icon: Icon(_allSelected ? Icons.remove_done : Icons.done_all),
               tooltip: _allSelected ? 'Deselect all' : 'Select all',
               onPressed: _busy ? null : _toggleAll,
             ),

@@ -155,10 +155,7 @@ class _CategoriesSection extends ConsumerWidget {
     ref.invalidate(categoriesProvider);
     ref.invalidate(categoryRulesProvider);
     ref.invalidate(spendingReportProvider);
-    final accountId = ref.read(transactionsAccountProvider);
-    if (accountId != null) {
-      ref.invalidate(accountTransactionsProvider(accountId));
-    }
+    ref.invalidate(transactionsProvider);
   }
 
   Future<void> _rename(

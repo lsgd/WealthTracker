@@ -75,23 +75,103 @@ final categoryRulesProvider = FutureProvider<List<CategoryRule>>((ref) async {
   return ref.watch(spendingRepositoryProvider).getRules();
 });
 
-/// Account whose transactions are listed; null until accounts have loaded.
-final transactionsAccountProvider =
-    NotifierProvider<TransactionsAccountNotifier, int?>(
-        TransactionsAccountNotifier.new);
+/// Filter for the transaction list. Default: every account, chronological.
+typedef TransactionsFilter = ({int? accountId, bool uncategorizedOnly});
 
-class TransactionsAccountNotifier extends Notifier<int?> {
+final transactionsFilterProvider =
+    NotifierProvider<TransactionsFilterNotifier, TransactionsFilter>(
+        TransactionsFilterNotifier.new);
+
+class TransactionsFilterNotifier extends Notifier<TransactionsFilter> {
   @override
-  int? build() => null;
+  TransactionsFilter build() => (accountId: null, uncategorizedOnly: false);
 
-  void set(int? value) => state = value;
+  void setAccount(int? accountId) =>
+      state = (accountId: accountId, uncategorizedOnly: state.uncategorizedOnly);
+
+  void setUncategorizedOnly(bool value) =>
+      state = (accountId: state.accountId, uncategorizedOnly: value);
 }
 
-/// First page of transactions for an account.
-final accountTransactionsProvider =
-    FutureProvider.family<TransactionPage, int>((ref, accountId) async {
-  return ref.watch(spendingRepositoryProvider).getAccountTransactions(accountId);
-});
+/// Loaded transactions for the current filter, accumulated across pages.
+class TransactionsState {
+  final List<TransactionRecord> results;
+  final int totalCount;
+  final int page;
+  final bool loadingMore;
+
+  const TransactionsState({
+    required this.results,
+    required this.totalCount,
+    required this.page,
+    this.loadingMore = false,
+  });
+
+  bool get hasMore => results.length < totalCount;
+}
+
+final transactionsProvider =
+    AsyncNotifierProvider<TransactionsNotifier, TransactionsState>(
+        TransactionsNotifier.new);
+
+class TransactionsNotifier extends AsyncNotifier<TransactionsState> {
+  @override
+  Future<TransactionsState> build() async {
+    // Watching the filter makes any filter change reload from page 1.
+    final filter = ref.watch(transactionsFilterProvider);
+    final page = await ref.read(spendingRepositoryProvider).getTransactions(
+          accountId: filter.accountId,
+          uncategorizedOnly: filter.uncategorizedOnly,
+        );
+    return TransactionsState(
+        results: page.results, totalCount: page.count, page: 1);
+  }
+
+  Future<void> loadMore() async {
+    final current = state.value;
+    if (current == null || !current.hasMore || current.loadingMore) return;
+    state = AsyncData(TransactionsState(
+      results: current.results,
+      totalCount: current.totalCount,
+      page: current.page,
+      loadingMore: true,
+    ));
+    final filter = ref.read(transactionsFilterProvider);
+    try {
+      final next = await ref.read(spendingRepositoryProvider).getTransactions(
+            accountId: filter.accountId,
+            uncategorizedOnly: filter.uncategorizedOnly,
+            page: current.page + 1,
+          );
+      state = AsyncData(TransactionsState(
+        results: [...current.results, ...next.results],
+        totalCount: next.count,
+        page: current.page + 1,
+      ));
+    } catch (_) {
+      // Keep what is shown; the footer button simply becomes tappable again.
+      state = AsyncData(TransactionsState(
+        results: current.results,
+        totalCount: current.totalCount,
+        page: current.page,
+      ));
+    }
+  }
+
+  /// A classified transaction changed in place — update it without a reload
+  /// so the scroll position and loaded pages survive.
+  void replace(TransactionRecord updated) {
+    final current = state.value;
+    if (current == null) return;
+    state = AsyncData(TransactionsState(
+      results: [
+        for (final t in current.results) t.id == updated.id ? updated : t,
+      ],
+      totalCount: current.totalCount,
+      page: current.page,
+    ));
+  }
+}
 
 /// Gemini configuration (key presence, selected model, price snapshot).
 final aiConfigProvider = FutureProvider<AiConfig>((ref) async {

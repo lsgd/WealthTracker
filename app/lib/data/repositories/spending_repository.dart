@@ -35,6 +35,24 @@ class SpendingRepository {
     return TransactionPage.fromJson(response.data as Map<String, dynamic>);
   }
 
+  /// All transactions across accounts, newest first. [accountId] restricts to
+  /// one account, [uncategorizedOnly] to transactions without a category.
+  Future<TransactionPage> getTransactions({
+    int? accountId,
+    bool uncategorizedOnly = false,
+    int page = 1,
+  }) async {
+    final response = await _apiClient.get(
+      ApiConfig.transactionsPath,
+      queryParameters: {
+        'account': ?accountId,
+        if (uncategorizedOnly) 'uncategorized': 1,
+        if (page > 1) 'page': page,
+      },
+    );
+    return TransactionPage.fromJson(response.data as Map<String, dynamic>);
+  }
+
   /// Set (or clear, with a null [categoryId]) a transaction's category.
   ///
   /// Allowed on imported transactions too: the bank's own fields stay

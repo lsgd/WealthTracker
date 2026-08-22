@@ -6,94 +6,148 @@ import '../../data/models/transactions.dart';
 import '../providers/accounts_provider.dart';
 import '../providers/spending_provider.dart';
 
-/// Transactions of one account, with manual categorization.
+/// All transactions across accounts, newest first, with manual categorization.
 ///
-/// Tapping a row opens a category picker; the choice is stored as a manual
-/// decision, so rules never overwrite it afterwards.
+/// A collapsible filter narrows to one account and/or uncategorized entries.
+/// Tapping a row opens the category/transfer sheet; the choice is stored as a
+/// manual decision, so rules never overwrite it afterwards.
 class TransactionsTab extends ConsumerWidget {
   const TransactionsTab({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final accounts = ref.watch(accountsProvider);
+    final transactions = ref.watch(transactionsProvider);
+    final filter = ref.watch(transactionsFilterProvider);
+    final accounts = ref.watch(accountsProvider).value ?? const [];
+    final accountNames = {for (final a in accounts) a.id: a.name};
 
-    return accounts.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => _Message(text: e.toString()),
-      data: (list) {
-        final selectable = list.where((a) => !a.isManual).toList();
-        if (selectable.isEmpty) {
-          return const _Message(
-            text: 'No account with a transaction feed yet.',
-          );
-        }
-        final selected = ref.watch(transactionsAccountProvider) ??
-            selectable.first.id;
-
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: DropdownButtonFormField<int>(
-                initialValue: selected,
-                decoration: const InputDecoration(
-                  labelText: 'Account',
-                  isDense: true,
-                  border: OutlineInputBorder(),
+    return Column(
+      children: [
+        _FilterBar(filter: filter, accountNames: accountNames),
+        Expanded(
+          child: transactions.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => _Message(text: e.toString()),
+            data: (data) {
+              if (data.results.isEmpty) {
+                return _Message(
+                  text: filter.uncategorizedOnly
+                      ? 'Nothing uncategorized — all done.'
+                      : 'No transactions yet.',
+                );
+              }
+              return RefreshIndicator(
+                onRefresh: () async =>
+                    ref.refresh(transactionsProvider.future),
+                child: ListView.separated(
+                  // +1 for the load-more footer.
+                  itemCount: data.results.length + (data.hasMore ? 1 : 0),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    if (index == data.results.length) {
+                      return _LoadMoreFooter(state: data);
+                    }
+                    final tx = data.results[index];
+                    return _TransactionTile(
+                      transaction: tx,
+                      // Name the account only when the list mixes accounts.
+                      accountName: filter.accountId == null
+                          ? accountNames[tx.account]
+                          : null,
+                    );
+                  },
                 ),
-                items: [
-                  for (final a in selectable)
-                    DropdownMenuItem(value: a.id, child: Text(a.name)),
-                ],
-                onChanged: (value) =>
-                    ref.read(transactionsAccountProvider.notifier).set(value),
-              ),
-            ),
-            Expanded(child: _TransactionList(accountId: selected)),
-          ],
-        );
-      },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _TransactionList extends ConsumerWidget {
-  final int accountId;
-  const _TransactionList({required this.accountId});
+/// Collapsed: one row summarizing the active filters. Expanded: the account
+/// picker and the uncategorized switch.
+class _FilterBar extends ConsumerWidget {
+  final TransactionsFilter filter;
+  final Map<int, String> accountNames;
+
+  const _FilterBar({required this.filter, required this.accountNames});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final page = ref.watch(accountTransactionsProvider(accountId));
+    final notifier = ref.read(transactionsFilterProvider.notifier);
+    final summary = [
+      filter.accountId == null
+          ? 'All accounts'
+          : (accountNames[filter.accountId] ?? 'One account'),
+      if (filter.uncategorizedOnly) 'only uncategorized',
+    ].join(' · ');
 
-    return page.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => _Message(text: e.toString()),
-      data: (data) {
-        if (data.results.isEmpty) {
-          return const _Message(text: 'No transactions for this account.');
-        }
-        return RefreshIndicator(
-          onRefresh: () async =>
-              ref.refresh(accountTransactionsProvider(accountId).future),
-          child: ListView.separated(
-            itemCount: data.results.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (context, index) => _TransactionTile(
-              transaction: data.results[index],
-              accountId: accountId,
-            ),
+    return ExpansionTile(
+      leading: const Icon(Icons.filter_list),
+      title: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+      dense: true,
+      shape: const Border(),
+      collapsedShape: const Border(),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      children: [
+        DropdownButtonFormField<int?>(
+          initialValue: filter.accountId,
+          decoration: const InputDecoration(
+            labelText: 'Account',
+            isDense: true,
+            border: OutlineInputBorder(),
           ),
-        );
-      },
+          items: [
+            const DropdownMenuItem<int?>(
+                value: null, child: Text('All accounts')),
+            for (final entry in accountNames.entries)
+              DropdownMenuItem<int?>(
+                  value: entry.key, child: Text(entry.value)),
+          ],
+          onChanged: notifier.setAccount,
+        ),
+        SwitchListTile(
+          title: const Text('Only uncategorized'),
+          contentPadding: EdgeInsets.zero,
+          value: filter.uncategorizedOnly,
+          onChanged: notifier.setUncategorizedOnly,
+        ),
+      ],
+    );
+  }
+}
+
+class _LoadMoreFooter extends ConsumerWidget {
+  final TransactionsState state;
+  const _LoadMoreFooter({required this.state});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: state.loadingMore
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : TextButton(
+                onPressed: () =>
+                    ref.read(transactionsProvider.notifier).loadMore(),
+                child: Text(
+                    'Load more (${state.results.length}/${state.totalCount})'),
+              ),
+      ),
     );
   }
 }
 
 class _TransactionTile extends ConsumerWidget {
   final TransactionRecord transaction;
-  final int accountId;
+  final String? accountName;
 
-  const _TransactionTile({required this.transaction, required this.accountId});
+  const _TransactionTile({required this.transaction, this.accountName});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -134,6 +188,7 @@ class _TransactionTile extends ConsumerWidget {
                   label: transaction.categoryName ?? 'Uncategorized',
                   highlighted: transaction.categoryName != null,
                 ),
+                if (accountName != null) _Chip(label: accountName!),
                 if (transaction.isTransfer) const _Chip(label: 'Transfer'),
                 if (transaction.spreadMonths > 1)
                   _Chip(label: '/${transaction.spreadMonths}m'),
@@ -204,14 +259,23 @@ class _TransactionTile extends ConsumerWidget {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final repo = ref.read(spendingRepositoryProvider);
+      final TransactionRecord updated;
       if (choice.isTransferChoice) {
-        await repo.setTransfer(transaction.id,
+        updated = await repo.setTransfer(transaction.id,
             isTransfer: choice.transferValue!);
       } else {
-        await repo.classifyTransaction(transaction.id,
+        updated = await repo.classifyTransaction(transaction.id,
             categoryId: choice.categoryId);
       }
-      ref.invalidate(accountTransactionsProvider(accountId));
+      // In-place update keeps scroll position and loaded pages. Exception:
+      // with the uncategorized filter on, a categorized entry no longer
+      // belongs in the list — reload to drop it.
+      final filter = ref.read(transactionsFilterProvider);
+      if (filter.uncategorizedOnly && updated.category != null) {
+        ref.invalidate(transactionsProvider);
+      } else {
+        ref.read(transactionsProvider.notifier).replace(updated);
+      }
       ref.invalidate(spendingReportProvider);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('$e')));
