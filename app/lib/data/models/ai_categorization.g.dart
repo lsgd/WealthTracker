@@ -56,6 +56,7 @@ _AiSuggestion _$AiSuggestionFromJson(Map<String, dynamic> json) =>
       amount: json['amount'] as String,
       currency: json['currency'] as String,
       category: json['category'] as String,
+      currentCategory: json['current_category'] as String?,
       isNewCategory: json['is_new_category'] as bool? ?? false,
     );
 
@@ -68,6 +69,7 @@ Map<String, dynamic> _$AiSuggestionToJson(_AiSuggestion instance) =>
       'amount': instance.amount,
       'currency': instance.currency,
       'category': instance.category,
+      'current_category': instance.currentCategory,
       'is_new_category': instance.isNewCategory,
     };
 
@@ -76,6 +78,8 @@ _AiRuleSuggestion _$AiRuleSuggestionFromJson(Map<String, dynamic> json) =>
       matchText: json['match_text'] as String,
       category: json['category'] as String,
       isNewCategory: json['is_new_category'] as bool? ?? false,
+      placeBeforeRuleId: (json['place_before_rule_id'] as num?)?.toInt(),
+      shadowedMatchText: json['shadowed_match_text'] as String?,
     );
 
 Map<String, dynamic> _$AiRuleSuggestionToJson(_AiRuleSuggestion instance) =>
@@ -83,7 +87,59 @@ Map<String, dynamic> _$AiRuleSuggestionToJson(_AiRuleSuggestion instance) =>
       'match_text': instance.matchText,
       'category': instance.category,
       'is_new_category': instance.isNewCategory,
+      'place_before_rule_id': instance.placeBeforeRuleId,
+      'shadowed_match_text': instance.shadowedMatchText,
     };
+
+_AiConsolidatedRule _$AiConsolidatedRuleFromJson(Map<String, dynamic> json) =>
+    _AiConsolidatedRule(
+      matchText: json['match_text'] as String,
+      category: json['category'] as String,
+      spreadMonths: (json['spread_months'] as num?)?.toInt() ?? 1,
+      sources:
+          (json['sources'] as List<dynamic>?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          const <int>[],
+    );
+
+Map<String, dynamic> _$AiConsolidatedRuleToJson(_AiConsolidatedRule instance) =>
+    <String, dynamic>{
+      'match_text': instance.matchText,
+      'category': instance.category,
+      'spread_months': instance.spreadMonths,
+      'sources': instance.sources,
+    };
+
+_AiConsolidateResponse _$AiConsolidateResponseFromJson(
+  Map<String, dynamic> json,
+) => _AiConsolidateResponse(
+  rules:
+      (json['rules'] as List<dynamic>?)
+          ?.map((e) => AiConsolidatedRule.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const <AiConsolidatedRule>[],
+  beforeCount: (json['before_count'] as num?)?.toInt() ?? 0,
+  afterCount: (json['after_count'] as num?)?.toInt() ?? 0,
+  disclosedFields:
+      (json['disclosed_fields'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const <String>[],
+  usage: json['usage'] == null
+      ? null
+      : AiUsage.fromJson(json['usage'] as Map<String, dynamic>),
+);
+
+Map<String, dynamic> _$AiConsolidateResponseToJson(
+  _AiConsolidateResponse instance,
+) => <String, dynamic>{
+  'rules': instance.rules,
+  'before_count': instance.beforeCount,
+  'after_count': instance.afterCount,
+  'disclosed_fields': instance.disclosedFields,
+  'usage': instance.usage,
+};
 
 _AiUsage _$AiUsageFromJson(Map<String, dynamic> json) => _AiUsage(
   inputTokens: (json['input_tokens'] as num?)?.toInt() ?? 0,

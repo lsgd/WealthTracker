@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/transactions.dart';
 import '../providers/spending_provider.dart';
 import '../widgets/ai_categorization_card.dart';
+import '../widgets/ai_consolidate_sheet.dart';
 
 /// Rules and AI configuration for the spending insight.
 ///
@@ -46,10 +47,23 @@ class SpendingConfigScreen extends ConsumerWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-            child: OutlinedButton.icon(
-              onPressed: () => _addRule(context, ref),
-              icon: const Icon(Icons.add),
-              label: const Text('Add rule'),
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _addRule(context, ref),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add rule'),
+                ),
+                const SizedBox(width: 8),
+                // AI pass that merges duplicate/dead rules — only meaningful
+                // once there are at least two.
+                if ((rules.value?.length ?? 0) >= 2)
+                  OutlinedButton.icon(
+                    onPressed: () => _consolidate(context, ref, rules.value!),
+                    icon: const Icon(Icons.compress),
+                    label: const Text('Consolidate'),
+                  ),
+              ],
             ),
           ),
           const Divider(),
@@ -59,6 +73,21 @@ class SpendingConfigScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _consolidate(
+      BuildContext context, WidgetRef ref, List<CategoryRule> rules) async {
+    final count = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => AiConsolidateSheet(currentRules: rules),
+    );
+    if (count != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Rule set replaced: $count rules')),
+      );
+    }
   }
 
   Future<void> _addRule(BuildContext context, WidgetRef ref) async {

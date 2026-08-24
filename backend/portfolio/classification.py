@@ -23,6 +23,19 @@ def next_rule_position(user) -> int:
     return 0 if highest is None else highest + 1
 
 
+def first_matching_rule(user, tx):
+    """The rule that would classify ``tx`` (first match wins), or None.
+
+    This is the rule an uncategorized future twin of ``tx`` would get — i.e.
+    the one a corrective rule must be placed before to take effect.
+    """
+    haystack = f'{tx.counterparty} {tx.description}'.lower()
+    for rule in user.category_rules.select_related('category').order_by('position', 'id'):
+        if rule.match_text.lower() in haystack:
+            return rule
+    return None
+
+
 def apply_rules(user, transactions=None) -> int:
     """Apply the user's category rules. Returns the number of transactions updated.
 

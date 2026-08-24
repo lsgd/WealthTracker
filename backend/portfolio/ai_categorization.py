@@ -31,6 +31,20 @@ DISCLOSED_FIELDS = [
     'The names of your existing categories',
 ]
 
+# Same, for the fix-similar flow (candidates are not necessarily uncategorized).
+RELABEL_DISCLOSED_FIELDS = [
+    'Counterparty name, booking text, and signed amount of the corrected '
+    'transaction and of similar candidate transactions',
+    'The current and corrected category names of those transactions',
+    'The names of your existing categories',
+]
+
+# Same, for rule consolidation — no transaction data leaves the server here.
+CONSOLIDATE_DISCLOSED_FIELDS = [
+    'The match text, category name, and amortization months of every rule',
+    'How many of your transactions each rule currently matches (a number only)',
+]
+
 # USD per 1M tokens (input, output), standard tier, as of August 2026
 # (https://ai.google.dev/gemini-api/docs/pricing). Prices are not available via
 # the API, so this table is maintained manually; unknown models show no price.
@@ -182,22 +196,66 @@ Return JSON only:
   "rules": [{{"match_text": "<substring>", "category": "<name>"}}]}}"""
 
 
-def suggest_categories(api_key: str, model: str, transactions: list, categories: list) -> dict:
-    """Ask Gemini for category assignments and rule suggestions.
+_RELABEL_PROMPT = """You fix categorization mistakes in personal bank transactions.
 
-    ``transactions``: [{'id', 'counterparty', 'description', 'amount', 'currency'}].
-    Returns {'assignments': [...], 'rules': [...], 'usage': {...}} — raw
-    suggestions, nothing persisted.
-    """
-    lines = '\n'.join(
-        f"{t['id']} | {t['counterparty']} | {t['description']} | {t['amount']} {t['currency']}"
-        for t in transactions
-    )
-    prompt = _PROMPT.format(
-        categories=', '.join(categories) if categories else '(none yet)',
-        transactions=lines,
-    )
+The user just corrected this transaction to the category "{category}":
+{example}
 
+Existing categories: {categories}
+
+Candidate transactions (id | counterparty | booking text | signed amount | current category):
+{transactions}
+
+List the ids of the candidates that clearly belong to the same merchant or
+serve the same purpose as the corrected transaction, and should therefore also
+be "{category}". When unsure about a candidate, leave it out — a wrong
+correction is worse than a missed one.
+
+If the merchant is recurring, also propose ONE reusable rule: a lowercase
+substring of the counterparty or booking text that uniquely identifies it
+(e.g. "rewe"), mapped to "{category}". Only propose it when the substring is
+specific to that merchant.
+
+Return JSON only:
+{{"ids": [<transaction id>, ...],
+  "rules": [{{"match_text": "<substring>", "category": "{category}"}}]}}"""
+
+
+_CONSOLIDATE_PROMPT = """You maintain substring rules that categorize personal bank transactions.
+
+A rule assigns its category to any transaction whose counterparty or booking
+text contains the match text (case-insensitive). Rules are evaluated in the
+order listed; the first match wins. "matches" is how many of the user's
+transactions currently contain the match text; "spread" is over how many months
+a matched amount is amortized.
+
+Rules (id | match text | category | spread | matches):
+{rules}
+
+Consolidate this list into the smallest equivalent set:
+- Merge rules of the SAME category whose match texts point at the same merchant
+  or are substrings of one another (e.g. several city-branch variants), keeping
+  the shortest match text that still uniquely identifies the merchant.
+- Drop rules with 0 matches only when they are clearly typos or superseded by
+  another surviving rule; keep deliberate rules for merchants that may appear
+  in the future.
+- NEVER merge rules that map to different categories, never change a rule's
+  category, and never invent new categories.
+- Keep the surviving rules in their current relative order (a merged rule takes
+  the place of its earliest source). Preserve the largest spread of the merged
+  sources.
+
+Return JSON only — the COMPLETE new rule list, in evaluation order:
+{{"rules": [{{"match_text": "<substring>", "category": "<existing name>",
+  "spread_months": <int>, "sources": [<rule id>, ...]}}]}}"""
+
+
+def _tx_line(t: dict) -> str:
+    return f"{t['id']} | {t['counterparty']} | {t['description']} | {t['amount']} {t['currency']}"
+
+
+def _generate(api_key: str, model: str, prompt: str) -> tuple:
+    """One JSON-mode generateContent call. Returns (parsed, usage)."""
     body = {
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {
@@ -233,6 +291,26 @@ def suggest_categories(api_key: str, model: str, transactions: list, categories:
         round(input_tokens * price[0] / 1e6 + output_tokens * price[1] / 1e6, 6)
         if price else None
     )
+    usage = {
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'estimated_cost_usd': cost,
+    }
+    return parsed, usage
+
+
+def suggest_categories(api_key: str, model: str, transactions: list, categories: list) -> dict:
+    """Ask Gemini for category assignments and rule suggestions.
+
+    ``transactions``: [{'id', 'counterparty', 'description', 'amount', 'currency'}].
+    Returns {'assignments': [...], 'rules': [...], 'usage': {...}} — raw
+    suggestions, nothing persisted.
+    """
+    prompt = _PROMPT.format(
+        categories=', '.join(categories) if categories else '(none yet)',
+        transactions='\n'.join(_tx_line(t) for t in transactions),
+    )
+    parsed, usage = _generate(api_key, model, prompt)
 
     return {
         'assignments': [
@@ -243,9 +321,57 @@ def suggest_categories(api_key: str, model: str, transactions: list, categories:
             r for r in parsed.get('rules', [])
             if isinstance(r, dict) and r.get('match_text') and r.get('category')
         ],
-        'usage': {
-            'input_tokens': input_tokens,
-            'output_tokens': output_tokens,
-            'estimated_cost_usd': cost,
-        },
+        'usage': usage,
+    }
+
+
+def consolidate_rules(api_key: str, model: str, rules: list) -> dict:
+    """Ask Gemini for a smaller equivalent rule set.
+
+    ``rules``: [{'id', 'match_text', 'category', 'spread_months', 'matches'}]
+    in evaluation order. Returns {'rules': [...], 'usage': {...}} — a proposal,
+    nothing persisted.
+    """
+    lines = '\n'.join(
+        f"{r['id']} | {r['match_text']} | {r['category']} | {r['spread_months']} | {r['matches']}"
+        for r in rules
+    )
+    parsed, usage = _generate(api_key, model, _CONSOLIDATE_PROMPT.format(rules=lines))
+
+    return {
+        'rules': [
+            r for r in parsed.get('rules', [])
+            if isinstance(r, dict) and r.get('match_text') and r.get('category')
+        ],
+        'usage': usage,
+    }
+
+
+def relabel_similar(api_key: str, model: str, example: dict, candidates: list,
+                    category: str, categories: list) -> dict:
+    """Ask Gemini which candidates share the corrected transaction's merchant/purpose.
+
+    ``example``/``candidates``: {'id', 'counterparty', 'description', 'amount',
+    'currency'(, 'current_category')}. Returns {'ids': [...], 'rules': [...],
+    'usage': {...}} — raw suggestions, nothing persisted.
+    """
+    lines = '\n'.join(
+        f"{_tx_line(t)} | {t.get('current_category') or '(uncategorized)'}"
+        for t in candidates
+    )
+    prompt = _RELABEL_PROMPT.format(
+        category=category,
+        example=_tx_line(example),
+        categories=', '.join(categories) if categories else '(none yet)',
+        transactions=lines,
+    )
+    parsed, usage = _generate(api_key, model, prompt)
+
+    return {
+        'ids': [i for i in parsed.get('ids', []) if isinstance(i, int)],
+        'rules': [
+            r for r in parsed.get('rules', [])
+            if isinstance(r, dict) and r.get('match_text') and r.get('category')
+        ],
+        'usage': usage,
     }

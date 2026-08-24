@@ -60,10 +60,14 @@ const _records = [
 
 class _FakeTransactionsNotifier extends TransactionsNotifier {
   final TransactionsState _fixed;
+  int loadMoreCalls = 0;
   _FakeTransactionsNotifier(this._fixed);
 
   @override
   Future<TransactionsState> build() async => _fixed;
+
+  @override
+  Future<void> loadMore() async => loadMoreCalls++;
 }
 
 Widget _harness({
@@ -118,13 +122,30 @@ void main() {
       expect(find.text('Only uncategorized'), findsOneWidget);
     });
 
-    testWidgets('load-more footer appears when more pages exist',
-        (tester) async {
-      await tester.pumpWidget(_harness(totalCount: 150));
+    testWidgets('scrolling near the end loads the next page', (tester) async {
+      final many = [
+        for (var i = 0; i < 30; i++) _records.first.copyWith(id: 100 + i),
+      ];
+      final notifier = _FakeTransactionsNotifier(
+        TransactionsState(results: many, totalCount: 150, page: 1),
+      );
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => _accounts),
+          transactionsProvider.overrideWith(() => notifier),
+          categoriesProvider.overrideWith((ref) async => const []),
+        ],
+        child: const MaterialApp(home: Scaffold(body: TransactionsTab())),
+      ));
       await tester.pumpAndSettle();
+      expect(notifier.loadMoreCalls, 0);
 
-      await tester.scrollUntilVisible(find.textContaining('Load more'), 200);
-      expect(find.text('Load more (2/150)'), findsOneWidget);
+      await tester.fling(find.byType(ListView), const Offset(0, -3000), 3000);
+      // No pumpAndSettle: the endless-scroll footer spinner animates forever.
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(notifier.loadMoreCalls, greaterThan(0));
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
     testWidgets('tapping a transaction opens the category picker',

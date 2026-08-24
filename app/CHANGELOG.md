@@ -14,6 +14,11 @@
 - Categories can now be renamed and deleted in the app under Spending settings
 - Transactions tab now lists all accounts together in chronological order, with a collapsible filter for account and uncategorized-only, account chips on each row, and a load-more footer
 - Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
+- Simulation: picking a longer horizon than the server covered now re-runs the simulation instead of leaving the chart clipped at the previously selected horizon
+- Transactions list loads further pages automatically while scrolling (no more load-more button) and pages load faster
+- Fix similar with AI: after manually re-categorizing a transaction, a new action asks Gemini which other transactions belong to the same merchant or purpose; you review its picks (and an optional rule) before anything is changed. Re-labeling only considers the last 18 months; uncategorized entries are offered at any age
+- A corrective rule from the fix-similar flow is inserted before the rule that caused the mislabel (rules are first-match-wins), and no rule is proposed when the existing rules already classify the merchant correctly
+- Consolidate rules with AI: a new button in Spending settings asks Gemini to merge duplicate rules and drop dead ones; you review the resulting set including removed rules before it replaces the old one
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
@@ -28,7 +33,7 @@
 - A ZKB account behaves like a manual account until its EBICS key exchange is activated by the bank: it prompts you to add snapshots by hand instead of showing a sync action that would fail.
 - Bug fixes and improvements.
 
-## Next: 1.3.7
+## 1.3.7
 
 - Bug fixes and improvements.
 

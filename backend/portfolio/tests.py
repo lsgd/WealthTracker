@@ -1075,6 +1075,298 @@ class AiEndpointTests(APITestCase):
         self.assertEqual(TransactionCategory.objects.filter(user=self.user).count(), 1)
         self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 1)
 
+    @patch('portfolio.ai_categorization.relabel_similar')
+    def test_relabel_proposes_similar_without_persisting(self, m_relabel):
+        from portfolio.models import Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        # The corrected transaction: manually set to Health.
+        self.tx.category = health
+        self.tx.category_manual = True
+        self.tx.save()
+        # Mislabeled twin (rule/AI decision, not manual) and an unrelated entry.
+        twin = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 15),
+            amount=Decimal('-12.30'), currency='EUR', counterparty='Apotheke am Markt',
+            category=groceries, source='camt053', dedup_key='ref:A2',
+        )
+        # No shared word — never reaches the candidate pool.
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 1),
+            amount=Decimal('-50.00'), currency='EUR', counterparty='Coop Pronto',
+            category=groceries, source='camt053', dedup_key='ref:A3',
+        )
+        # Similar but already in the corrected category — nothing to fix.
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 6, 20),
+            amount=Decimal('-8.00'), currency='EUR', counterparty='Apotheke am Markt',
+            category=health, source='camt053', dedup_key='ref:A4',
+        )
+        m_relabel.return_value = {
+            'ids': [twin.id, 999999],
+            'rules': [{'match_text': 'apotheke', 'category': 'WrongName'}],
+            'usage': {'input_tokens': 10, 'output_tokens': 5, 'estimated_cost_usd': 0.0001},
+        }
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        # Only the twin we sent; the hallucinated id is dropped.
+        self.assertEqual(
+            [s['transaction_id'] for s in resp.data['suggestions']], [twin.id])
+        self.assertEqual(resp.data['suggestions'][0]['category'], 'Health')
+        self.assertEqual(resp.data['suggestions'][0]['current_category'], 'Groceries')
+        # The rule is pinned to the corrected category, whatever the model said.
+        self.assertEqual(resp.data['rules'][0]['category'], 'Health')
+        self.assertTrue(resp.data['disclosed_fields'])
+        # Candidates: the twin only — same-category and the corrected tx excluded.
+        self.assertEqual(resp.data['sent_count'], 1)
+        # Nothing persisted without confirmation.
+        twin.refresh_from_db()
+        self.assertEqual(twin.category, groceries)
+
+    @patch('portfolio.ai_categorization.relabel_similar')
+    def test_relabel_skips_manual_and_uncategorized_candidates(self, m_relabel):
+        from portfolio.models import Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.tx.category = health
+        self.tx.category_manual = True
+        self.tx.save()
+        # A manual decision must never be proposed for overwriting…
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 10),
+            amount=Decimal('-9.99'), currency='EUR', counterparty='Apotheke Nord',
+            category_manual=True, source='camt053', dedup_key='ref:M1',
+        )
+        # …but a similar UNCATEGORIZED transaction is a candidate.
+        open_tx = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 5),
+            amount=Decimal('-7.50'), currency='EUR', counterparty='Apotheke West',
+            source='camt053', dedup_key='ref:U1',
+        )
+        m_relabel.return_value = {
+            'ids': [open_tx.id], 'rules': [],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': None},
+        }
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['sent_count'], 1)
+        sent_candidates = m_relabel.call_args.args[3]
+        self.assertEqual([c['id'] for c in sent_candidates], [open_tx.id])
+        self.assertIsNone(resp.data['suggestions'][0]['current_category'])
+
+    @patch('portfolio.ai_categorization.relabel_similar')
+    def test_relabel_rule_is_placed_before_the_shadowing_rule(self, m_relabel):
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        # The broad rule that mislabeled the transaction ("Markt" matches).
+        bad_rule = CategoryRule.objects.create(
+            user=self.user, match_text='markt', category=groceries, position=0,
+        )
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.tx.category = health
+        self.tx.category_manual = True
+        self.tx.save()
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 15),
+            amount=Decimal('-12.30'), currency='EUR', counterparty='Apotheke am Markt',
+            category=groceries, source='camt053', dedup_key='ref:A2',
+        )
+        m_relabel.return_value = {
+            'ids': [], 'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': None},
+        }
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['rules'][0]['place_before_rule_id'], bad_rule.id)
+        self.assertEqual(resp.data['rules'][0]['shadowed_match_text'], 'markt')
+
+    @patch('portfolio.ai_categorization.relabel_similar')
+    def test_relabel_drops_rule_when_first_match_is_already_correct(self, m_relabel):
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        CategoryRule.objects.create(
+            user=self.user, match_text='apotheke', category=health, position=0,
+        )
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.tx.category = health
+        self.tx.category_manual = True
+        self.tx.save()
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 15),
+            amount=Decimal('-12.30'), currency='EUR', counterparty='Apotheke am Markt',
+            source='camt053', dedup_key='ref:A2',
+        )
+        m_relabel.return_value = {
+            'ids': [], 'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': None},
+        }
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        # Future entries already classify correctly — no rule proposal.
+        self.assertEqual(resp.data['rules'], [])
+
+    def test_apply_inserts_rule_before_the_named_rule(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        bad_rule = CategoryRule.objects.create(
+            user=self.user, match_text='markt', category=groceries, position=0,
+        )
+        CategoryRule.objects.create(
+            user=self.user, match_text='coop', category=groceries, position=1,
+        )
+        resp = self.client.post(reverse('ai_apply'), {
+            'rules': [{
+                'match_text': 'apotheke', 'category': 'Health',
+                'place_before_rule_id': bad_rule.id,
+            }],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        order = list(
+            CategoryRule.objects.filter(user=self.user)
+            .order_by('position', 'id').values_list('match_text', flat=True)
+        )
+        self.assertEqual(order, ['apotheke', 'markt', 'coop'])
+
+    @patch('portfolio.ai_categorization.consolidate_rules')
+    def test_consolidate_merges_and_drops_hallucinated_categories(self, m_consolidate):
+        from portfolio.models import CategoryRule, TransactionCategory
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        r1 = CategoryRule.objects.create(
+            user=self.user, match_text='migros zurich', category=groceries, position=0)
+        r2 = CategoryRule.objects.create(
+            user=self.user, match_text='migros bern', category=groceries,
+            spread_months=3, position=1)
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_consolidate.return_value = {
+            'rules': [
+                {'match_text': 'migros', 'category': 'Groceries',
+                 'spread_months': None, 'sources': [r1.id, r2.id]},
+                {'match_text': 'ghost', 'category': 'InventedCategory', 'sources': []},
+            ],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': None},
+        }
+        resp = self.client.post(reverse('ai_consolidate'), {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['before_count'], 2)
+        self.assertEqual(resp.data['after_count'], 1)
+        rule = resp.data['rules'][0]
+        self.assertEqual(rule['match_text'], 'migros')
+        # Missing spread falls back to the largest source spread.
+        self.assertEqual(rule['spread_months'], 3)
+        self.assertEqual(rule['sources'], [r1.id, r2.id])
+        # Match counts are computed and sent (self.tx does not contain "migros").
+        sent_rules = m_consolidate.call_args.args[2]
+        self.assertEqual([r['matches'] for r in sent_rules], [0, 0])
+        # Nothing persisted: both original rules still there.
+        self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 2)
+
+    def test_rules_replace_swaps_the_set_and_reapplies(self):
+        from portfolio.models import CategoryRule, Transaction, TransactionCategory
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros zurich', category=groceries, position=0)
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros bern', category=groceries, position=1)
+        resp = self.client.post(reverse('rule_replace'), {
+            'rules': [
+                {'match_text': 'migros', 'category': 'Groceries', 'spread_months': 1},
+                {'match_text': 'apotheke', 'category': 'Health', 'spread_months': 1},
+            ],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['count'], 2)
+        order = list(
+            CategoryRule.objects.filter(user=self.user)
+            .order_by('position', 'id').values_list('match_text', flat=True)
+        )
+        self.assertEqual(order, ['migros', 'apotheke'])
+        # The replacement set was re-applied: the uncategorized Apotheke
+        # transaction from setUp is now categorized.
+        self.assertEqual(resp.data['rule_applied'], 1)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.category, health)
+
+    def test_rules_replace_rejects_unknown_category_keeping_old_rules(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=groceries, position=0)
+        resp = self.client.post(reverse('rule_replace'), {
+            'rules': [{'match_text': 'x', 'category': 'Nope', 'spread_months': 1}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(
+            CategoryRule.objects.filter(user=self.user).count(), 1)
+
+    @patch('portfolio.ai_categorization.relabel_similar')
+    def test_relabel_leaves_old_labels_alone_but_offers_old_uncategorized(
+            self, m_relabel):
+        from portfolio.models import Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        self.tx.category = health
+        self.tx.category_manual = True
+        self.tx.save()
+        # Mislabeled but >18 months old: settled history, not a candidate.
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2024, 5, 1),
+            amount=Decimal('-11.00'), currency='EUR', counterparty='Apotheke am Markt',
+            category=groceries, source='camt053', dedup_key='ref:OLD1',
+        )
+        # Uncategorized of the same age: pure gain, still a candidate.
+        old_open = Transaction.objects.create(
+            account=self.account, booking_date=date(2024, 5, 2),
+            amount=Decimal('-6.00'), currency='EUR', counterparty='Apotheke am Markt',
+            source='camt053', dedup_key='ref:OLD2',
+        )
+        m_relabel.return_value = {
+            'ids': [old_open.id], 'rules': [],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': None},
+        }
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        sent_candidates = m_relabel.call_args.args[3]
+        self.assertEqual([c['id'] for c in sent_candidates], [old_open.id])
+
+    def test_relabel_requires_categorized_transaction(self):
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': self.tx.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post(reverse('ai_relabel'), {
+            'transaction_id': 999999,
+        }, format='json')
+        self.assertEqual(resp.status_code, 404)
+
     def test_apply_cannot_touch_other_users_transactions(self):
         from portfolio.models import Transaction
         other_user, _, _ = make_kek_user(username='bob')

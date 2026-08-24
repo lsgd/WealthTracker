@@ -171,6 +171,18 @@ class SpendingRepository {
     return AiSuggestResponse.fromJson(response.data as Map<String, dynamic>);
   }
 
+  /// After a manual re-categorization: ask Gemini which similar transactions
+  /// should get the same category. Nothing is persisted — the result is a
+  /// proposal the user confirms via [applyAiSuggestions].
+  Future<AiSuggestResponse> relabelSimilar(int transactionId) async {
+    final response = await _apiClient.post(
+      ApiConfig.aiRelabelPath,
+      data: {'transaction_id': transactionId},
+      timeout: ApiConfig.aiSuggestTimeout,
+    );
+    return AiSuggestResponse.fromJson(response.data as Map<String, dynamic>);
+  }
+
   /// Persist only what the user ticked.
   Future<Map<String, dynamic>> applyAiSuggestions({
     required List<AiSuggestion> assignments,
@@ -184,10 +196,39 @@ class SpendingRepository {
               })
           .toList(),
       'rules': rules
-          .map((r) => {'match_text': r.matchText, 'category': r.category})
+          .map((r) => {
+                'match_text': r.matchText,
+                'category': r.category,
+                'place_before_rule_id': r.placeBeforeRuleId,
+              })
           .toList(),
     });
     return response.data as Map<String, dynamic>;
+  }
+
+  /// Ask Gemini for a smaller equivalent rule set. Only rule metadata leaves
+  /// the server; the proposal is confirmed via [replaceRules].
+  Future<AiConsolidateResponse> consolidateRules() async {
+    final response = await _apiClient.post(
+      ApiConfig.aiConsolidatePath,
+      data: {},
+      timeout: ApiConfig.aiSuggestTimeout,
+    );
+    return AiConsolidateResponse.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Atomically replace the whole rule set with [rules] (in evaluation order).
+  Future<void> replaceRules(List<AiConsolidatedRule> rules) async {
+    await _apiClient.post(ApiConfig.spendingRulesReplacePath, data: {
+      'rules': [
+        for (final r in rules)
+          {
+            'match_text': r.matchText,
+            'category': r.category,
+            'spread_months': r.spreadMonths,
+          },
+      ],
+    });
   }
 
   /// DRF returns plain lists for the unpaginated endpoints, but tolerate a

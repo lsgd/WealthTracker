@@ -1013,7 +1013,10 @@ class TransactionListView(generics.ListAPIView):
     serializer_class = TransactionSerializer
 
     def get_queryset(self):
-        qs = Transaction.objects.filter(account__user=self.request.user)
+        # select_related: the serializer reads category.name per row.
+        qs = Transaction.objects.filter(
+            account__user=self.request.user,
+        ).select_related('category')
         account = self.request.query_params.get('account')
         if account:
             qs = qs.filter(account_id=account)
@@ -1038,7 +1041,7 @@ class AccountTransactionListCreateView(generics.ListCreateAPIView):
         qs = Transaction.objects.filter(
             account_id=self.kwargs['account_id'],
             account__user=self.request.user,
-        )
+        ).select_related('category')
         start = self.request.query_params.get('start')
         end = self.request.query_params.get('end')
         if start:
@@ -1168,6 +1171,59 @@ class CategoryRuleReorderView(APIView):
             rule.position = position
         CategoryRule.objects.bulk_update(ordered, ['position'])
         return Response(CategoryRuleSerializer(ordered, many=True).data)
+
+
+class CategoryRulesReplaceView(APIView):
+    """Atomically replace the user's whole rule set (confirmed consolidation).
+
+    Body: ``rules`` — [{match_text, category, spread_months}] in evaluation
+    order. Categories must already exist (consolidation never invents them),
+    and an invalid or duplicate entry rejects the whole payload — silently
+    dropping entries would shrink the rule set behind the user's back. The new
+    set is re-applied to still-uncategorized transactions afterwards.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from django.db import transaction as db_transaction
+
+        from .classification import apply_rules
+
+        items = request.data.get('rules')
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'Provide "rules" as a non-empty list'}, status=400)
+
+        categories = {
+            c.name.lower(): c
+            for c in TransactionCategory.objects.filter(user=request.user)
+        }
+        new_rules = []
+        seen = set()
+        for item in items:
+            match_text = str(item.get('match_text', '')).strip().lower()[:128]
+            category = categories.get(str(item.get('category', '')).strip().lower())
+            try:
+                spread = max(1, int(item.get('spread_months', 1)))
+            except (TypeError, ValueError):
+                return Response({'error': f'Invalid spread_months: {item}'}, status=400)
+            if not match_text or category is None or match_text in seen:
+                return Response({'error': f'Invalid or duplicate rule: {item}'}, status=400)
+            seen.add(match_text)
+            new_rules.append(CategoryRule(
+                user=request.user, match_text=match_text, category=category,
+                spread_months=spread, position=len(new_rules),
+            ))
+
+        with db_transaction.atomic():
+            CategoryRule.objects.filter(user=request.user).delete()
+            CategoryRule.objects.bulk_create(new_rules)
+
+        applied = apply_rules(request.user)
+        return Response({
+            'status': 'success',
+            'count': len(new_rules),
+            'rule_applied': applied,
+        })
 
 
 class DetectTransfersView(APIView):
@@ -1401,6 +1457,238 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
         })
 
 
+class AiRelabelView(KEKAuthenticationMixin, APIView):
+    """Propose fixing transactions similar to one the user just re-categorized.
+
+    Body: ``transaction_id`` of a transaction that already carries the
+    corrected category. Candidates are the user's other transactions that share
+    a significant word with it and are not in that category yet (manual
+    decisions and transfers excluded); Gemini judges which ones really are the
+    same merchant or purpose. Nothing is persisted — the user confirms through
+    AiApplyView, and the response states exactly which data was transferred to
+    Google.
+    """
+    permission_classes = [IsAuthenticated]
+
+    # A word must be this long to anchor the candidate search — shorter tokens
+    # ("ag", "der", card suffixes) match half the table.
+    MIN_TOKEN = 4
+    MAX_TOKENS = 5
+
+    def post(self, request):
+        import re
+
+        from django.db.models import Q
+
+        from .ai_categorization import (
+            MAX_TRANSACTIONS,
+            RELABEL_DISCLOSED_FIELDS,
+            GeminiError,
+            relabel_similar,
+        )
+
+        profile = request.user.profile
+        if not profile.encrypted_gemini_key or not profile.gemini_model:
+            return Response({'error': 'Gemini is not configured'}, status=400)
+        api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        try:
+            tx = Transaction.objects.select_related('category').get(
+                pk=request.data.get('transaction_id'), account__user=request.user,
+            )
+        except (Transaction.DoesNotExist, TypeError, ValueError):
+            return Response({'error': 'Transaction not found'}, status=404)
+        if tx.category is None:
+            return Response(
+                {'error': 'The transaction has no category to propagate'}, status=400,
+            )
+
+        tokens = [
+            t for t in re.findall(r'[^\W\d_]+', f'{tx.counterparty} {tx.description}'.lower())
+            if len(t) >= self.MIN_TOKEN
+        ][:self.MAX_TOKENS]
+
+        empty = {
+            'suggestions': [], 'rules': [], 'sent_count': 0,
+            'disclosed_fields': RELABEL_DISCLOSED_FIELDS,
+        }
+        if not tokens:
+            return Response(empty)
+
+        match = Q()
+        for token in tokens:
+            match |= Q(counterparty__icontains=token) | Q(description__icontains=token)
+        # Re-labeling settled history is churn with little value — labeled
+        # candidates only from the last 18 months: covers the default report
+        # window plus yearly recurring bookings, whose previous instance sits
+        # ~12 months back. Uncategorized ones are pure gain at any age.
+        recent = timezone.localdate() - timedelta(days=548)
+        candidates = list(
+            Transaction.objects
+            .filter(match, account__user=request.user,
+                    category_manual=False, is_transfer=False)
+            .filter(Q(category__isnull=True) |
+                    (~Q(category=tx.category) & Q(booking_date__gte=recent)))
+            .exclude(pk=tx.pk)
+            .select_related('category')
+            .order_by('-booking_date')[:MAX_TRANSACTIONS]
+        )
+        if not candidates:
+            return Response(empty)
+
+        def payload(t):
+            return {
+                'id': t.id, 'counterparty': t.counterparty,
+                'description': t.description, 'amount': str(t.amount),
+                'currency': t.currency,
+                'current_category': t.category.name if t.category else None,
+            }
+
+        categories = list(
+            TransactionCategory.objects.filter(user=request.user).values_list('name', flat=True)
+        )
+        try:
+            result = relabel_similar(
+                api_key, profile.gemini_model, payload(tx),
+                [payload(t) for t in candidates], tx.category.name, categories,
+            )
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+        by_id = {t.id: t for t in candidates}
+        suggestions = []
+        for tx_id in result['ids']:
+            candidate = by_id.get(tx_id)
+            if candidate is None:
+                continue  # never act on ids we did not send
+            suggestions.append({
+                'transaction_id': candidate.id,
+                'booking_date': candidate.booking_date,
+                'counterparty': candidate.counterparty,
+                'description': candidate.description,
+                'amount': str(candidate.amount),
+                'currency': candidate.currency,
+                'category': tx.category.name,
+                'current_category': candidate.category.name if candidate.category else None,
+                'is_new_category': False,
+            })
+
+        # Rules are first-match-wins: a corrective rule is pointless while an
+        # earlier rule claims the same transactions. Find the rule that would
+        # classify a future twin of the corrected transaction — the new rule
+        # must be placed before it. If it already maps to the corrected
+        # category, future entries are fine and no new rule is needed.
+        from .classification import first_matching_rule
+        shadowing = first_matching_rule(request.user, tx)
+        if shadowing is not None and shadowing.category_id == tx.category_id:
+            result['rules'] = []
+
+        rules = [
+            {
+                'match_text': str(r['match_text']).strip().lower()[:128],
+                # Pin the rule to the corrected category, whatever the model said.
+                'category': tx.category.name,
+                'is_new_category': False,
+                'place_before_rule_id': shadowing.id if shadowing else None,
+                'shadowed_match_text': shadowing.match_text if shadowing else None,
+            }
+            for r in result['rules']
+        ]
+
+        return Response({
+            'suggestions': suggestions,
+            'rules': rules,
+            'sent_count': len(candidates),
+            'disclosed_fields': RELABEL_DISCLOSED_FIELDS,
+            'usage': result['usage'],
+        })
+
+
+class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
+    """Propose a smaller equivalent rule set (merge duplicates, drop dead rules).
+
+    Sends only rule metadata to Gemini — match texts, category names, spread,
+    and a per-rule match count — never transaction data. The response is a
+    proposal for the COMPLETE replacement rule set; the user confirms through
+    CategoryRulesReplaceView.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .ai_categorization import (
+            CONSOLIDATE_DISCLOSED_FIELDS,
+            GeminiError,
+            consolidate_rules,
+        )
+
+        profile = request.user.profile
+        if not profile.encrypted_gemini_key or not profile.gemini_model:
+            return Response({'error': 'Gemini is not configured'}, status=400)
+        api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
+
+        rules = list(
+            CategoryRule.objects.filter(user=request.user)
+            .select_related('category').order_by('position', 'id')
+        )
+        if len(rules) < 2:
+            return Response({'error': 'Not enough rules to consolidate'}, status=400)
+
+        # Per-rule match counts in one pass over the transaction texts: a
+        # strong dead-rule signal that discloses no transaction data.
+        texts = [
+            f'{c} {d}'.lower()
+            for c, d in Transaction.objects.filter(account__user=request.user)
+            .values_list('counterparty', 'description')
+        ]
+        payload = [
+            {
+                'id': r.id, 'match_text': r.match_text,
+                'category': r.category.name, 'spread_months': r.spread_months,
+                'matches': sum(1 for t in texts if r.match_text.lower() in t),
+            }
+            for r in rules
+        ]
+
+        try:
+            result = consolidate_rules(api_key, profile.gemini_model, payload)
+        except GeminiError as e:
+            return Response({'error': str(e)}, status=502)
+
+        # Only categories the rules already map to — consolidation never
+        # invents categories, so anything else is a hallucination to drop.
+        valid = {r.category.name.lower(): r.category.name for r in rules}
+        by_id = {r.id: r for r in rules}
+        proposed = []
+        seen = set()
+        for r in result['rules']:
+            match_text = str(r['match_text']).strip().lower()[:128]
+            name = valid.get(str(r['category']).strip().lower())
+            if not match_text or name is None or match_text in seen:
+                continue
+            seen.add(match_text)
+            sources = [
+                i for i in r.get('sources', [])
+                if isinstance(i, int) and i in by_id
+            ]
+            spread = r.get('spread_months')
+            if not isinstance(spread, int) or spread < 1:
+                spread = max((by_id[i].spread_months for i in sources), default=1)
+            proposed.append({
+                'match_text': match_text,
+                'category': name,
+                'spread_months': spread,
+                'sources': sources,
+            })
+
+        return Response({
+            'rules': proposed,
+            'before_count': len(rules),
+            'after_count': len(proposed),
+            'disclosed_fields': CONSOLIDATE_DISCLOSED_FIELDS,
+            'usage': result['usage'],
+        })
+
+
 class AiApplyView(APIView):
     """Persist the user-confirmed subset of AI suggestions.
 
@@ -1433,17 +1721,31 @@ class AiApplyView(APIView):
             ).update(category=category, category_manual=True)
             assigned += updated
 
+        from django.db.models import F
+
         rules_created = 0
         for item in request.data.get('rules', []):
             match_text = str(item.get('match_text', '')).strip().lower()[:128]
             category = category_for(item.get('category'))
             if not match_text or category is None:
                 continue
+            # Rules are first-match-wins. A corrective rule from the relabel
+            # flow names the rule that mislabeled its transactions — the new
+            # rule only takes effect if it is evaluated BEFORE that one.
+            position = next_rule_position(request.user)
+            before = CategoryRule.objects.filter(
+                user=request.user, pk=item.get('place_before_rule_id') or -1,
+            ).first()
+            if before is not None:
+                position = before.position
+                CategoryRule.objects.filter(
+                    user=request.user, position__gte=position,
+                ).update(position=F('position') + 1)
             _, created = CategoryRule.objects.get_or_create(
                 user=request.user, match_text=match_text,
                 defaults={
                     'category': category, 'spread_months': 1,
-                    'position': next_rule_position(request.user),
+                    'position': position,
                 },
             )
             rules_created += created

@@ -10,6 +10,10 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    # Flutter's Swift Package Manager checkouts live under build/; without
+    # this, `flutter analyze` reports errors from plugin example apps there.
+    - build/**
   errors:
     # False positive with freezed - @JsonKey on constructor parameters is valid
     invalid_annotation_target: ignore

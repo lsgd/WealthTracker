@@ -50,6 +50,9 @@ abstract class AiSuggestion with _$AiSuggestion {
     required String amount,
     required String currency,
     required String category,
+    /// What the transaction is labeled right now (relabel flow only) — lets
+    /// the review UI show "Groceries → Health". Null when uncategorized.
+    @JsonKey(name: 'current_category') String? currentCategory,
     @JsonKey(name: 'is_new_category') @Default(false) bool isNewCategory,
   }) = _AiSuggestion;
 
@@ -64,10 +67,46 @@ abstract class AiRuleSuggestion with _$AiRuleSuggestion {
     @JsonKey(name: 'match_text') required String matchText,
     required String category,
     @JsonKey(name: 'is_new_category') @Default(false) bool isNewCategory,
+    /// Rules are first-match-wins: when an existing rule caused the mislabel,
+    /// the new rule must be inserted before it (relabel flow only).
+    @JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,
+    @JsonKey(name: 'shadowed_match_text') String? shadowedMatchText,
   }) = _AiRuleSuggestion;
 
   factory AiRuleSuggestion.fromJson(Map<String, dynamic> json) =>
       _$AiRuleSuggestionFromJson(json);
+}
+
+/// One rule of a proposed consolidated rule set; [sources] are the ids of the
+/// current rules it replaces.
+@freezed
+abstract class AiConsolidatedRule with _$AiConsolidatedRule {
+  const factory AiConsolidatedRule({
+    @JsonKey(name: 'match_text') required String matchText,
+    required String category,
+    @JsonKey(name: 'spread_months') @Default(1) int spreadMonths,
+    @Default(<int>[]) List<int> sources,
+  }) = _AiConsolidatedRule;
+
+  factory AiConsolidatedRule.fromJson(Map<String, dynamic> json) =>
+      _$AiConsolidatedRuleFromJson(json);
+}
+
+/// Proposal for replacing the whole rule set with a smaller equivalent one.
+@freezed
+abstract class AiConsolidateResponse with _$AiConsolidateResponse {
+  const factory AiConsolidateResponse({
+    @Default(<AiConsolidatedRule>[]) List<AiConsolidatedRule> rules,
+    @JsonKey(name: 'before_count') @Default(0) int beforeCount,
+    @JsonKey(name: 'after_count') @Default(0) int afterCount,
+    @JsonKey(name: 'disclosed_fields')
+    @Default(<String>[])
+    List<String> disclosedFields,
+    AiUsage? usage,
+  }) = _AiConsolidateResponse;
+
+  factory AiConsolidateResponse.fromJson(Map<String, dynamic> json) =>
+      _$AiConsolidateResponseFromJson(json);
 }
 
 @freezed

@@ -48,6 +48,9 @@ class ApiConfig {
   static const String aiModelsPath = '/api/spending/ai/models/';
   static const String aiRefreshPricingPath = '/api/spending/ai/refresh-pricing/';
   static const String aiSuggestPath = '/api/spending/ai/suggest/';
+  static const String aiRelabelPath = '/api/spending/ai/relabel/';
+  static const String aiConsolidatePath = '/api/spending/ai/consolidate/';
+  static const String spendingRulesReplacePath = '/api/spending/rules/replace/';
   static const String aiApplyPath = '/api/spending/ai/apply/';
 
   static String syncTaskStatusPath(String taskId) =>

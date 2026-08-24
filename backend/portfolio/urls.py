@@ -24,6 +24,7 @@ urlpatterns = [
     path('spending/categories/<int:pk>/', views.TransactionCategoryDetailView.as_view(), name='category_detail'),
     path('spending/rules/', views.CategoryRuleListCreateView.as_view(), name='rule_list'),
     path('spending/rules/reorder/', views.CategoryRuleReorderView.as_view(), name='rule_reorder'),
+    path('spending/rules/replace/', views.CategoryRulesReplaceView.as_view(), name='rule_replace'),
     path('spending/rules/<int:pk>/', views.CategoryRuleDetailView.as_view(), name='rule_detail'),
     path('spending/detect-transfers/', views.DetectTransfersView.as_view(), name='detect_transfers'),
     path('spending/monthly/', views.SpendingMonthlyView.as_view(), name='spending_monthly'),
@@ -32,6 +33,8 @@ urlpatterns = [
     path('spending/ai/models/', views.AiModelsView.as_view(), name='ai_models'),
     path('spending/ai/refresh-pricing/', views.AiRefreshPricingView.as_view(), name='ai_refresh_pricing'),
     path('spending/ai/suggest/', views.AiSuggestView.as_view(), name='ai_suggest'),
+    path('spending/ai/relabel/', views.AiRelabelView.as_view(), name='ai_relabel'),
+    path('spending/ai/consolidate/', views.AiConsolidateRulesView.as_view(), name='ai_consolidate'),
     path('spending/ai/apply/', views.AiApplyView.as_view(), name='ai_apply'),
     # Account bulk create (discover is in brokers/urls.py to avoid <str:code> catch-all)
     path('accounts/bulk/', views.BulkAccountCreateView.as_view(), name='account_bulk_create'),

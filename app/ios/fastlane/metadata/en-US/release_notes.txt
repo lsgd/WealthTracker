@@ -6,14 +6,18 @@
 - Simulation polish: readable y-axis labels (K/M, no overlap or duplicates), a red line marking the target amount and the year the median path reaches it, sticky tap-to-inspect showing median/75%/95% values above the chart, an explanation under every assumption field, and instant horizon switching (no recalculation)
 - Spending chart fixes: month labels no longer overlap, y-axis ticks are evenly spaced without duplicate values, and the breakdown total in the donut uses a thousands separator
 - Transaction lists now show the counterparty name instead of a leading IBAN, and the booking text gets two lines instead of one
-- AI suggestions: select or deselect all proposals with one tap in the app bar, a banner announces proposed rules (previously easy to scroll past below the category list), and the apply button breaks its count into categories and rules
+- AI suggestions: the settings card now explains upfront that a round proposes both categories and rules; a banner at the top announces proposed rules with a switch to skip creating them, select or deselect all with one tap in the app bar, and the apply button breaks its count into categories and rules
 - Categories can now be renamed and deleted in the app under Spending settings
+- Transactions tab now lists all accounts together in chronological order, with a collapsible filter for account and uncategorized-only, account chips on each row, and a load-more footer
 - Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
+- Simulation: picking a longer horizon than the server covered now re-runs the simulation instead of leaving the chart clipped at the previously selected horizon
+- Transactions list loads further pages automatically while scrolling (no more load-more button) and pages load faster
+- Fix similar with AI: after manually re-categorizing a transaction, a new action asks Gemini which other transactions belong to the same merchant or purpose; you review its picks (and an optional rule) before anything is changed. Re-labeling only considers the last 18 months; uncategorized entries are offered at any age
+- A corrective rule from the fix-similar flow is inserted before the rule that caused the mislabel (rules are first-match-wins), and no rule is proposed when the existing rules already classify the merchant correctly
+- Consolidate rules with AI: a new button in Spending settings asks Gemini to merge duplicate rules and drop dead ones; you review the resulting set including removed rules before it replaces the old one
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open
 - Sync results (synced count or per-account errors) are now also shown after automatic syncs
 - New Spending screen (chart icon on the start screen): month-to-month spending by category, with a normalized view that spreads yearly bills across their months, and a per-month breakdown you can step through
-- Spending screen now has a Transactions tab: pick an account and assign a category to any transaction by tapping it
-- Spending settings (tune icon): manage categorization rules including drag-to-reorder, and request Gemini category suggestions to review and confirm (the Gemini key and model are still configured in the web app)
-- Bug fixes and improvements.
+- Spending screen now has a Transact

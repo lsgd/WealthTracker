@@ -5,6 +5,7 @@ import '../../core/utils/formatters.dart';
 import '../../data/models/transactions.dart';
 import '../providers/accounts_provider.dart';
 import '../providers/spending_provider.dart';
+import 'ai_relabel_sheet.dart';
 
 /// All transactions across accounts, newest first, with manual categorization.
 ///
@@ -36,26 +37,48 @@ class TransactionsTab extends ConsumerWidget {
                       : 'No transactions yet.',
                 );
               }
-              return RefreshIndicator(
-                onRefresh: () async =>
-                    ref.refresh(transactionsProvider.future),
-                child: ListView.separated(
-                  // +1 for the load-more footer.
-                  itemCount: data.results.length + (data.hasMore ? 1 : 0),
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    if (index == data.results.length) {
-                      return _LoadMoreFooter(state: data);
-                    }
-                    final tx = data.results[index];
-                    return _TransactionTile(
-                      transaction: tx,
-                      // Name the account only when the list mixes accounts.
-                      accountName: filter.accountId == null
-                          ? accountNames[tx.account]
-                          : null,
-                    );
-                  },
+              return NotificationListener<ScrollNotification>(
+                // Endless scrolling: fetch the next page as the end comes
+                // into reach. loadMore() itself ignores calls while a page
+                // is in flight or everything is loaded.
+                onNotification: (notification) {
+                  if (data.hasMore &&
+                      notification.metrics.extentAfter < 400) {
+                    ref.read(transactionsProvider.notifier).loadMore();
+                  }
+                  return false;
+                },
+                child: RefreshIndicator(
+                  onRefresh: () async =>
+                      ref.refresh(transactionsProvider.future),
+                  child: ListView.separated(
+                    // +1 for the loading footer.
+                    itemCount: data.results.length + (data.hasMore ? 1 : 0),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      if (index == data.results.length) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      }
+                      final tx = data.results[index];
+                      return _TransactionTile(
+                        transaction: tx,
+                        // Name the account only when the list mixes accounts.
+                        accountName: filter.accountId == null
+                            ? accountNames[tx.account]
+                            : null,
+                      );
+                    },
+                  ),
                 ),
               );
             },
@@ -115,30 +138,6 @@ class _FilterBar extends ConsumerWidget {
           onChanged: notifier.setUncategorizedOnly,
         ),
       ],
-    );
-  }
-}
-
-class _LoadMoreFooter extends ConsumerWidget {
-  final TransactionsState state;
-  const _LoadMoreFooter({required this.state});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Center(
-        child: state.loadingMore
-            ? const SizedBox(
-                width: 20, height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2))
-            : TextButton(
-                onPressed: () =>
-                    ref.read(transactionsProvider.notifier).loadMore(),
-                child: Text(
-                    'Load more (${state.results.length}/${state.totalCount})'),
-              ),
-      ),
     );
   }
 }
@@ -257,6 +256,9 @@ class _TransactionTile extends ConsumerWidget {
     if (choice == null || !context.mounted) return;
 
     final messenger = ScaffoldMessenger.of(context);
+    // The tile can be disposed by the reload below while its snackbar is
+    // still visible — the navigator's context outlives it for the sheet.
+    final navigator = Navigator.of(context);
     try {
       final repo = ref.read(spendingRepositoryProvider);
       final TransactionRecord updated;
@@ -266,6 +268,16 @@ class _TransactionTile extends ConsumerWidget {
       } else {
         updated = await repo.classifyTransaction(transaction.id,
             categoryId: choice.categoryId);
+      }
+      // Offer to propagate the correction to similar transactions — only for
+      // an actual category assignment, and only when Gemini is configured.
+      var offerAiFix = !choice.isTransferChoice && updated.categoryName != null;
+      if (offerAiFix) {
+        try {
+          offerAiFix = (await ref.read(aiConfigProvider.future)).configured;
+        } catch (_) {
+          offerAiFix = false;
+        }
       }
       // In-place update keeps scroll position and loaded pages. Exception:
       // with the uncategorized filter on, a categorized entry no longer
@@ -277,9 +289,41 @@ class _TransactionTile extends ConsumerWidget {
         ref.read(transactionsProvider.notifier).replace(updated);
       }
       ref.invalidate(spendingReportProvider);
+      if (offerAiFix) {
+        _offerAiFix(navigator, messenger, updated);
+      }
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('$e')));
     }
+  }
+
+  /// Snackbar action: let Gemini find transactions similar to the one just
+  /// re-labeled and fix them too, after review in [AiRelabelSheet].
+  void _offerAiFix(NavigatorState navigator, ScaffoldMessengerState messenger,
+      TransactionRecord updated) {
+    messenger.showSnackBar(SnackBar(
+      content: Text('Categorized as ${updated.categoryName}'),
+      action: SnackBarAction(
+        label: 'Fix similar',
+        onPressed: () async {
+          final fixed = await showModalBottomSheet<int>(
+            context: navigator.context,
+            showDragHandle: true,
+            isScrollControlled: true,
+            builder: (_) => AiRelabelSheet(
+              transactionId: updated.id,
+              categoryName: updated.categoryName!,
+            ),
+          );
+          if (fixed != null && fixed > 0) {
+            messenger.showSnackBar(SnackBar(
+              content: Text(
+                  'Fixed $fixed similar transaction${fixed == 1 ? '' : 's'}'),
+            ));
+          }
+        },
+      ),
+    ));
   }
 }
 
