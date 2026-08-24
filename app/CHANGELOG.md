@@ -40,6 +40,8 @@
 - AI rule suggestions merge near-identical merchant spellings ("dm-drogerie" / "dm.drogerie") into one regex rule instead of one rule per spelling
 - AI rule suggestions can improve an existing rule in place (shown as "replaces ...") when it misses spellings seen in your transactions — e.g. a "youtubepremium" rule becomes a regex also matching "youtube premium"; exact duplicates of existing rules are no longer suggested
 - AI suggestions can now propose transfers: recurring own-account movements (broker top-ups, credit-card settlements) can be marked "Transfer (excluded)" per transaction or via a suggested transfer rule
+- Swisscard credit-card exports can now be imported: add a Swisscard account and import its CSV, and the monthly settlement pairs with the debit on the paying bank account so only the card purchases count as spending
+- Duplicate detection now also catches entries the two feeds dated a day or two apart, and never merges two payments that share a day and an amount but carry different contract or card numbers
 - Fixed transactions appearing twice when the same account was imported through two paths (for example a ZKB EBICS sync and the account's CSV export, whose wording differs): the importer now recognizes an entry already imported from another source. Existing duplicates can be cleaned up with the new dedupe_transactions maintenance command
 - Web rules can now be edited: click a rule to change its match text, regex flag, target category or spread
 - Web transactions can be filtered by category, including uncategorized-only and transfers-only

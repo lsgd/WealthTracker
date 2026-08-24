@@ -17,7 +17,10 @@
       "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
-        "required": ["username", "pin"],
+        "required": [
+          "username",
+          "pin"
+        ],
         "properties": {
           "username": {
             "type": "string",
@@ -54,7 +57,10 @@
       "supports_auto_sync": false,
       "credential_schema": {
         "type": "object",
-        "required": ["username", "pin"],
+        "required": [
+          "username",
+          "pin"
+        ],
         "properties": {
           "username": {
             "type": "string",
@@ -91,7 +97,11 @@
       "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
-        "required": ["username", "password", "totp_secret"],
+        "required": [
+          "username",
+          "password",
+          "totp_secret"
+        ],
         "properties": {
           "username": {
             "type": "string",
@@ -141,7 +151,11 @@
       "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
-        "required": ["username", "password", "totp_secret"],
+        "required": [
+          "username",
+          "password",
+          "totp_secret"
+        ],
         "properties": {
           "username": {
             "type": "string",
@@ -183,7 +197,10 @@
       "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
-        "required": ["username", "password"],
+        "required": [
+          "username",
+          "password"
+        ],
         "properties": {
           "username": {
             "type": "string",
@@ -241,7 +258,10 @@
       "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
-        "required": ["flex_token", "query_id"],
+        "required": [
+          "flex_token",
+          "query_id"
+        ],
         "properties": {
           "flex_token": {
             "type": "string",
@@ -266,7 +286,7 @@
     "pk": 8,
     "fields": {
       "code": "zkb",
-      "name": "Zürcher Kantonalbank (ZKB)",
+      "name": "Z\u00fcrcher Kantonalbank (ZKB)",
       "integration_type": "ebics",
       "bank_identifier": "",
       "fints_server": "",
@@ -284,6 +304,27 @@
       },
       "created_at": "2026-07-12T00:00:00Z",
       "updated_at": "2026-07-12T00:00:00Z"
+    }
+  },
+  {
+    "model": "brokers.broker",
+    "pk": 9,
+    "fields": {
+      "code": "swisscard",
+      "name": "Swisscard",
+      "integration_type": "rest",
+      "bank_identifier": "",
+      "fints_server": "",
+      "api_base_url": "",
+      "logo_url": "",
+      "website_url": "https://www.swisscard.ch",
+      "country": "CH",
+      "is_active": true,
+      "supports_2fa": false,
+      "supports_auto_sync": false,
+      "credential_schema": {},
+      "created_at": "2026-01-20T00:00:00Z",
+      "updated_at": "2026-01-20T00:00:00Z"
     }
   }
 ]

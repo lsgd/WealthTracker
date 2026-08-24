@@ -1109,10 +1109,12 @@ class TransactionCsvImportView(APIView):
     """Import a bank CSV export, resolving the target account from the file.
 
     DKB exports name their own IBAN in the preamble — matched against the
-    account identifiers. ZKB exports carry no identifier; when exactly one
-    account has the file's currency the choice is unambiguous, otherwise the
-    response lists the candidates (``status: 'ambiguous'``) and the client
-    retries via the per-account endpoint.
+    account identifiers. ZKB and Swisscard exports carry no identifier: the
+    format names its bank, so candidates are narrowed to accounts of that
+    broker when the user has any, then by currency. When exactly one account
+    remains the choice is unambiguous, otherwise the response lists the
+    candidates (``status: 'ambiguous'``) and the client retries via the
+    per-account endpoint.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1143,6 +1145,11 @@ class TransactionCsvImportView(APIView):
             return _import_parsed_csv(request, account, fmt, currency, infos, skipped)
 
         candidates = [a for a in accounts if a.currency == currency]
+        # The format identifies the bank: a Swisscard export belongs to a
+        # Swisscard account, not to the CHF bank account that settles it.
+        same_broker = [a for a in candidates if a.broker.code == fmt]
+        if same_broker:
+            candidates = same_broker
         if len(candidates) == 1:
             return _import_parsed_csv(
                 request, candidates[0], fmt, currency, infos, skipped,

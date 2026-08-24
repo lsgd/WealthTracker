@@ -80,6 +80,12 @@ def _dedup_keys(infos):
 # duplicate is recoverable, a silently dropped transaction is not.
 SIMILARITY_THRESHOLD = 0.4
 
+# Two feeds can book one payment a day or two apart (ZKB's camt.053 dates the
+# TWINT debit a day before the account's own CSV export does). Same-day
+# matches are always paired first, so a window this wide only catches what is
+# left over.
+DUPLICATE_WINDOW_DAYS = 4
+
 
 # Contract, card, mandate or end-to-end numbers. Two entries whose numbers are
 # entirely different are different payments even when the rest of the text
@@ -126,51 +132,69 @@ def cross_source_duplicate_indices(account, infos, source) -> set:
     and a CSV export of the same account). Their dedup keys only coincide when
     both carry the bank's reference; ZKB's CSV and camt differ in wording
     ("Belastung" vs "Debit"), so the content-hash fallback yields two rows for
-    one payment.
+    one payment — sometimes even dated a day apart.
 
-    Entries are grouped by (booking date, amount, currency) — the part both
-    feeds always agree on — and each already-stored entry claims the incoming
-    entry whose booking text is most similar to its own, provided they are
-    similar enough to be one payment at all. A day holding two unrelated
-    10 EUR debits (two Riester contracts) therefore keeps them apart, and an
-    entry the other feed never reported is still imported. Matching on count
-    alone silently deleted such payments.
+    Entries are grouped by (amount, currency) — what both feeds always agree
+    on — and each already-stored entry claims the incoming entry that reads
+    like the same payment, same-day candidates first and only then ones within
+    ``DUPLICATE_WINDOW_DAYS``. A day holding two unrelated 10 EUR debits (two
+    Riester contracts) therefore keeps them apart, and an entry the other feed
+    never reported is still imported. Matching on count alone silently deleted
+    such payments.
     """
     from .models import Transaction
 
     incoming = {}
     for index, info in enumerate(infos):
-        key = (info.booking_date, info.amount, info.currency)
-        incoming.setdefault(key, []).append(index)
+        incoming.setdefault((info.amount, info.currency), []).append(index)
     if not incoming:
         return set()
 
-    existing = (
+    dates = [info.booking_date for info in infos if info.booking_date]
+    if not dates:
+        return set()
+    window = timedelta(days=DUPLICATE_WINDOW_DAYS)
+    existing = list(
         Transaction.objects
-        .filter(account=account, booking_date__in={k[0] for k in incoming})
+        .filter(
+            account=account,
+            booking_date__gte=min(dates) - window,
+            booking_date__lte=max(dates) + window,
+        )
         .exclude(source=source)
         .exclude(source='manual')  # hand-entered rows are the user's own truth
+        .order_by('booking_date', 'id')
         .values_list('booking_date', 'amount', 'currency',
                      'counterparty', 'description')
     )
 
     duplicates = set()
     for booking_date, amount, currency, counterparty, description in existing:
-        candidates = incoming.get((booking_date, amount, currency))
+        candidates = incoming.get((amount, currency))
         if not candidates:
             continue
-        stored = _tokens(counterparty or '', description or '')
-        best = max(
-            candidates,
-            key=lambda i: _similarity(
-                stored, _tokens(infos[i].counterparty, infos[i].description)),
-        )
-        if not looks_like_same_entry(
-                counterparty, description,
-                infos[best].counterparty, infos[best].description):
-            continue  # same day and amount, but a different payment
-        candidates.remove(best)  # one stored row claims one incoming entry
-        duplicates.add(best)
+        match = None
+        for index in candidates:
+            info = infos[index]
+            distance = abs(info.booking_date - booking_date)
+            if distance > window:
+                continue
+            if not looks_like_same_entry(
+                    counterparty, description,
+                    info.counterparty, info.description):
+                continue  # same amount, but a different payment
+            score = _similarity(
+                _tokens(counterparty or '', description or ''),
+                _tokens(info.counterparty, info.description))
+            # Closest date wins, then the most similar wording — so two
+            # same-amount payments on neighbouring days pair with their own
+            # counterpart rather than swapping.
+            key = (distance, -score)
+            if match is None or key < match[0]:
+                match = (key, index)
+        if match is not None:
+            candidates.remove(match[1])  # one stored row, one incoming entry
+            duplicates.add(match[1])
     return duplicates
 
 

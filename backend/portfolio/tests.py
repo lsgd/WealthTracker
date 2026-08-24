@@ -731,6 +731,61 @@ class TransactionImporterTests(TestCase):
             ['05-0885318-88 Riester', '05-0885320-90 Riester'],
         )
 
+    def test_same_entry_dated_a_day_apart_is_not_duplicated(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        # camt.053 books the TWINT debit a day before the CSV export does.
+        store_transactions(self.account, [self._info(
+            booking_date=date(2026, 8, 20), amount=D('-16.10'),
+            description='Debit TWINT: ADC REGENSDORF')], source='camt053')
+        created = store_transactions(self.account, [self._info(
+            booking_date=date(2026, 8, 21), amount=D('-16.10'),
+            description='Belastung TWINT: ADC REGENSDORF')], source='csv')
+        self.assertEqual(created, 0)
+        self.assertEqual(Transaction.objects.count(), 1)
+
+    def test_same_merchant_on_neighbouring_days_keeps_both(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        # Two coffees of the same price at the same shop, one day apart —
+        # both feeds see both, so nothing may collapse.
+        store_transactions(self.account, [
+            self._info(booking_date=date(2026, 8, 20), amount=D('-5.00'),
+                       description='Debit TWINT: COFFEE BAR'),
+            self._info(booking_date=date(2026, 8, 21), amount=D('-5.00'),
+                       description='Debit TWINT: COFFEE BAR'),
+        ], source='camt053')
+        created = store_transactions(self.account, [
+            self._info(booking_date=date(2026, 8, 20), amount=D('-5.00'),
+                       description='Belastung TWINT: COFFEE BAR'),
+            self._info(booking_date=date(2026, 8, 21), amount=D('-5.00'),
+                       description='Belastung TWINT: COFFEE BAR'),
+        ], source='csv')
+        self.assertEqual(created, 0)
+        self.assertEqual(
+            sorted(Transaction.objects.values_list('booking_date', flat=True)),
+            [date(2026, 8, 20), date(2026, 8, 21)],
+        )
+
+    def test_dedupe_command_removes_a_twin_dated_a_day_apart(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 20),
+            amount=D('-16.10'), currency='CHF', source='camt053',
+            description='Debit TWINT: ADC REGENSDORF', dedup_key='h:a')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 21),
+            amount=D('-16.10'), currency='CHF', source='csv',
+            description='Belastung TWINT: ADC REGENSDORF', dedup_key='h:b')
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        self.assertEqual(Transaction.objects.count(), 1)
+        self.assertEqual(Transaction.objects.get().source, 'camt053')
+
     def test_different_payments_same_day_and_amount_are_not_merged(self):
         """One feed has contract A, the other only contract B — both are real."""
         from decimal import Decimal as D
@@ -1964,6 +2019,24 @@ _COMMERZBANK_CSV = (
 )
 
 
+_SWISSCARD_CSV = (
+    'Transaction date,Description,Merchant,Card number,Currency,Amount,'
+    'Foreign Currency,Amount in foreign currency,Debit/Credit,Status,'
+    'Merchant Category,Registered Category\n'
+    # A purchase: POSITIVE amount with Debit — must be stored as spending.
+    '23.08.2026,TEST SHOP GENEVA,TEST SHOP,3776 60**** *0001,CHF,42.50,,,'
+    'Debit,Posted,Groceries,\n'
+    # The monthly settlement arriving from the bank account: negative + Credit.
+    '20.08.2026,IHRE ZAHLUNG – BESTEN DANK,,3776 60**** *0001,CHF,-1200.00,,,'
+    'Credit,Posted,Payment,\n'
+    # A refund, and a not-yet-posted entry that must be skipped.
+    '19.08.2026,REFUND TEST SHOP,TEST SHOP,3776 60**** *0002,CHF,-9.90,,,'
+    'Credit,Posted,Shopping,\n'
+    '24.08.2026,PENDING PURCHASE,PENDING,3776 60**** *0001,CHF,5.00,,,'
+    'Debit,Pending,General,\n'
+)
+
+
 class CsvImportTests(APITestCase):
     """CSV transaction import (synthetic fixtures mimicking the bank formats)."""
 
@@ -1993,6 +2066,70 @@ class CsvImportTests(APITestCase):
             {'file': SimpleUploadedFile('export.csv', text.encode('utf-8'))},
             format='multipart',
         )
+
+    def test_swisscard_signs_follow_the_direction_column(self):
+        from portfolio.models import Transaction
+        card = FinancialAccount.objects.create(
+            user=self.user,
+            broker=Broker.objects.create(
+                code='swisscard', name='Swisscard', integration_type='rest'),
+            name='Swisscard', currency='CHF',
+        )
+        resp = self._upload(card, _SWISSCARD_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['imported'], 3)  # the pending row is skipped
+        rows = {t.booking_date: t for t in Transaction.objects.filter(account=card)}
+        # A purchase is written positive in the file but is spending here.
+        purchase = rows[date(2026, 8, 23)]
+        self.assertEqual(purchase.amount, Decimal('-42.50'))
+        # The settlement is money arriving on the card account.
+        self.assertEqual(rows[date(2026, 8, 20)].amount, Decimal('1200.00'))
+        # A refund is a credit despite being written negative.
+        self.assertEqual(rows[date(2026, 8, 19)].amount, Decimal('9.90'))
+        # Merchant category and card stay visible in the booking text.
+        self.assertIn('Groceries', purchase.description)
+        self.assertIn('*0001', purchase.description)
+
+    def test_swisscard_settlement_pairs_with_the_paying_account(self):
+        from portfolio.models import Transaction
+        card = FinancialAccount.objects.create(
+            user=self.user,
+            broker=Broker.objects.create(
+                code='swisscard', name='Swisscard', integration_type='rest'),
+            name='Swisscard', currency='CHF',
+        )
+        # The bank side of the monthly settlement.
+        bank_side = Transaction.objects.create(
+            account=self.chf, booking_date=date(2026, 8, 20),
+            amount=Decimal('-1200.00'), currency='CHF',
+            counterparty='Swisscard AECS GmbH', source='camt053',
+            dedup_key='ref:SETTLE-1',
+        )
+        self._upload(card, _SWISSCARD_CSV)
+        card_side = Transaction.objects.get(
+            account=card, counterparty='IHRE ZAHLUNG – BESTEN DANK')
+        bank_side.refresh_from_db()
+        card_side.refresh_from_db()
+        # Both ends are excluded from spending — the card purchases are the
+        # real expenses, the settlement only moves money between own accounts.
+        self.assertTrue(bank_side.is_transfer)
+        self.assertTrue(card_side.is_transfer)
+        # The purchases themselves stay spending.
+        purchase = Transaction.objects.get(
+            account=card, booking_date=date(2026, 8, 23))
+        self.assertFalse(purchase.is_transfer)
+
+    def test_auto_import_picks_the_card_account_over_the_bank_account(self):
+        card = FinancialAccount.objects.create(
+            user=self.user,
+            broker=Broker.objects.create(
+                code='swisscard', name='Swisscard', integration_type='rest'),
+            name='Swisscard', currency='CHF',
+        )
+        # self.chf is also CHF — the format names its bank, so no picker.
+        resp = self._upload_auto(_SWISSCARD_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['account_id'], card.id)
 
     def test_auto_import_matches_dkb_account_by_preamble_iban(self):
         self.eur.account_identifier = 'DE00000000000000000000'

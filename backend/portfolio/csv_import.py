@@ -17,6 +17,14 @@ Format notes (structure learned from real exports; test fixtures are synthetic):
   change on booking and would come back as duplicates. The "Kundenreferenz" is
   not a guaranteed-unique bank reference, so DKB entries use the importer's
   order-stable content-hash dedup instead of a ``ref:`` key.
+- **Swisscard** (credit card): COMMA-separated, header in row one. Amounts are
+  unsigned-by-column: a purchase is a positive "Amount" with
+  "Debit/Credit" = Debit, a refund or the monthly settlement is negative with
+  Credit — the opposite of the sign convention everywhere else, so the sign is
+  taken from that column. One file can cover several cards of the same
+  account ("Card number"). The monthly settlement appears as a Credit row
+  ("IHRE ZAHLUNG – BESTEN DANK"), which pairs with the debit on the paying
+  bank account through the normal transfer detection.
 - **Commerzbank**: header in row one ("Buchungstag;…"), German number format,
   currency in its own column, and the account's OWN IBAN per row ("IBAN
   Kontoinhaber") — used for account auto-matching. Counterparty name comes
@@ -51,6 +59,7 @@ _ZKB_DETAILS = ('details',)
 
 _DKB_HEADER_FIRST = 'buchungsdatum'
 _COMMERZBANK_HEADER_FIRST = 'buchungstag'
+_SWISSCARD_HEADER_START = ['transaction date', 'description']
 
 
 def _decode(content: bytes) -> str:
@@ -90,16 +99,25 @@ def _parse_amount(text: str, german: bool) -> Decimal:
 
 
 def parse_transactions_csv(content: bytes, fallback_currency: str):
-    """Parse a ZKB or DKB export.
+    """Parse a ZKB, DKB, Commerzbank or Swisscard export.
 
     Returns (format_name, currency, infos, skipped, account_iban) —
     ``account_iban`` is the account the file itself claims to belong to (DKB
-    puts its IBAN in the preamble; ZKB exports carry no identifier → None).
-    ``skipped`` counts rows without a parseable date or amount (detail
-    continuation rows, pending entries). Raises CsvImportError when the file
-    matches neither format.
+    puts its IBAN in the preamble; ZKB and Swisscard exports carry no
+    identifier → None). ``skipped`` counts rows without a parseable date or
+    amount (detail continuation rows, pending entries). Raises CsvImportError
+    when the file matches no known format.
     """
-    rows = list(csv.reader(io.StringIO(_decode(content)), delimiter=';'))
+    text = _decode(content)
+
+    # Swisscard is the only comma-separated format; sniff it before the
+    # semicolon parse, which would read the whole line as one cell.
+    comma_header = next(iter(csv.reader(io.StringIO(text))), [])
+    if [c.strip().lower() for c in comma_header[:2]] == _SWISSCARD_HEADER_START:
+        return _parse_swisscard(
+            list(csv.reader(io.StringIO(text))), fallback_currency) + (None,)
+
+    rows = list(csv.reader(io.StringIO(text), delimiter=';'))
     if not rows:
         raise CsvImportError('The file is empty.')
 
@@ -175,6 +193,69 @@ def _parse_zkb(rows, fallback_currency):
             external_id=cell(row, ref_col) or None,
         ))
     return 'zkb', currency, infos, skipped
+
+
+def _parse_swisscard(rows, fallback_currency):
+    """Swisscard credit-card export (comma-separated, unsigned amounts)."""
+    columns = {cell.strip().lower(): i for i, cell in enumerate(rows[0])}
+
+    def col(name):
+        return columns.get(name)
+
+    date_col = col('transaction date')
+    description_col = col('description')
+    merchant_col = col('merchant')
+    card_col = col('card number')
+    currency_col = col('currency')
+    amount_col = col('amount')
+    direction_col = col('debit/credit')
+    status_col = col('status')
+    category_col = col('merchant category')
+    if None in (date_col, amount_col, direction_col):
+        raise CsvImportError('Swisscard export is missing expected columns.')
+
+    def cell(row, c):
+        return row[c].strip() if c is not None and c < len(row) else ''
+
+    currency = fallback_currency
+    infos, skipped = [], 0
+    for row in rows[1:]:
+        booking_date = _parse_date(cell(row, date_col), ('%d.%m.%Y',))
+        if booking_date is None:
+            skipped += 1
+            continue
+        status = cell(row, status_col)
+        if status and status.lower() != 'posted':
+            skipped += 1  # pending entries change on posting and would duplicate
+            continue
+        try:
+            value = _parse_amount(cell(row, amount_col), german=False)
+        except InvalidOperation:
+            skipped += 1
+            continue
+        # The file states the direction in its own column and writes purchases
+        # POSITIVE — the opposite of every other format, so the sign is taken
+        # from the direction, not from the number.
+        amount = -abs(value) if cell(row, direction_col).lower().startswith('d') \
+            else abs(value)
+        currency = cell(row, currency_col).upper() or currency
+        description = cell(row, description_col)
+        category = cell(row, category_col)
+        card = cell(row, card_col)
+        # One file can cover several cards of the same account — naming the
+        # card keeps a shared account's entries apart in the list.
+        details = ' · '.join(p for p in (category, card) if p)
+        infos.append(TransactionInfo(
+            booking_date=booking_date,
+            amount=amount,
+            currency=currency,
+            value_date=None,
+            counterparty=cell(row, merchant_col) or description,
+            description=f'{description} ({details})' if details else description,
+            # No bank reference in the export → content-hash dedup.
+            external_id=None,
+        ))
+    return 'swisscard', currency, infos, skipped
 
 
 def _parse_commerzbank(rows, fallback_currency):
