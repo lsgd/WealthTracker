@@ -731,6 +731,41 @@ class TransactionImporterTests(TestCase):
             ['05-0885318-88 Riester', '05-0885320-90 Riester'],
         )
 
+    def test_different_payments_same_day_and_amount_are_not_merged(self):
+        """One feed has contract A, the other only contract B — both are real."""
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885318-88 Riester'),
+        ], source='fints')
+        created = store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885320-90 Riester'),
+        ], source='csv')
+        # Same date and amount, but a different contract — not a copy.
+        self.assertEqual(created, 1)
+        self.assertEqual(Transaction.objects.count(), 2)
+
+    def test_dedupe_command_keeps_differently_worded_payments(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        common = dict(
+            account=self.account, booking_date=date(2025, 9, 1),
+            amount=D('-10'), currency='EUR',
+        )
+        Transaction.objects.create(
+            **common, description='05-0885318-88 Riester',
+            source='fints', dedup_key='h:f1')
+        Transaction.objects.create(
+            **common, description='05-0885320-90 Riester',
+            source='csv', dedup_key='h:c1')
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        # Two sources, one row each, same date and amount — but two different
+        # contracts. Deleting either loses a real payment.
+        self.assertEqual(Transaction.objects.count(), 2)
+
     def test_dedupe_command_keeps_one_row_per_distinct_payment(self):
         from decimal import Decimal as D
         from io import StringIO

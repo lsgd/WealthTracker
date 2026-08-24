@@ -22,6 +22,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import Count
 
 from portfolio.models import Transaction
+from portfolio.transaction_importer import looks_like_same_entry
 
 
 class Command(BaseCommand):
@@ -41,10 +42,10 @@ class Command(BaseCommand):
         """(survivors, doomed) — one row per distinct payment before seconds.
 
         A day can hold several same-amount payments that are NOT copies of one
-        another: two Riester contracts each debiting 10 EUR on the 1st. Taking
-        simply the first ``keep_count`` rows could keep both copies of one
-        contract and drop the other entirely, so distinct booking texts are
-        served first; only then are remaining slots filled.
+        another: two Riester contracts each debiting 10 EUR on the 1st. Two
+        safeguards: distinct booking texts are served first, and a row is only
+        removed when a survivor actually reads like the same payment in the
+        other feed's wording. Counting alone deleted real transactions.
         """
         survivors, seen = [], set()
         for row in rows:
@@ -58,7 +59,21 @@ class Command(BaseCommand):
                     survivors.append(row)
                     if len(survivors) == keep_count:
                         break
-        doomed = [row for row in rows if row not in survivors]
+
+        doomed = []
+        for row in rows:
+            if row in survivors:
+                continue
+            twin = any(
+                looks_like_same_entry(
+                    row.counterparty, row.description,
+                    other.counterparty, other.description)
+                for other in survivors
+            )
+            if twin:
+                doomed.append(row)
+            else:
+                survivors.append(row)  # its own payment, not a copy
         return survivors, doomed
 
     def handle(self, *args, **options):

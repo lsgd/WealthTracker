@@ -72,10 +72,45 @@ def _dedup_keys(infos):
     return keys
 
 
+# Two feeds describing ONE payment share most words ("Debit TWINT: ALTERMATT,
+# MANUEL +41…" vs "Belastung TWINT: ALTERMATT, MANUEL +41…" ≈ 0.67). Two
+# DIFFERENT payments that merely share a day and an amount do not — two Riester
+# contracts debiting 10 EUR on the 1st share only the word "Riester" (≈ 0.33).
+# Below this threshold, an entry is treated as its own payment: a visible
+# duplicate is recoverable, a silently dropped transaction is not.
+SIMILARITY_THRESHOLD = 0.4
+
+
+# Contract, card, mandate or end-to-end numbers. Two entries whose numbers are
+# entirely different are different payments even when the rest of the text
+# matches: two Riester contracts share the payee AND the word "Riester", and
+# differ only in "05-0885318-88" vs "05-0885320-90".
+_IDENTIFIER_RE = re.compile(r'\d{4,}')
+
+
 def _tokens(*parts) -> set:
     """Words of a booking text, for comparing two feeds' wording of one entry."""
     text = ' '.join(parts).lower()
     return {t for t in re.split(r'[^a-z0-9äöüàéèç]+', text) if len(t) >= 3}
+
+
+def looks_like_same_entry(a_counterparty, a_description,
+                          b_counterparty, b_description) -> bool:
+    """Do two booking texts describe the same payment in two feeds' wording?"""
+    a_text = f'{a_counterparty or ""} {a_description or ""}'
+    b_text = f'{b_counterparty or ""} {b_description or ""}'
+    a_ids = set(_IDENTIFIER_RE.findall(a_text))
+    b_ids = set(_IDENTIFIER_RE.findall(b_text))
+    if a_ids and b_ids and not (a_ids & b_ids):
+        return False  # different contract / card / reference numbers
+
+    a, b = _tokens(a_text), _tokens(b_text)
+    if not a and not b:
+        # Neither side carries text — the count is the only available signal.
+        return True
+    if not a or not b:
+        return False
+    return len(a & b) / len(a | b) >= SIMILARITY_THRESHOLD
 
 
 def _similarity(a: set, b: set) -> float:
@@ -95,10 +130,11 @@ def cross_source_duplicate_indices(account, infos, source) -> set:
 
     Entries are grouped by (booking date, amount, currency) — the part both
     feeds always agree on — and each already-stored entry claims the incoming
-    entry whose booking text is most similar to its own. So a day holding two
-    unrelated 10 EUR debits (two Riester contracts) keeps them apart: each
-    stored row claims its own counterpart, and an entry the other feed never
-    reported is still imported.
+    entry whose booking text is most similar to its own, provided they are
+    similar enough to be one payment at all. A day holding two unrelated
+    10 EUR debits (two Riester contracts) therefore keeps them apart, and an
+    entry the other feed never reported is still imported. Matching on count
+    alone silently deleted such payments.
     """
     from .models import Transaction
 
@@ -129,6 +165,10 @@ def cross_source_duplicate_indices(account, infos, source) -> set:
             key=lambda i: _similarity(
                 stored, _tokens(infos[i].counterparty, infos[i].description)),
         )
+        if not looks_like_same_entry(
+                counterparty, description,
+                infos[best].counterparty, infos[best].description):
+            continue  # same day and amount, but a different payment
         candidates.remove(best)  # one stored row claims one incoming entry
         duplicates.add(best)
     return duplicates
