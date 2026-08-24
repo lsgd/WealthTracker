@@ -85,7 +85,9 @@ void main() {
       expect(find.textContaining('prices checked'), findsOneWidget);
       // Key/model management stays on the web.
       expect(find.textContaining('managed in the web app'), findsOneWidget);
-      expect(find.text('Get suggestions'), findsOneWidget);
+      // Two separate AI flows: rules and per-item categories.
+      expect(find.text('Categorize items'), findsOneWidget);
+      expect(find.text('Suggest rules'), findsOneWidget);
     });
 
     testWidgets('points at the web app when Gemini is not configured',
@@ -97,7 +99,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('web app'), findsOneWidget);
-      expect(find.text('Get suggestions'), findsNothing);
+      expect(find.text('Categorize items'), findsNothing);
+      expect(find.text('Suggest rules'), findsNothing);
     });
 
     testWidgets('opens the new-rule dialog', (tester) async {

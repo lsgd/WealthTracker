@@ -29,6 +29,7 @@ DISCLOSED_FIELDS = [
     'Booking text / description of each uncategorized transaction',
     'Signed amount and currency of each uncategorized transaction',
     'The names of your existing categories',
+    'The match texts of your existing rules (rule suggestions only)',
 ]
 
 # Same, for the fix-similar flow (candidates are not necessarily uncategorized).
@@ -171,6 +172,13 @@ def list_models(api_key: str) -> list:
     return models
 
 
+# Shared naming policy for anything that may introduce a category.
+_NAMING = """Category names are ONE word wherever possible ("Restaurants", not
+"Dining & Restaurants") — never join synonyms with "&" or "and"; use a second
+word only when it genuinely adds meaning ("Public Transport"). Do not create
+near-duplicates of existing categories, and keep the total number of new
+categories small — prefer broad categories over merchant-specific ones."""
+
 _PROMPT = """You classify personal bank transactions into spending categories.
 
 Existing categories: {categories}
@@ -180,11 +188,7 @@ Transactions (id | counterparty | booking text | signed amount):
 
 For every transaction pick the best fitting existing category, or propose a NEW
 concise category name (in the same language/style as the existing ones) when
-none fits. Category names are ONE word wherever possible ("Restaurants", not
-"Dining & Restaurants") — never join synonyms with "&" or "and"; use a second
-word only when it genuinely adds meaning ("Public Transport"). Do not create
-near-duplicates of existing categories, and keep the total number of new
-categories small — prefer broad categories over merchant-specific ones.
+none fits. """ + _NAMING + """
 Positive amounts are income; only categorize them when a category clearly
 applies (e.g. salary), otherwise omit the transaction.
 
@@ -197,6 +201,47 @@ specific to that merchant.
 Return JSON only:
 {{"assignments": [{{"id": <transaction id>, "category": "<name>"}}],
   "rules": [{{"match_text": "<substring>", "category": "<name>"}}]}}"""
+
+_ITEMS_PROMPT = """You classify personal bank transactions into spending categories.
+
+Existing categories: {categories}
+
+Transactions (id | counterparty | booking text | signed amount):
+{transactions}
+
+For every transaction pick the best fitting existing category, or propose a NEW
+concise category name (in the same language/style as the existing ones) when
+none fits. """ + _NAMING + """
+Positive amounts are income; only categorize them when a category clearly
+applies (e.g. salary), otherwise omit the transaction. Do NOT propose rules —
+only per-transaction assignments.
+
+Return JSON only:
+{{"assignments": [{{"id": <transaction id>, "category": "<name>"}}]}}"""
+
+_RULES_PROMPT = """You write substring rules that categorize personal bank transactions.
+
+A rule assigns its category to any future or current transaction whose
+counterparty or booking text contains the match text (case-insensitive).
+
+Existing categories: {categories}
+
+Existing rules (match text -> category) — do NOT duplicate or shadow them:
+{rules}
+
+Uncategorized transactions (id | counterparty | booking text | signed amount):
+{transactions}
+
+Propose rules for the RECURRING merchants and bills in the list: a lowercase
+substring of the counterparty or booking text that uniquely identifies the
+merchant (e.g. "rewe"), mapped to the best fitting existing category — or a
+NEW concise category name when none fits. """ + _NAMING + """
+Only propose a rule when the substring is specific to that merchant; skip
+one-off purchases — they are categorized individually instead. Do NOT assign
+categories to individual transactions.
+
+Return JSON only:
+{{"rules": [{{"match_text": "<substring>", "category": "<name>"}}]}}"""
 
 
 _RELABEL_PROMPT = """You fix categorization mistakes in personal bank transactions.
@@ -302,17 +347,30 @@ def _generate(api_key: str, model: str, prompt: str) -> tuple:
     return parsed, usage
 
 
-def suggest_categories(api_key: str, model: str, transactions: list, categories: list) -> dict:
-    """Ask Gemini for category assignments and rule suggestions.
+def suggest_categories(api_key: str, model: str, transactions: list, categories: list,
+                       mode: str = 'both', existing_rules: list = None) -> dict:
+    """Ask Gemini for category assignments and/or rule suggestions.
 
     ``transactions``: [{'id', 'counterparty', 'description', 'amount', 'currency'}].
+    ``mode``: 'items' (per-transaction assignments only), 'rules' (reusable
+    rules only; pass ``existing_rules`` as "match -> category" strings so
+    duplicates are avoided), or 'both' (legacy combined round).
     Returns {'assignments': [...], 'rules': [...], 'usage': {...}} — raw
     suggestions, nothing persisted.
     """
-    prompt = _PROMPT.format(
+    fields = dict(
         categories=', '.join(categories) if categories else '(none yet)',
         transactions='\n'.join(_tx_line(t) for t in transactions),
     )
+    if mode == 'items':
+        prompt = _ITEMS_PROMPT.format(**fields)
+    elif mode == 'rules':
+        prompt = _RULES_PROMPT.format(
+            rules='\n'.join(existing_rules) if existing_rules else '(none yet)',
+            **fields,
+        )
+    else:
+        prompt = _PROMPT.format(**fields)
     parsed, usage = _generate(api_key, model, prompt)
 
     return {

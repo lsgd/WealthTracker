@@ -932,11 +932,14 @@ class AccountSnapshotListCreateView(generics.ListCreateAPIView):
                 user_profile.base_currency,
                 snapshot.snapshot_date
             )
-            # Fetch exchange rate if missing
+            # Fetch exchange rates (ranged, closing the whole gap) if missing
             if not rate:
                 from exchange_rates.services import ExchangeRateService
                 try:
-                    ExchangeRateService.fetch_rates_for_date(snapshot.snapshot_date)
+                    ExchangeRateService.fill_gap_before(
+                        snapshot.snapshot_date,
+                        snapshot.currency, user_profile.base_currency,
+                    )
                     # Retry getting rate after fetch
                     rate = ExchangeRate.get_rate(
                         snapshot.currency,
@@ -974,11 +977,14 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
                 user_profile.base_currency,
                 snapshot.snapshot_date
             )
-            # Fetch exchange rate if missing
+            # Fetch exchange rates (ranged, closing the whole gap) if missing
             if not rate:
                 from exchange_rates.services import ExchangeRateService
                 try:
-                    ExchangeRateService.fetch_rates_for_date(snapshot.snapshot_date)
+                    ExchangeRateService.fill_gap_before(
+                        snapshot.snapshot_date,
+                        snapshot.currency, user_profile.base_currency,
+                    )
                     # Retry getting rate after fetch
                     rate = ExchangeRate.get_rate(
                         snapshot.currency,
@@ -1550,6 +1556,13 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
             return Response({'error': 'Gemini is not configured'}, status=400)
         api_key = self.decrypt_blob(request, profile.encrypted_gemini_key)['api_key']
 
+        # 'items' and 'rules' are separate review flows (mixing one-off labels
+        # with rule proposals in one round proved noisy); no mode keeps the
+        # combined round for older app clients.
+        mode = request.data.get('mode')
+        if mode not in ('items', 'rules'):
+            mode = 'both'
+
         qs = (
             Transaction.objects
             .filter(
@@ -1578,9 +1591,19 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
             }
             for t in transactions
         ]
+        existing_rules = None
+        if mode == 'rules':
+            existing_rules = [
+                f"{r.match_text} -> {'Transfer' if r.is_transfer else r.category.name}"
+                for r in CategoryRule.objects
+                .filter(user=request.user).select_related('category')
+            ]
 
         try:
-            result = suggest_categories(api_key, profile.gemini_model, payload, categories)
+            result = suggest_categories(
+                api_key, profile.gemini_model, payload, categories,
+                mode=mode, existing_rules=existing_rules,
+            )
         except GeminiError as e:
             return Response({'error': str(e)}, status=502)
 

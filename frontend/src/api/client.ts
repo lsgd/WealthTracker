@@ -1199,8 +1199,11 @@ export async function listAiModels(apiKey?: string): Promise<AiModel[]> {
   return (data as { models: AiModel[] }).models;
 }
 
-export async function aiSuggest(): Promise<AiSuggestResponse> {
-  const res = await fetchWithAuth('/api/spending/ai/suggest/', { method: 'POST' });
+export async function aiSuggest(mode: 'items' | 'rules'): Promise<AiSuggestResponse> {
+  const res = await fetchWithAuth('/api/spending/ai/suggest/', {
+    method: 'POST',
+    body: JSON.stringify({ mode }),
+  });
   return jsonOrThrow(res, 'Failed to get AI suggestions');
 }
 

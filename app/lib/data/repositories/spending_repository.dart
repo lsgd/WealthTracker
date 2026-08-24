@@ -160,12 +160,14 @@ class SpendingRepository {
     return AiConfig.fromJson(response.data as Map<String, dynamic>);
   }
 
-  /// Ask Gemini for category suggestions. Nothing is persisted — the result is
-  /// a proposal the user confirms via [applyAiSuggestions].
-  Future<AiSuggestResponse> suggestCategories() async {
+  /// Ask Gemini for suggestions. Nothing is persisted — the result is a
+  /// proposal the user confirms via [applyAiSuggestions]. `mode` is 'items'
+  /// (per-transaction categories) or 'rules' (reusable rules only) — the two
+  /// are separate review flows.
+  Future<AiSuggestResponse> suggestCategories({required String mode}) async {
     final response = await _apiClient.post(
       ApiConfig.aiSuggestPath,
-      data: {},
+      data: {'mode': mode},
       timeout: ApiConfig.aiSuggestTimeout,
     );
     return AiSuggestResponse.fromJson(response.data as Map<String, dynamic>);

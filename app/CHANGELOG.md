@@ -34,6 +34,8 @@
 - Web AI card: "Get suggestions" is a prominent full-width button in the card body instead of sitting next to Change/delete; model pricing and the data disclosure collapse to just the model name
 - Web: the Import history card is collapsed by default, and the spending tab survives a page refresh (it is part of the URL)
 - Web: import and AI outcomes now show as green success banners (yellow for warnings) instead of muted hint text; CSV import hints mention Commerzbank
+- AI suggestions split into two flows (web and app): "Suggest rules" proposes reusable rules for recurring merchants (now aware of your existing rules, so no duplicates), "Categorize items" labels one-off transactions — no more mixed review round
+- Historical exchange rates are fetched in yearly ranges (one API call per currency per year) instead of one call per missing day; a first-time 24-month spending view no longer stalls for many seconds
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

@@ -132,22 +132,42 @@ class _Body extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        // Say what a round actually produces BEFORE it runs: not only
-        // category assignments but also rule proposals.
+        // Two separate flows: reusable rules for recurring merchants, and
+        // one-off category labels for whatever rules cannot catch.
         Text(
-          'Gemini proposes categories for uncategorized transactions and '
-          'reusable rules for recurring merchants (so future transactions '
-          'are categorized without AI). You review both and can apply or '
-          'skip each individually.',
+          '"Suggest rules" proposes reusable rules for recurring merchants '
+          '(categorizing future transactions without AI); "Categorize items" '
+          'labels the remaining one-off transactions. You review every '
+          'proposal before it is applied.',
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const AiSuggestionsScreen()),
-          ),
-          icon: const Icon(Icons.auto_awesome, size: 18),
-          label: const Text('Get suggestions'),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const AiSuggestionsScreen(
+                          mode: AiSuggestMode.items)),
+                ),
+                icon: const Icon(Icons.auto_awesome, size: 18),
+                label: const Text('Categorize items'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const AiSuggestionsScreen(
+                          mode: AiSuggestMode.rules)),
+                ),
+                icon: const Icon(Icons.auto_awesome, size: 18),
+                label: const Text('Suggest rules'),
+              ),
+            ),
+          ],
         ),
       ],
     );

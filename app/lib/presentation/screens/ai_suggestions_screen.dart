@@ -5,13 +5,18 @@ import '../../core/utils/formatters.dart';
 import '../../data/models/ai_categorization.dart';
 import '../providers/spending_provider.dart';
 
+/// Which kind of round Gemini runs — per-transaction categories or reusable
+/// rules. Deliberately separate flows: one mixed review round proved noisy.
+enum AiSuggestMode { items, rules }
+
 /// Review screen for Gemini's proposals.
 ///
 /// Nothing here is stored until the user confirms: every suggestion and rule is
 /// individually selectable, and only the ticked ones are sent to the apply
 /// endpoint.
 class AiSuggestionsScreen extends ConsumerStatefulWidget {
-  const AiSuggestionsScreen({super.key});
+  final AiSuggestMode mode;
+  const AiSuggestionsScreen({super.key, required this.mode});
 
   @override
   ConsumerState<AiSuggestionsScreen> createState() =>
@@ -47,8 +52,8 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
       _notice = null;
     });
     try {
-      final result =
-          await ref.read(spendingRepositoryProvider).suggestCategories();
+      final result = await ref.read(spendingRepositoryProvider).suggestCategories(
+          mode: widget.mode == AiSuggestMode.rules ? 'rules' : 'items');
       setState(() {
         _result = result;
         _acceptedTx
@@ -60,6 +65,10 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
         _busy = false;
         if (result.sentCount == 0) {
           _notice = 'Nothing to categorize — everything already has a category.';
+        } else if (result.suggestions.isEmpty && result.rules.isEmpty) {
+          _notice = widget.mode == AiSuggestMode.rules
+              ? 'Gemini found no recurring merchants that need a new rule.'
+              : 'Gemini had no category proposals for the current transactions.';
         }
       });
     } catch (e) {
@@ -91,8 +100,10 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
       ref.invalidate(categoryRulesProvider);
       ref.invalidate(transactionsProvider);
       messenger.showSnackBar(SnackBar(
-        content: Text('${outcome['assigned']} categorized, '
-            '${outcome['rules_created']} rules created'),
+        content: Text(widget.mode == AiSuggestMode.rules
+            ? '${outcome['rules_created']} rules created, '
+                'categorized ${outcome['rule_applied'] ?? 0} transactions'
+            : '${outcome['assigned']} transactions categorized'),
       ));
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -136,9 +147,12 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AI suggestions'),
+        title: Text(widget.mode == AiSuggestMode.rules
+            ? 'AI rule suggestions'
+            : 'AI category suggestions'),
         actions: [
-          if (result != null && result.suggestions.isNotEmpty)
+          if (result != null &&
+              (result.suggestions.isNotEmpty || result.rules.isNotEmpty))
             IconButton(
               // Check-based glyphs read clearer than the abstract
               // select_all/deselect squares.
@@ -183,13 +197,6 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
                           _acceptedRules.contains(i)
                               ? _acceptedRules.remove(i)
                               : _acceptedRules.add(i)),
-                      onToggleAllRules: (enabled) => setState(() {
-                        _acceptedRules.clear();
-                        if (enabled) {
-                          _acceptedRules.addAll(
-                              List.generate(result.rules.length, (i) => i));
-                        }
-                      }),
                     ),
       bottomNavigationBar: result == null ||
               (result.suggestions.isEmpty && result.rules.isEmpty)
@@ -199,12 +206,9 @@ class _AiSuggestionsScreenState extends ConsumerState<AiSuggestionsScreen> {
                 padding: const EdgeInsets.all(12),
                 child: FilledButton(
                   onPressed: _busy || selected == 0 ? null : _apply,
-                  // Break the count down so applied rules are never invisible:
-                  // "121" hid that 31 of them were rule proposals.
-                  child: Text(result.rules.isEmpty
-                      ? 'Apply selected ($selected)'
-                      : 'Apply selected (${_acceptedTx.length} categories · '
-                          '${_acceptedRules.length} rules)'),
+                  child: Text(widget.mode == AiSuggestMode.rules
+                      ? 'Create selected rules (${_acceptedRules.length})'
+                      : 'Apply selected (${_acceptedTx.length})'),
                 ),
               ),
             ),
@@ -220,7 +224,6 @@ class _Review extends StatelessWidget {
   final ScrollController scrollController;
   final void Function(int) onToggleTx;
   final void Function(int) onToggleRule;
-  final void Function(bool) onToggleAllRules;
 
   const _Review({
     required this.result,
@@ -230,7 +233,6 @@ class _Review extends StatelessWidget {
     required this.scrollController,
     required this.onToggleTx,
     required this.onToggleRule,
-    required this.onToggleAllRules,
   });
 
   @override
@@ -244,51 +246,6 @@ class _Review extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(notice!),
-          ),
-        // The rules section sits BELOW the (often long) suggestion list, where
-        // it was routinely scrolled past — announce it up top, with a switch
-        // to skip rule creation entirely and a tap-to-jump for reviewing them.
-        if (result.rules.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Card(
-              color: theme.colorScheme.primaryContainer,
-              margin: EdgeInsets.zero,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => scrollController.animateTo(
-                  scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.auto_awesome,
-                          size: 18,
-                          color: theme.colorScheme.onPrimaryContainer),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Also create ${result.rules.length} rule'
-                          '${result.rules.length == 1 ? '' : 's'} for '
-                          'recurring merchants — they categorize future '
-                          'transactions without AI. Tap to review.',
-                          style: TextStyle(
-                              color: theme.colorScheme.onPrimaryContainer),
-                        ),
-                      ),
-                      // Off = skip rule creation for this round entirely.
-                      Switch(
-                        value: acceptedRules.isNotEmpty,
-                        onChanged: onToggleAllRules,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           ),
         if (result.suggestions.isNotEmpty) ...[
           Padding(

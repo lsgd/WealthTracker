@@ -1033,6 +1033,32 @@ class AiCategorizationClientTests(TestCase):
         self.assertEqual(result['rules'], [{'match_text': 'apotheke', 'category': 'Health'}])
         self.assertAlmostEqual(result['usage']['estimated_cost_usd'], 0.002625)
 
+    @patch('portfolio.ai_categorization.requests.post')
+    def test_suggest_modes_use_separate_prompts(self, m_post):
+        import json as jsonlib
+        from portfolio.ai_categorization import suggest_categories
+        m_post.return_value = MagicMock(status_code=200, json=lambda: {
+            'candidates': [{'content': {'parts': [{'text': jsonlib.dumps({
+                'assignments': [{'id': 1, 'category': 'Health'}],
+                'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            })}]}}],
+            'usageMetadata': {},
+        })
+        tx = [{'id': 1, 'counterparty': 'Apotheke', 'description': '',
+               'amount': '-10', 'currency': 'EUR'}]
+
+        suggest_categories('key', 'gemini-3.6-flash', tx, [], mode='items')
+        items_prompt = m_post.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertIn('Do NOT propose rules', items_prompt)
+
+        suggest_categories(
+            'key', 'gemini-3.6-flash', tx, [], mode='rules',
+            existing_rules=['rewe -> Groceries'],
+        )
+        rules_prompt = m_post.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertIn('rewe -> Groceries', rules_prompt)
+        self.assertIn('Do NOT assign', rules_prompt)
+
 
 class AiEndpointTests(APITestCase):
     def setUp(self):
@@ -1092,6 +1118,49 @@ class AiEndpointTests(APITestCase):
         # The suggestion is NOT persisted without confirmation.
         self.tx.refresh_from_db()
         self.assertIsNone(self.tx.category)
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_rules_mode_passes_existing_rules(self, m_suggest):
+        from portfolio.models import CategoryRule, TransactionCategory
+        groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        CategoryRule.objects.create(
+            user=self.user, match_text='rewe', category=groceries, position=0)
+        CategoryRule.objects.create(
+            user=self.user, match_text='broker top', is_transfer=True, position=1)
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [],
+            'rules': [{'match_text': 'apotheke', 'category': 'Health'}],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': 0.0},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {'mode': 'rules'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(m_suggest.call_args.kwargs['mode'], 'rules')
+        self.assertEqual(
+            m_suggest.call_args.kwargs['existing_rules'],
+            ['rewe -> Groceries', 'broker top -> Transfer'],
+        )
+        self.assertEqual(resp.data['suggestions'], [])
+        self.assertEqual(len(resp.data['rules']), 1)
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_items_mode_sends_no_rules_context(self, m_suggest):
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [{'id': self.tx.id, 'category': 'Health'}],
+            'rules': [],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': 0.0},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {'mode': 'items'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(m_suggest.call_args.kwargs['mode'], 'items')
+        self.assertIsNone(m_suggest.call_args.kwargs['existing_rules'])
+        self.assertEqual(len(resp.data['suggestions']), 1)
+        self.assertEqual(resp.data['rules'], [])
 
     def test_apply_confirmed_suggestions(self):
         from portfolio.models import CategoryRule, Transaction, TransactionCategory

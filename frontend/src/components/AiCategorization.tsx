@@ -128,19 +128,28 @@ export default function AiCategorization({ onApplied }: Props) {
     }
   };
 
-  const suggest = async () => {
+  // Which round is running/shown: per-item labels and rule proposals are
+  // separate flows — one mixed review round proved noisy.
+  const [suggestMode, setSuggestMode] = useState<'items' | 'rules' | null>(null);
+
+  const suggest = async (mode: 'items' | 'rules') => {
     setError('');
     setNotice('');
     setNoticeKind('success');
     setBusy(true);
+    setSuggestMode(mode);
     setResult(null);
     try {
-      const data = await aiSuggest();
+      const data = await aiSuggest(mode);
       setResult(data);
       setCheckedTx(new Set(data.suggestions.map((s) => s.transaction_id)));
       setCheckedRules(new Set(data.rules.map((_, i) => i)));
       if (data.sent_count === 0) {
         setNotice('Nothing to categorize — all transactions already have a category.');
+      } else if (data.suggestions.length === 0 && data.rules.length === 0) {
+        setNotice(mode === 'rules'
+          ? 'Gemini found no recurring merchants that need a new rule.'
+          : 'Gemini had no category proposals for the current transactions.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Suggestion request failed');
@@ -303,9 +312,26 @@ export default function AiCategorization({ onApplied }: Props) {
       )}
 
       {collapsible && !result && (
-        <button className="btn btn-primary ai-suggest-cta" onClick={suggest} disabled={busy}>
-          <Sparkles size={16} /> {busy ? 'Asking Gemini…' : 'Get suggestions'}
-        </button>
+        <div className="ai-suggest-ctas">
+          <button
+            className="btn btn-primary ai-suggest-cta"
+            title="Ask Gemini for a category per uncategorized transaction"
+            onClick={() => suggest('items')}
+            disabled={busy}
+          >
+            <Sparkles size={16} />
+            {busy && suggestMode === 'items' ? 'Asking Gemini…' : 'Categorize items'}
+          </button>
+          <button
+            className="btn btn-primary ai-suggest-cta"
+            title="Ask Gemini for reusable rules covering recurring merchants"
+            onClick={() => suggest('rules')}
+            disabled={busy}
+          >
+            <Sparkles size={16} />
+            {busy && suggestMode === 'rules' ? 'Asking Gemini…' : 'Suggest rules'}
+          </button>
+        </div>
       )}
 
       {showSetup && (
@@ -360,8 +386,9 @@ export default function AiCategorization({ onApplied }: Props) {
       )}
 
 
-      {result && result.suggestions.length > 0 && (
+      {result && (result.suggestions.length > 0 || result.rules.length > 0) && (
         <div className="ai-suggestions">
+          {result.suggestions.length > 0 && (<>
           <h3>Suggested categories ({result.suggestions.length} of {result.sent_count} sent
             {result.total_uncategorized > result.sent_count
               ? `, ${result.total_uncategorized - result.sent_count} more uncategorized remain`
@@ -403,6 +430,7 @@ export default function AiCategorization({ onApplied }: Props) {
               </tbody>
             </table>
           </div>
+          </>)}
 
           {result.rules.length > 0 && (
             <>
