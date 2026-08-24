@@ -40,6 +40,7 @@
 - AI rule suggestions merge near-identical merchant spellings ("dm-drogerie" / "dm.drogerie") into one regex rule instead of one rule per spelling
 - AI rule suggestions can improve an existing rule in place (shown as "replaces ...") when it misses spellings seen in your transactions — e.g. a "youtubepremium" rule becomes a regex also matching "youtube premium"; exact duplicates of existing rules are no longer suggested
 - AI suggestions can now propose transfers: recurring own-account movements (broker top-ups, credit-card settlements) can be marked "Transfer (excluded)" per transaction or via a suggested transfer rule
+- Web rules: a group's plus chip moves the rule form directly below that group with the category prefilled (changing the dropdown by hand never moves it); the regex switch turns itself on while typing pattern syntax like brackets or pipes (manual toggles stay put), and saving a "regex" without any regex syntax asks whether to save it as plain text instead
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

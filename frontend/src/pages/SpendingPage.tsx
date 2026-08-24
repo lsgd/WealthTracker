@@ -58,6 +58,14 @@ const RANGES = [6, 12, 24];
 // Default history window for a one-off import.
 const DEFAULT_BACKFILL_MONTHS = 15;
 
+// Metacharacters that clearly signal a regex is being typed. '.' and bare
+// parentheses are deliberately excluded — they are common in plain merchant
+// names ("dm.drogerie") and would auto-enable the switch falsely.
+const REGEX_HINT = /[[\]{}|\\^$?*+]/;
+// Anything regex-meaningful at all, for the opposite check on save: a
+// "regex" without any of these is really a plain substring.
+const ANY_REGEX_SYNTAX = /[.[\]{}()|\\^$?*+]/;
+
 interface AccountOption {
   id: number;
   name: string;
@@ -105,10 +113,17 @@ export default function SpendingPage() {
     useState<number | '' | '__new__' | '__transfer__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
   const [ruleIsRegex, setRuleIsRegex] = useState(false);
+  // Once the user flips the regex switch by hand it stays put — the
+  // auto-detection only drives it while untouched.
+  const [ruleRegexTouched, setRuleRegexTouched] = useState(false);
   // Rules default to a compact by-category view; the flat first-match-wins
   // list (with drag-to-reorder) is one toggle away for the rare
   // specific-before-generic conflict.
   const [rulesView, setRulesView] = useState<'grouped' | 'order'>('grouped');
+  // Group label whose "+" chip was clicked: the rule form renders right below
+  // that group's chips. Only the "+" moves it — changing the category
+  // dropdown by hand does not. Null = form at the bottom of the card.
+  const [ruleFormAnchor, setRuleFormAnchor] = useState<string | null>(null);
   const [ruleFilter, setRuleFilter] = useState('');
   const ruleInputRef = useRef<HTMLInputElement>(null);
   const [draggedRule, setDraggedRule] = useState<number | null>(null);
@@ -276,7 +291,7 @@ export default function SpendingPage() {
     }
   };
 
-  const saveRule = async (target: number | '__transfer__') => {
+  const saveRule = async (target: number | '__transfer__', asRegex = ruleIsRegex) => {
     setSavingRule(true);
     try {
       const rule = await createCategoryRule({
@@ -285,13 +300,15 @@ export default function SpendingPage() {
           ? { is_transfer: true }
           : { category: target }),
         spread_months: ruleSpread,
-        is_regex: ruleIsRegex,
+        is_regex: asRegex,
       });
       setRules((prev) => [...prev, rule]);
       setRuleText('');
-      setRuleCategory('');
+      // A form anchored to a group keeps its target for quick successive adds.
+      setRuleCategory(ruleFormAnchor ? target : '');
       setRuleSpread(1);
       setRuleIsRegex(false);
+      setRuleRegexTouched(false);
       // The rule applied retroactively — refresh everything that may have changed.
       loadReport();
       loadTransactions(accountId, 1);
@@ -306,22 +323,36 @@ export default function SpendingPage() {
 
   const handleAddRule = () => {
     if (!ruleText.trim() || ruleCategory === '') return;
-    // Instant feedback for a broken pattern. The server re-validates with
-    // Python's `re` (the engine that actually runs the rule) — this JS check
-    // only catches the obvious cases early.
+    let asRegex = ruleIsRegex;
     if (ruleIsRegex) {
+      // Instant feedback for a broken pattern. The server re-validates with
+      // Python's `re` (the engine that actually runs the rule) — this JS
+      // check only catches the obvious cases early.
       try {
         new RegExp(ruleText.trim());
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Invalid regular expression');
         return;
       }
+      // "hello" with the regex switch on is almost certainly a mistake — ask
+      // instead of blindly submitting.
+      if (!ANY_REGEX_SYNTAX.test(ruleText)) {
+        const asPlain = window.confirm(
+          `"${ruleText.trim()}" contains no regular-expression syntax. `
+          + 'Save it as a plain substring rule instead? '
+          + '(Cancel keeps it as a regex.)',
+        );
+        if (asPlain) {
+          asRegex = false;
+          setRuleIsRegex(false);
+        }
+      }
     }
     if (ruleCategory === '__new__') {
       setCategoryDialogOpen(true);
       return;
     }
-    saveRule(ruleCategory);
+    saveRule(ruleCategory, asRegex);
   };
 
   const handleCreateCategoryAndRule = async (e: React.FormEvent) => {
@@ -395,10 +426,11 @@ export default function SpendingPage() {
       || a.label.localeCompare(b.label));
   }, [rules, ruleFilter]);
 
-  /// The "+" on a group: prefill the form's target and put the cursor in the
-  /// match-text input.
-  const startRuleFor = (target: number | '__transfer__') => {
-    setRuleCategory(target);
+  /// The "+" on a group: move the form below that group, prefill its target,
+  /// and put the cursor in the match-text input.
+  const startRuleFor = (group: { label: string; target: number | '__transfer__' }) => {
+    setRuleCategory(group.target);
+    setRuleFormAnchor(group.label);
     setTimeout(() => ruleInputRef.current?.focus(), 0);
   };
 
@@ -408,6 +440,8 @@ export default function SpendingPage() {
     setRuleText(base.toLowerCase().slice(0, 128).trim());
     setRuleCategory(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
     setRuleIsRegex(false);
+    setRuleRegexTouched(false);
+    setRuleFormAnchor(null);
     setTab('config');
     setTimeout(() => ruleFormRef.current?.scrollIntoView(
       { behavior: 'smooth', block: 'center' }), 50);
@@ -528,6 +562,69 @@ export default function SpendingPage() {
   }, [categoryDialogOpen]);
 
   const currency = report?.base_currency ?? 'EUR';
+
+  // One shared form row: rendered below the anchored group's chips (after its
+  // "+" was clicked) or at the bottom of the rules card otherwise.
+  const ruleFormRow = (
+    <div className="spending-rule-row spending-rule-new" ref={ruleFormRef}>
+      <input
+        ref={ruleInputRef}
+        className="spending-rule-match"
+        placeholder="match text, e.g. rewe"
+        value={ruleText}
+        onChange={(e) => {
+          const value = e.target.value;
+          setRuleText(value);
+          // Obvious pattern syntax flips the switch on (and off again when
+          // deleted) — but never after the user touched it themselves.
+          if (!ruleRegexTouched) setRuleIsRegex(REGEX_HINT.test(value));
+        }}
+      />
+      <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
+        <input
+          type="checkbox"
+          checked={ruleIsRegex}
+          onChange={(e) => {
+            setRuleIsRegex(e.target.checked);
+            setRuleRegexTouched(true);
+          }}
+        />
+        Regex
+      </label>
+      <select
+        value={ruleCategory}
+        onChange={(e) => {
+          const v = e.target.value;
+          setRuleCategory(
+            v === '' || v === '__new__' || v === '__transfer__' ? v : Number(v));
+        }}
+      >
+        <option value="">Category…</option>
+        <option value="__transfer__">Transfer (excluded)</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+        <option value="__new__">+ New category…</option>
+      </select>
+      <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
+        <option value={1}>no spread</option>
+        <option value={3}>/3 months</option>
+        <option value={6}>/6 months</option>
+        <option value={12}>/12 months</option>
+      </select>
+      <button
+        className="btn btn-sm btn-primary"
+        onClick={handleAddRule}
+        disabled={savingRule || !ruleText.trim() || ruleCategory === ''}
+      >
+        <Plus size={14} /> Rule
+      </button>
+    </div>
+  );
+  // The anchored group can disappear (filter, last rule deleted, Order view)
+  // — the form then falls back to the bottom of the card.
+  const ruleFormInGroup = rulesView === 'grouped'
+    && ruleGroups.some((g) => g.label === ruleFormAnchor);
 
   return (
     <div className="dashboard">
@@ -916,11 +1013,12 @@ export default function SpendingPage() {
                     <button
                       className="rule-chip rule-chip-add"
                       title={`New ${group.label} rule`}
-                      onClick={() => startRuleFor(group.target)}
+                      onClick={() => startRuleFor(group)}
                     >
                       <Plus size={12} />
                     </button>
                   </div>
+                  {ruleFormAnchor === group.label && ruleFormRow}
                 </div>
               ))}
               {ruleGroups.length === 0 && (
@@ -954,51 +1052,7 @@ export default function SpendingPage() {
                 </button>
               </div>
             ))}
-            <div className="spending-rule-row spending-rule-new" ref={ruleFormRef}>
-              <input
-                ref={ruleInputRef}
-                className="spending-rule-match"
-                placeholder="match text, e.g. rewe"
-                value={ruleText}
-                onChange={(e) => setRuleText(e.target.value)}
-              />
-              <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
-                <input
-                  type="checkbox"
-                  checked={ruleIsRegex}
-                  onChange={(e) => setRuleIsRegex(e.target.checked)}
-                />
-                Regex
-              </label>
-              <select
-                value={ruleCategory}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setRuleCategory(
-                    v === '' || v === '__new__' || v === '__transfer__' ? v : Number(v));
-                }}
-              >
-                <option value="">Category…</option>
-                <option value="__transfer__">Transfer (excluded)</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-                <option value="__new__">+ New category…</option>
-              </select>
-              <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
-                <option value={1}>no spread</option>
-                <option value={3}>/3 months</option>
-                <option value={6}>/6 months</option>
-                <option value={12}>/12 months</option>
-              </select>
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={handleAddRule}
-                disabled={savingRule || !ruleText.trim() || ruleCategory === ''}
-              >
-                <Plus size={14} /> Rule
-              </button>
-            </div>
+            {!ruleFormInGroup && ruleFormRow}
           </div>
         </div>
 

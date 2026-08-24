@@ -2415,6 +2415,11 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
+/* The rule form anchored inside a group sits close under its chips. */
+.rule-group .spending-rule-new {
+  margin-top: 8px;
+}
+
 .rule-filter {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
