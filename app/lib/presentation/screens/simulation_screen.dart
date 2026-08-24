@@ -67,8 +67,17 @@ class _SimulationScreenState extends ConsumerState<SimulationScreen> {
   /// Chip tap: re-slice the already-loaded bands (instant) and persist the
   /// horizon in the background — the response is ignored, a minimal `paths`
   /// keeps that request cheap.
+  ///
+  /// Servers older than the always-30y contract slice the bands to the
+  /// stored horizon, so the cached result may be too short for the new
+  /// selection — then a full re-run (which also persists the choice) is the
+  /// only way to get the missing years.
   void _selectYears(int years) {
     setState(() => _displayYears = years);
+    if (years + 1 > (_result?.bands.length ?? 0)) {
+      _run({'years': '$years'});
+      return;
+    }
     ref
         .read(wealthRepositoryProvider)
         .getSimulation(params: {'years': '$years', 'paths': '100'})
