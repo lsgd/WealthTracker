@@ -19,6 +19,10 @@
 - Fix similar with AI: after manually re-categorizing a transaction, a new action asks Gemini which other transactions belong to the same merchant or purpose; you review its picks (and an optional rule) before anything is changed. Re-labeling only considers the last 18 months; uncategorized entries are offered at any age
 - A corrective rule from the fix-similar flow is inserted before the rule that caused the mislabel (rules are first-match-wins), and no rule is proposed when the existing rules already classify the merchant correctly
 - Consolidate rules with AI: a new button in Spending settings asks Gemini to merge duplicate rules and drop dead ones; you review the resulting set including removed rules before it replaces the old one
+- AI review sheets show amounts with 2 decimals instead of the raw 4-decimal value, and the fix-similar sheet lists each entry's current label instead of a cramped old-to-new pair (the target category is in the title)
+- AI suggestions: the proposed category chip moved below the entry text — beside it, a long category name squeezed the merchant into a sliver
+- AI proposes more concise category names: one word where possible, no "A & B" composites
+- Transaction history can now be backfilled from a bank CSV export in the web app (ZKB "with details" and DKB formats, auto-detected); re-imports and EBICS-synced ZKB entries are deduplicated
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

@@ -1386,6 +1386,125 @@ class AiEndpointTests(APITestCase):
         self.assertIsNone(foreign_tx.category)
 
 
+_ZKB_CSV = (
+    '"Date";"Booking text";"Curr";"Amount details";"ZKB reference";'
+    '"Reference number";"Debit CHF";"Credit CHF";"Value date";"Balance CHF";'
+    '"Payment purpose";"Details"\n'
+    '"23.08.2026";"Debit TWINT: TEST MERCHANT";"";"";"REF-AAA-1";"";"10.00";"";'
+    '"23.08.2026";"1000.00";"";""\n'
+    '"20.08.2026";"Credit originator: ACME CORP";"";"";"REF-BBB-2";"";"";"80.00";'
+    '"20.08.2026";"1010.00";"PURPOSE TEXT";"ACME CORP, Somestreet 1, CH"\n'
+    '"";"";"";"";"";"";"";"";"";"";"";"a detail continuation row"\n'
+)
+
+_DKB_CSV = (
+    '"Girokonto";"DE00000000000000000000"\n'
+    '"Zeitraum:";"01.01.2026 - 24.08.2026"\n'
+    '"Kontostand vom 24.08.2026:";"1.000,00 €"\n'
+    '""\n'
+    '"Buchungsdatum";"Wertstellung";"Status";"Zahlungspflichtige*r";'
+    '"Zahlungsempfänger*in";"Verwendungszweck";"Umsatztyp";"IBAN";'
+    '"Betrag (€)";"Gläubiger-ID";"Mandatsreferenz";"Kundenreferenz"\n'
+    '"24.08.26";"24.08.26";"Gebucht";"ISSUER";"Test Shop";"Purchase 1";"Ausgang";'
+    '"DE11111111111111111111";"-1.234,56";"";"";"KREF1"\n'
+    '"20.08.26";"20.08.26";"Gebucht";"Employer AG";"Account Holder";"Salary";'
+    '"Eingang";"DE22222222222222222222";"2.500,00";"";"";"KREF2"\n'
+    '"25.08.26";"25.08.26";"Vorgemerkt";"ISSUER";"Pending Shop";"Pending";'
+    '"Ausgang";"DE33333333333333333333";"-9,99";"";"";"KREF3"\n'
+)
+
+
+class CsvImportTests(APITestCase):
+    """CSV transaction import (synthetic fixtures mimicking the bank formats)."""
+
+    def setUp(self):
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.chf = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='ZKB Giro', currency='CHF',
+        )
+        self.eur = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='DKB Giro', currency='EUR',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _upload(self, account, text):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return self.client.post(
+            reverse('transaction_csv_import', kwargs={'pk': account.pk}),
+            {'file': SimpleUploadedFile('export.csv', text.encode('utf-8'))},
+            format='multipart',
+        )
+
+    def test_zkb_import_signs_refs_and_detail_rows(self):
+        from portfolio.models import Transaction
+        resp = self._upload(self.chf, _ZKB_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['format'], 'zkb')
+        self.assertEqual(resp.data['imported'], 2)
+        self.assertEqual(resp.data['skipped'], 1)  # the detail continuation row
+        debit = Transaction.objects.get(account=self.chf, external_id='REF-AAA-1')
+        self.assertEqual(debit.amount, Decimal('-10.00'))
+        self.assertEqual(debit.currency, 'CHF')
+        self.assertEqual(debit.source, 'csv')
+        self.assertEqual(debit.dedup_key, 'ref:REF-AAA-1')
+        credit = Transaction.objects.get(account=self.chf, external_id='REF-BBB-2')
+        self.assertEqual(credit.amount, Decimal('80.00'))
+        self.assertEqual(credit.counterparty, 'ACME CORP, Somestreet 1, CH')
+        self.assertIn('PURPOSE TEXT', credit.description)
+        self.assertEqual(str(credit.value_date), '2026-08-20')
+
+    def test_zkb_import_dedups_against_ebics_synced_rows(self):
+        from portfolio.models import Transaction
+        # The same entry already arrived via EBICS: shared bank reference.
+        Transaction.objects.create(
+            account=self.chf, booking_date=date(2026, 8, 23),
+            amount=Decimal('-10.00'), currency='CHF', source='camt053',
+            external_id='REF-AAA-1', dedup_key='ref:REF-AAA-1',
+        )
+        resp = self._upload(self.chf, _ZKB_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['imported'], 1)  # only the credit is new
+        self.assertEqual(Transaction.objects.filter(account=self.chf).count(), 2)
+
+    def test_dkb_import_amounts_status_and_counterparty(self):
+        from portfolio.models import Transaction
+        resp = self._upload(self.eur, _DKB_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['format'], 'dkb')
+        self.assertEqual(resp.data['imported'], 2)  # pending row skipped
+        self.assertEqual(resp.data['skipped'], 1)
+        out = Transaction.objects.get(account=self.eur, amount=Decimal('-1234.56'))
+        self.assertEqual(out.counterparty, 'Test Shop')  # payee on outflow
+        self.assertEqual(out.counterparty_account, 'DE11111111111111111111')
+        self.assertEqual(out.currency, 'EUR')
+        inc = Transaction.objects.get(account=self.eur, amount=Decimal('2500.00'))
+        self.assertEqual(inc.counterparty, 'Employer AG')  # payer on inflow
+
+    def test_reimport_is_idempotent(self):
+        for account, text in ((self.chf, _ZKB_CSV), (self.eur, _DKB_CSV)):
+            first = self._upload(account, text)
+            second = self._upload(account, text)
+            self.assertEqual(second.status_code, 200, second.data)
+            self.assertEqual(second.data['imported'], 0)
+            self.assertEqual(second.data['fetched'], first.data['fetched'])
+
+    def test_currency_mismatch_is_refused(self):
+        resp = self._upload(self.chf, _DKB_CSV)  # EUR file into CHF account
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('EUR', resp.data['error'])
+
+    def test_unknown_format_and_foreign_account(self):
+        resp = self._upload(self.chf, 'just;some;random\ncsv;file;here\n')
+        self.assertEqual(resp.status_code, 400)
+        other_user, _, _ = make_kek_user(username='bob')
+        foreign = FinancialAccount.objects.create(
+            user=other_user, broker=self.broker, name='Foreign', currency='CHF',
+        )
+        resp = self._upload(foreign, _ZKB_CSV)
+        self.assertEqual(resp.status_code, 404)
+
+
 class TransactionBackfillTests(APITestCase):
     """Dated transaction backfill (web-only feature)."""
 

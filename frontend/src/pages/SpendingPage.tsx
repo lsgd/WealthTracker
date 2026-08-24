@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import { stripLeadingIban } from '../utils/iban';
 import type {
@@ -24,6 +24,7 @@ import type {
 } from '../api/client';
 import {
   backfillTransactions,
+  importTransactionsCsv,
   classifyTransaction,
   createCategory,
   createCategoryRule,
@@ -109,6 +110,9 @@ export default function SpendingPage() {
   // A short-served range is not an error, but it must not read like a success either:
   // the chart's earlier months stay empty and only this notice explains why.
   const [backfillTruncated, setBackfillTruncated] = useState(false);
+  // CSV import (web only): a per-account export from the bank's online banking.
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvBusy, setCsvBusy] = useState(false);
 
   const loadReport = useCallback(async () => {
     try {
@@ -353,6 +357,25 @@ export default function SpendingPage() {
       setError(e instanceof Error ? e.message : 'Backfill failed');
     } finally {
       setBackfillBusy(false);
+    }
+  };
+
+  const handleCsvImport = async () => {
+    if (backfillAccount === '' || !csvFile) return;
+    setError('');
+    setBackfillNotice('');
+    setBackfillTruncated(false);
+    setCsvBusy(true);
+    try {
+      const outcome = await importTransactionsCsv(backfillAccount, csvFile);
+      setBackfillNotice(outcome.message || `${outcome.imported ?? 0} new transactions imported`);
+      setCsvFile(null);
+      loadReport();
+      if (accountId !== null) loadTransactions(accountId, 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'CSV import failed');
+    } finally {
+      setCsvBusy(false);
     }
   };
 
@@ -816,6 +839,28 @@ export default function SpendingPage() {
               }
             >
               <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
+            </button>
+          </div>
+          <p className="form-hint">
+            Or import a CSV export from the bank&apos;s online banking into the selected
+            account — ZKB (&quot;with details&quot; export) and DKB are recognized. Exports
+            are per account; re-importing an overlapping file changes nothing.
+          </p>
+          <div className="spending-rule-row spending-rule-new">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              aria-label="CSV file"
+              // Keyed so a successful import visibly clears the chosen file.
+              key={csvFile ? 'chosen' : 'empty'}
+              onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
+            />
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={handleCsvImport}
+              disabled={csvBusy || backfillAccount === '' || !csvFile}
+            >
+              <Upload size={14} /> {csvBusy ? 'Importing…' : 'Import CSV'}
             </button>
           </div>
           {backfillNotice && (

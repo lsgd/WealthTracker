@@ -141,7 +141,9 @@ export async function fetchWithAuth(
   const kek = getKEK();
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    // FormData bodies must set their own multipart boundary — forcing JSON
+    // here would break file uploads.
+    ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> ?? {}),
   };
 
@@ -1037,6 +1039,32 @@ export async function backfillTransactions(
   }
   if (data.status === 'queued' && data.task_id) {
     return pollSyncTask(data.task_id);
+  }
+  return data;
+}
+
+export async function importTransactionsCsv(
+  accountId: number,
+  file: File,
+): Promise<{
+  status: string;
+  format?: string;
+  imported?: number;
+  fetched?: number;
+  skipped?: number;
+  covered_start?: string | null;
+  covered_end?: string | null;
+  message?: string;
+}> {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await fetchWithAuth(`/api/accounts/${accountId}/transactions/import-csv/`, {
+    method: 'POST',
+    body,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || 'CSV import failed');
   }
   return data;
 }

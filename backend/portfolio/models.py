@@ -267,6 +267,7 @@ class Transaction(models.Model):
         ('fints', 'FinTS/MT940 statement'),
         ('broker', 'Broker API'),
         ('manual', 'Manual Entry'),
+        ('csv', 'CSV import'),
     ]
 
     account = models.ForeignKey(

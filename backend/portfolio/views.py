@@ -1003,6 +1003,76 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
         snapshot.save()
 
 
+class AccountTransactionCsvImportView(APIView):
+    """Import a bank CSV export into one account (web-only backfill).
+
+    Multipart body: ``file`` — a per-account export from the bank's online
+    banking (ZKB "with details" or DKB; format is auto-detected). Storage is
+    the same idempotent importer the sync paths use, so re-importing a file
+    (or an overlapping export) creates nothing new; ZKB rows even dedup
+    against EBICS-synced entries via the shared bank reference.
+    """
+    permission_classes = [IsAuthenticated]
+
+    MAX_SIZE = 5 * 1024 * 1024
+
+    def post(self, request, pk):
+        from .csv_import import CsvImportError, parse_transactions_csv
+        from .transaction_importer import store_transactions
+
+        try:
+            account = FinancialAccount.objects.get(pk=pk, user=request.user)
+        except FinancialAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=404)
+
+        upload = request.FILES.get('file')
+        if upload is None:
+            return Response({'error': 'Attach the CSV as "file"'}, status=400)
+        if upload.size > self.MAX_SIZE:
+            return Response({'error': 'File is larger than 5 MB'}, status=400)
+
+        try:
+            fmt, currency, infos, skipped = parse_transactions_csv(
+                upload.read(), account.currency,
+            )
+        except CsvImportError as e:
+            return Response({'error': str(e)}, status=400)
+
+        if not infos:
+            return Response({'error': 'No importable rows found in the file'}, status=400)
+        # The exports are per account — a currency mismatch means the file
+        # belongs to a different account. Refuse rather than corrupt.
+        if currency != account.currency:
+            return Response({
+                'error': f'The file contains {currency} entries but the account '
+                         f'is in {account.currency}. Pick the matching account.',
+            }, status=400)
+
+        imported = store_transactions(account, infos, source='csv')
+        if imported:
+            from .classification import apply_rules, detect_transfers
+            apply_rules(request.user)
+            detect_transfers(request.user)
+
+        dates = [i.booking_date for i in infos]
+        covered_start, covered_end = min(dates), max(dates)
+        message = f'{imported} new transactions imported'
+        if imported != len(infos):
+            message += f' ({len(infos)} rows read, the rest were already stored)'
+        message += f'. The file covers {covered_start} to {covered_end}.'
+
+        return Response({
+            'status': 'success',
+            'format': fmt,
+            'imported': imported,
+            'fetched': len(infos),
+            'skipped': skipped,
+            'covered_start': covered_start,
+            'covered_end': covered_end,
+            'message': message,
+        })
+
+
 class TransactionListView(generics.ListAPIView):
     """All of the user's transactions, newest first, across accounts.
 

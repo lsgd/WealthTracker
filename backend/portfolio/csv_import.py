@@ -1,0 +1,210 @@
+"""CSV transaction import (web-only backfill).
+
+Parses per-account CSV exports from the banks' online banking — currently ZKB
+("with details" export) and DKB — into the shared ``TransactionInfo`` shape and
+stores them through the same idempotent importer as the sync paths.
+
+Format notes (structure learned from real exports; test fixtures are synthetic):
+
+- **ZKB**: semicolon-separated, one header row. Debit and credit live in
+  separate columns whose headers carry the account currency ("Debit CHF" /
+  "Credit CHF"). The "ZKB reference" is the bank-side unique reference (the
+  same value camt.053 reports as ``AcctSvcrRef``), so imported rows dedup
+  exactly against EBICS-synced entries via the ``ref:`` key.
+- **DKB**: preamble lines (account, period, balance) before the header row.
+  German number format ("-1.234,56"), dates as DD.MM.YY, currency taken from
+  the "Betrag (€)" header. Only "Gebucht" rows are imported — pending entries
+  change on booking and would come back as duplicates. The "Kundenreferenz" is
+  not a guaranteed-unique bank reference, so DKB entries use the importer's
+  order-stable content-hash dedup instead of a ``ref:`` key.
+"""
+import csv
+import io
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+from brokers.integrations.base import TransactionInfo
+
+
+class CsvImportError(Exception):
+    """CSV could not be parsed; the message is safe to show to the user."""
+
+
+# Column aliases: the export language follows the user's e-banking language.
+_ZKB_DATE = ('date', 'datum')
+_ZKB_TEXT = ('booking text', 'buchungstext')
+_ZKB_REFERENCE = ('zkb reference', 'zkb-referenz')
+_ZKB_DEBIT = ('debit', 'belastung')
+_ZKB_CREDIT = ('credit', 'gutschrift')
+_ZKB_VALUE_DATE = ('value date', 'valuta')
+_ZKB_PURPOSE = ('payment purpose', 'zahlungszweck')
+_ZKB_DETAILS = ('details',)
+
+_DKB_HEADER_FIRST = 'buchungsdatum'
+
+
+def _decode(content: bytes) -> str:
+    """Bank CSVs are UTF-8 (sometimes with BOM) or cp1252 — never anything else."""
+    try:
+        return content.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return content.decode('cp1252', errors='replace')
+
+
+def _find_column(header, aliases, prefix=False):
+    """Index of the first header cell matching one of ``aliases``, else None."""
+    for index, cell in enumerate(header):
+        name = cell.strip().lower()
+        for alias in aliases:
+            if (prefix and name.startswith(alias)) or (not prefix and name == alias):
+                return index
+    return None
+
+
+def _parse_date(text, formats):
+    for fmt in formats:
+        try:
+            return datetime.strptime(text.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_amount(text: str, german: bool) -> Decimal:
+    cleaned = text.strip().replace('−', '-').replace("'", '')
+    if german:
+        cleaned = cleaned.replace('.', '').replace(',', '.')
+    else:
+        cleaned = cleaned.replace(',', '')
+    return Decimal(cleaned)
+
+
+def parse_transactions_csv(content: bytes, fallback_currency: str):
+    """Parse a ZKB or DKB export. Returns (format_name, currency, infos, skipped).
+
+    ``skipped`` counts rows without a parseable date or amount (detail
+    continuation rows, pending entries). Raises CsvImportError when the file
+    matches neither format.
+    """
+    rows = list(csv.reader(io.StringIO(_decode(content)), delimiter=';'))
+    if not rows:
+        raise CsvImportError('The file is empty.')
+
+    header = [cell.strip().lower() for cell in rows[0]]
+    if _find_column(header, _ZKB_REFERENCE) is not None:
+        return _parse_zkb(rows, fallback_currency)
+    for index, row in enumerate(rows):
+        if row and row[0].strip().lower() == _DKB_HEADER_FIRST:
+            return _parse_dkb(rows, index, fallback_currency)
+    raise CsvImportError(
+        'Unrecognized CSV format. Supported: ZKB account export ("with details") '
+        'and DKB account export.'
+    )
+
+
+def _parse_zkb(rows, fallback_currency):
+    header = rows[0]
+    date_col = _find_column(header, _ZKB_DATE)
+    text_col = _find_column(header, _ZKB_TEXT)
+    ref_col = _find_column(header, _ZKB_REFERENCE)
+    debit_col = _find_column(header, _ZKB_DEBIT, prefix=True)
+    credit_col = _find_column(header, _ZKB_CREDIT, prefix=True)
+    value_col = _find_column(header, _ZKB_VALUE_DATE)
+    purpose_col = _find_column(header, _ZKB_PURPOSE)
+    details_col = _find_column(header, _ZKB_DETAILS)
+    if None in (date_col, text_col, debit_col, credit_col):
+        raise CsvImportError('ZKB export is missing expected columns.')
+
+    # "Debit CHF" / "Belastung CHF": the header names the account currency.
+    currency_token = header[debit_col].strip().split()[-1].upper()
+    currency = currency_token if len(currency_token) == 3 else fallback_currency
+
+    def cell(row, col):
+        return row[col].strip() if col is not None and col < len(row) else ''
+
+    infos, skipped = [], 0
+    for row in rows[1:]:
+        booking_date = _parse_date(cell(row, date_col), ('%d.%m.%Y',))
+        debit, credit = cell(row, debit_col), cell(row, credit_col)
+        if booking_date is None or (not debit and not credit):
+            skipped += 1  # detail continuation rows carry no date/amount
+            continue
+        try:
+            amount = -_parse_amount(debit, german=False) if debit \
+                else _parse_amount(credit, german=False)
+        except InvalidOperation:
+            skipped += 1
+            continue
+        description = cell(row, text_col)
+        purpose = cell(row, purpose_col)
+        if purpose:
+            description = f'{description} — {purpose}' if description else purpose
+        infos.append(TransactionInfo(
+            booking_date=booking_date,
+            amount=amount,
+            currency=currency,
+            value_date=_parse_date(cell(row, value_col), ('%d.%m.%Y',)),
+            counterparty=cell(row, details_col),
+            description=description,
+            external_id=cell(row, ref_col) or None,
+        ))
+    return 'zkb', currency, infos, skipped
+
+
+def _parse_dkb(rows, header_index, fallback_currency):
+    header = rows[header_index]
+    columns = {cell.strip().lower(): i for i, cell in enumerate(header)}
+
+    def col(name, prefix=False):
+        if prefix:
+            return next((i for n, i in columns.items() if n.startswith(name)), None)
+        return columns.get(name)
+
+    date_col = col('buchungsdatum')
+    value_col = col('wertstellung')
+    status_col = col('status')
+    payer_col = col('zahlungspflichtige', prefix=True)
+    payee_col = col('zahlungsempfänger', prefix=True)
+    purpose_col = col('verwendungszweck')
+    iban_col = col('iban')
+    amount_col = col('betrag', prefix=True)
+    if None in (date_col, amount_col):
+        raise CsvImportError('DKB export is missing expected columns.')
+
+    # "Betrag (€)": currency symbol in the header.
+    amount_header = header[amount_col]
+    currency = 'EUR' if '€' in amount_header else (
+        'USD' if '$' in amount_header else fallback_currency)
+
+    def cell(row, c):
+        return row[c].strip() if c is not None and c < len(row) else ''
+
+    infos, skipped = [], 0
+    for row in rows[header_index + 1:]:
+        booking_date = _parse_date(cell(row, date_col), ('%d.%m.%y', '%d.%m.%Y'))
+        if booking_date is None:
+            skipped += 1
+            continue
+        status = cell(row, status_col)
+        if status and status.lower() != 'gebucht':
+            skipped += 1  # pending rows change on booking and would duplicate
+            continue
+        try:
+            amount = _parse_amount(cell(row, amount_col), german=True)
+        except InvalidOperation:
+            skipped += 1
+            continue
+        counterparty = cell(row, payee_col) if amount < 0 else cell(row, payer_col)
+        infos.append(TransactionInfo(
+            booking_date=booking_date,
+            amount=amount,
+            currency=currency,
+            value_date=_parse_date(cell(row, value_col), ('%d.%m.%y', '%d.%m.%Y')),
+            counterparty=counterparty,
+            counterparty_account=cell(row, iban_col),
+            description=cell(row, purpose_col),
+            # Kundenreferenz is NOT a guaranteed-unique bank reference — no
+            # external_id, so the importer's content-hash dedup applies.
+            external_id=None,
+        ))
+    return 'dkb', currency, infos, skipped

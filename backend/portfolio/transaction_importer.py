@@ -71,11 +71,15 @@ def _dedup_keys(infos):
     return keys
 
 
-def store_transactions(account, infos) -> int:
-    """Persist a fetched batch idempotently. Returns the number of new rows."""
+def store_transactions(account, infos, source=None) -> int:
+    """Persist a fetched batch idempotently. Returns the number of new rows.
+
+    ``source`` overrides the integration-derived provenance (the CSV import
+    stores 'csv' — its rows did not come through the broker integration).
+    """
     from .models import Transaction
 
-    source = _SOURCE_BY_INTEGRATION_TYPE.get(
+    source = source or _SOURCE_BY_INTEGRATION_TYPE.get(
         getattr(account.broker, 'integration_type', '') or '', 'broker',
     )
 
