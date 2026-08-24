@@ -583,16 +583,34 @@ a:hover {
   to { opacity: 1; transform: translate(-50%, calc(-100% - 8px)); }
 }
 
-/* Boxed success banner (counterpart to .form-error). For inline status text
-   next to a control, use .form-message.success instead. */
-.form-success {
-  background: rgba(52, 211, 153, 0.1);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  color: var(--color-success);
+/* Boxed success/warning banners (counterparts to .form-error). For inline
+   status text next to a control, use .form-message.success instead. */
+.form-success,
+.form-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 0.9rem;
   margin-bottom: 16px;
+}
+
+.form-success {
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: var(--color-success);
+}
+
+.form-warning {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--color-warning, #e0a030);
+}
+
+.form-success svg,
+.form-warning svg {
+  flex-shrink: 0;
 }
 
 .form-actions {
@@ -2295,6 +2313,57 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   .import-columns {
     grid-template-columns: 1fr;
   }
+}
+
+/* Wrap instead of overflowing on narrow screens; the match-text input takes
+   all free width — it holds merchant names and regexes, not two words. */
+.spending-rule-new {
+  flex-wrap: wrap;
+}
+
+.spending-rule-match {
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+
+/* Collapsible card headers (Import history, AI model details). */
+.card-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.card-toggle-chevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.card-toggle-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Collapsed AI card: just the model name, clickable to expand. */
+.ai-model-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+}
+
+/* The card's primary action — full-width so it cannot be mistaken for a
+   config button. */
+.ai-suggest-cta {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  margin: 4px 0 6px;
 }
 
 .spending-rule-new input,

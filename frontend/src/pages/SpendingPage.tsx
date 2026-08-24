@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Bar,
   CartesianGrid,
@@ -13,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowLeftRight, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import { stripLeadingIban } from '../utils/iban';
 import type {
@@ -77,7 +78,14 @@ function formatAmount(value: number, currency: string): string {
 }
 
 export default function SpendingPage() {
-  const [tab, setTab] = useState<'insights' | 'config'>('insights');
+  // The tab lives in the URL (?tab=config) so a refresh or shared link lands
+  // on the same tab instead of falling back to Insights.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: 'insights' | 'config' =
+    searchParams.get('tab') === 'config' ? 'config' : 'insights';
+  const setTab = (next: 'insights' | 'config') => {
+    setSearchParams(next === 'config' ? { tab: 'config' } : {}, { replace: true });
+  };
   const [mode, setMode] = useState<'normalized' | 'actual'>('normalized');
   const [months, setMonths] = useState(12);
   const [report, setReport] = useState<SpendingReport | null>(null);
@@ -123,6 +131,8 @@ export default function SpendingPage() {
   const [csvCandidates, setCsvCandidates] = useState<{ id: number; name: string }[]>([]);
   const [csvAccountChoice, setCsvAccountChoice] = useState<number | ''>('');
   const csvInputRef = useRef<HTMLInputElement>(null);
+  // Import history is a once-in-a-while tool — collapsed unless in use.
+  const [importOpen, setImportOpen] = useState(false);
 
   const loadReport = useCallback(async () => {
     try {
@@ -833,10 +843,19 @@ export default function SpendingPage() {
             ))}
             <div className="spending-rule-row spending-rule-new" ref={ruleFormRef}>
               <input
+                className="spending-rule-match"
                 placeholder="match text, e.g. rewe"
                 value={ruleText}
                 onChange={(e) => setRuleText(e.target.value)}
               />
+              <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
+                <input
+                  type="checkbox"
+                  checked={ruleIsRegex}
+                  onChange={(e) => setRuleIsRegex(e.target.checked)}
+                />
+                Regex
+              </label>
               <select
                 value={ruleCategory}
                 onChange={(e) => {
@@ -858,14 +877,6 @@ export default function SpendingPage() {
                 <option value={6}>/6 months</option>
                 <option value={12}>/12 months</option>
               </select>
-              <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
-                <input
-                  type="checkbox"
-                  checked={ruleIsRegex}
-                  onChange={(e) => setRuleIsRegex(e.target.checked)}
-                />
-                Regex
-              </label>
               <button
                 className="btn btn-sm btn-primary"
                 onClick={handleAddRule}
@@ -878,9 +889,26 @@ export default function SpendingPage() {
         </div>
 
         <div className="card">
-          <div className="chart-header">
+          <div
+            className="chart-header card-toggle"
+            role="button"
+            tabIndex={0}
+            aria-expanded={importOpen}
+            onClick={() => setImportOpen((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setImportOpen((v) => !v);
+              }
+            }}
+          >
             <h2>Import history</h2>
+            <ChevronDown
+              size={18}
+              className={`card-toggle-chevron ${importOpen ? 'open' : ''}`}
+            />
           </div>
+          {importOpen && (<>
           <div className="import-columns">
             <div>
               <h3 className="import-col-title">Fetch from bank</h3>
@@ -943,9 +971,9 @@ export default function SpendingPage() {
               <h3 className="import-col-title">Import CSV export</h3>
               <p className="form-hint">
                 An export from the bank&apos;s online banking — ZKB (&quot;with
-                details&quot; export) and DKB are recognized automatically, and the
-                file determines its account. Re-importing an overlapping file
-                changes nothing.
+                details&quot; export), DKB, and Commerzbank are recognized
+                automatically, and the file determines its account. Re-importing
+                an overlapping file changes nothing.
               </p>
               <div className="spending-rule-row spending-rule-new">
                 <input
@@ -990,10 +1018,17 @@ export default function SpendingPage() {
             </div>
           </div>
           {backfillNotice && (
-            <p className={backfillTruncated ? 'form-hint form-hint-warning' : 'form-hint'}>
-              {backfillTruncated && <AlertTriangle size={14} />} {backfillNotice}
-            </p>
+            backfillTruncated ? (
+              <div className="form-warning">
+                <AlertTriangle size={16} /> {backfillNotice}
+              </div>
+            ) : (
+              <div className="form-success">
+                <CheckCircle2 size={16} /> {backfillNotice}
+              </div>
+            )
           )}
+          </>)}
         </div>
 
         <AiCategorization onApplied={() => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { stripLeadingIban } from '../utils/iban';
 import type { AiConfig, AiModel, AiPricing, AiSuggestResponse } from '../api/client';
 import {
@@ -38,10 +38,14 @@ export default function AiCategorization({ onApplied }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [noticeKind, setNoticeKind] = useState<'success' | 'warning'>('success');
 
   const [result, setResult] = useState<AiSuggestResponse | null>(null);
   const [checkedTx, setCheckedTx] = useState<Set<number>>(new Set());
   const [checkedRules, setCheckedRules] = useState<Set<number>>(new Set());
+  // Model pricing/meta and the data disclosure are reference material —
+  // collapsed to just the model name once everything is configured.
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     getAiConfig().then(setConfig).catch((e) =>
@@ -93,11 +97,13 @@ export default function AiCategorization({ onApplied }: Props) {
   const refreshPricing = async () => {
     setError('');
     setNotice('');
+    setNoticeKind('success');
     setBusy(true);
     try {
       const outcome = await refreshAiPricing();
       setConfig(await getAiConfig());
       if (!outcome.model_still_available) {
+        setNoticeKind('warning');
         setNotice('Your key no longer lists this model — pick another one under "Change".');
       } else if (outcome.changed) {
         setNotice('Pricing updated.');
@@ -125,6 +131,7 @@ export default function AiCategorization({ onApplied }: Props) {
   const suggest = async () => {
     setError('');
     setNotice('');
+    setNoticeKind('success');
     setBusy(true);
     setResult(null);
     try {
@@ -175,6 +182,10 @@ export default function AiCategorization({ onApplied }: Props) {
   };
 
   const showSetup = editing || (config !== null && !config.configured);
+  // While setting up (or with no model picked yet) there is nothing to
+  // collapse — the full state explanation stays visible.
+  const collapsible = Boolean(config?.configured && config.model) && !editing;
+  const showDetails = !collapsible || detailsOpen;
 
   return (
     <div className="card">
@@ -182,9 +193,6 @@ export default function AiCategorization({ onApplied }: Props) {
         <h2>AI categorization (Gemini)</h2>
         {config?.configured && !editing && (
           <div className="range-buttons">
-            <button className="btn btn-sm btn-primary" onClick={suggest} disabled={busy}>
-              <Sparkles size={14} /> {busy ? 'Asking Gemini…' : 'Get suggestions'}
-            </button>
             <button className="btn btn-sm btn-ghost" onClick={() => setEditing(true)}>
               Change
             </button>
@@ -195,17 +203,44 @@ export default function AiCategorization({ onApplied }: Props) {
         )}
       </div>
 
-      {/* Always rendered, directly above the disclosure, and never hidden while
-          editing: whatever the state is, it is named here rather than leaving a
-          blank card. */}
-      {config && (
+      {/* Collapsed: only the selected model. Expanded (or while setting up):
+          pricing details plus the data disclosure. */}
+      {collapsible && (
+        <div
+          className="ai-model-summary card-toggle"
+          role="button"
+          tabIndex={0}
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setDetailsOpen((v) => !v);
+            }
+          }}
+        >
+          <span className="ai-model-name">
+            {config?.pricing?.display_name ?? config?.model}
+          </span>
+          <ChevronDown
+            size={16}
+            className={`card-toggle-chevron ${detailsOpen ? 'open' : ''}`}
+          />
+        </div>
+      )}
+
+      {/* Never hidden while editing: whatever the state is, it is named here
+          rather than leaving a blank card. */}
+      {config && showDetails && (
         <div className="ai-model-banner">
           <div>
-            <div className="ai-model-name">
-              {config.model
-                ? (config.pricing?.display_name ?? config.model)
-                : (config.configured ? 'No model selected' : 'Gemini not set up')}
-            </div>
+            {!collapsible && (
+              <div className="ai-model-name">
+                {config.model
+                  ? (config.pricing?.display_name ?? config.model)
+                  : (config.configured ? 'No model selected' : 'Gemini not set up')}
+              </div>
+            )}
             <div className="ai-model-price">
               {!config.model
                 ? (config.configured
@@ -242,7 +277,7 @@ export default function AiCategorization({ onApplied }: Props) {
         </div>
       )}
 
-      {config && (
+      {config && showDetails && (
         <div className="ai-disclosure">
           <strong>Data sent to Google when you request suggestions:</strong>
           <ul>
@@ -256,7 +291,22 @@ export default function AiCategorization({ onApplied }: Props) {
       )}
 
       {error && <div className="form-error" onClick={() => setError('')}>{error}</div>}
-      {notice && <p className="form-hint">{notice}</p>}
+      {notice && (
+        <div
+          className={noticeKind === 'warning' ? 'form-warning' : 'form-success'}
+          onClick={() => setNotice('')}
+        >
+          {noticeKind === 'warning'
+            ? <AlertTriangle size={16} />
+            : <CheckCircle2 size={16} />} {notice}
+        </div>
+      )}
+
+      {collapsible && !result && (
+        <button className="btn btn-primary ai-suggest-cta" onClick={suggest} disabled={busy}>
+          <Sparkles size={16} /> {busy ? 'Asking Gemini…' : 'Get suggestions'}
+        </button>
+      )}
 
       {showSetup && (
         <div className="ai-setup">

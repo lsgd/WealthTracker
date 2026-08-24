@@ -29,6 +29,11 @@
 - Rules can mark matches as transfers ("Transfer" option as the rule target), excluding recurring transfers like broker top-ups from spending automatically; manual not-a-transfer decisions always win
 - New "+ Rule" action on every web transaction row prefills the rule form from that transaction
 - Commerzbank CSV export is now recognized by the transaction import, including automatic account matching via the file's own IBAN and counterparty-IBAN extraction for transfer pairing
+- Monthly spending report is much faster: exchange rates are loaded in bulk instead of queried (or fetched from the rate API) per transaction date
+- Web rule form: the match-text input now takes the full row width with the regex switch right next to it
+- Web AI card: "Get suggestions" is a prominent full-width button in the card body instead of sitting next to Change/delete; model pricing and the data disclosure collapse to just the model name
+- Web: the Import history card is collapsed by default, and the spending tab survives a page refresh (it is part of the URL)
+- Web: import and AI outcomes now show as green success banners (yellow for warnings) instead of muted hint text; CSV import hints mention Commerzbank
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

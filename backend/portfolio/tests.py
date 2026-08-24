@@ -1,5 +1,5 @@
 """Tests for portfolio models, serializers, and account/snapshot/sync endpoints."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -882,6 +882,47 @@ class SpendingReportTests(TestCase):
         self._tx(amount=Decimal('-25'))
         report = monthly_spending(self.user, months=1, mode='actual')
         self.assertEqual(report['months'][-1]['by_category'], {'Uncategorized': 25.0})
+
+    def test_foreign_currency_uses_most_recent_stored_rate(self):
+        from portfolio.spending import monthly_spending
+        booking = date.today().replace(day=1)
+        # No rate on the booking date itself — the report must fall back to the
+        # most recent earlier rate, without asking the rate API.
+        ExchangeRate.objects.create(
+            from_currency='CHF', to_currency='EUR',
+            rate_date=booking - timedelta(days=3), rate=Decimal('1.05'),
+        )
+        self._tx(amount=Decimal('-100'), currency='CHF', booking_date=booking)
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['expenses'], 105.0)
+
+    def test_foreign_currency_inverse_pair(self):
+        from portfolio.spending import monthly_spending
+        # Only the opposite direction is stored (EUR->CHF); the report inverts
+        # it. The rate is also dated today while the booking may be older —
+        # bookings before the earliest stored rate clamp to that rate.
+        ExchangeRate.objects.create(
+            from_currency='EUR', to_currency='CHF',
+            rate_date=date.today(), rate=Decimal('2'),
+        )
+        self._tx(amount=Decimal('-100'), currency='CHF',
+                 booking_date=date.today().replace(day=1))
+        report = monthly_spending(self.user, months=1, mode='actual')
+        self.assertEqual(report['months'][-1]['expenses'], 50.0)
+
+    def test_rate_lookup_is_bulk_not_per_transaction(self):
+        from portfolio.spending import monthly_spending
+        booking = date.today().replace(day=1)
+        ExchangeRate.objects.create(
+            from_currency='CHF', to_currency='EUR',
+            rate_date=booking, rate=Decimal('1'),
+        )
+        for i in range(8):
+            self._tx(amount=Decimal('-10'), currency='CHF', booking_date=booking)
+        # transactions + distinct currencies + one rate-series fetch. Per-date
+        # lookups would scale with the transaction count.
+        with self.assertNumQueries(3):
+            monthly_spending(self.user, months=1, mode='actual')
 
 
 class ClassificationApiTests(APITestCase):

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Upload, X } from 'lucide-react';
+import { CheckCircle2, Upload, X } from 'lucide-react';
 import { importTransactionsCsv } from '../api/client';
 
 interface Props {
@@ -67,7 +67,8 @@ export default function TransactionCsvImportModal({
         {error && <div className="form-error">{error}</div>}
         <p className="form-hint">
           A per-account CSV export from the bank&apos;s online banking — ZKB
-          (&quot;with details&quot; export) and DKB are recognized automatically.
+          (&quot;with details&quot; export), DKB, and Commerzbank are recognized
+          automatically.
           Re-importing an overlapping file changes nothing, so it is safe to
           retry.
         </p>
@@ -81,7 +82,11 @@ export default function TransactionCsvImportModal({
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
         </div>
-        {notice && <p className="form-hint">{notice}</p>}
+        {notice && (
+          <div className="form-success">
+            <CheckCircle2 size={16} /> {notice}
+          </div>
+        )}
         <div className="form-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Close

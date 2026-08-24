@@ -8,10 +8,11 @@ user's base currency. Two modes:
   N consecutive months starting at its booking month. Yearly bills stop spiking
   their booking month and show up as a steady monthly cost instead.
 """
+from bisect import bisect_right
 from datetime import date, timedelta
 from decimal import Decimal
 
-from exchange_rates.services import ExchangeRateService
+from exchange_rates.models import ExchangeRate
 
 from .models import Transaction
 
@@ -50,16 +51,48 @@ def monthly_spending(user, months: int = 12, mode: str = 'normalized') -> dict:
         .select_related('category')
     )
 
-    rate_cache: dict = {}
+    # Rate lookup is bulk-loaded: per-date ExchangeRateService.get_rate calls
+    # cost 1-3 queries each (and a live frankfurter fetch for dates with no
+    # stored rate at all) — hundreds of distinct booking dates made this
+    # endpoint take seconds. One query per currency pair instead; per-date
+    # resolution happens in memory with the same most-recent-before fallback.
+    rate_series: dict = {}
+    # order_by() clears the model's default ordering — it would leak into the
+    # DISTINCT and yield one row per transaction instead of per currency.
+    for cur in (
+        txs.exclude(currency=base_currency)
+        .order_by()
+        .values_list('currency', flat=True)
+        .distinct()
+    ):
+        rows = list(
+            ExchangeRate.objects
+            .filter(from_currency=cur, to_currency=base_currency, rate_date__lte=today)
+            .order_by('rate_date')
+            .values_list('rate_date', 'rate')
+        )
+        if not rows:
+            rows = [
+                (d, Decimal('1') / r) for d, r in
+                ExchangeRate.objects
+                .filter(from_currency=base_currency, to_currency=cur, rate_date__lte=today)
+                .order_by('rate_date')
+                .values_list('rate_date', 'rate')
+                if r
+            ]
+        rate_series[cur] = ([d for d, _ in rows], [r for _, r in rows])
 
     def to_base(amount: Decimal, currency: str, on: date) -> Decimal:
         if currency == base_currency:
             return amount
-        key = (currency, on)
-        if key not in rate_cache:
-            rate_cache[key] = ExchangeRateService.get_rate(currency, base_currency, on)
-        rate = rate_cache[key]
-        return amount * rate if rate else amount
+        dates, rates = rate_series.get(currency) or ((), ())
+        if not dates:
+            return amount  # no rate known for the pair — same 1:1 fallback as before
+        # Most recent rate on or before the booking date; dates older than the
+        # first stored rate clamp to that first rate instead of hitting the
+        # rate API mid-request.
+        pos = bisect_right(dates, on)
+        return amount * rates[pos - 1 if pos else 0]
 
     buckets = {
         i: {'income': Decimal('0'), 'expenses': Decimal('0'), 'by_category': {}}
