@@ -11,6 +11,19 @@ String formatCurrency(double value, String currency) {
   return format.format(value.floor());
 }
 
+/// Exact currency formatter for single transactions (2 decimals).
+///
+/// The API serializes amounts with 4 decimal places ("-19.9000") — never show
+/// that raw string.
+String formatCurrencyExact(double value, String currency) {
+  final format = NumberFormat.currency(
+    locale: 'de_CH',
+    symbol: currency,
+    decimalDigits: 2,
+  );
+  return format.format(value);
+}
+
 /// Compact currency formatter for large values.
 String formatCurrencyCompact(double value, String currency) {
   final format = NumberFormat.compactCurrency(

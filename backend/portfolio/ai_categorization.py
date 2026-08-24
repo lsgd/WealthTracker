@@ -180,10 +180,13 @@ Transactions (id | counterparty | booking text | signed amount):
 
 For every transaction pick the best fitting existing category, or propose a NEW
 concise category name (in the same language/style as the existing ones) when
-none fits. Do not create near-duplicates of existing categories, and keep the
-total number of new categories small — prefer broad categories over
-merchant-specific ones. Positive amounts are income; only categorize them when
-a category clearly applies (e.g. salary), otherwise omit the transaction.
+none fits. Category names are ONE word wherever possible ("Restaurants", not
+"Dining & Restaurants") — never join synonyms with "&" or "and"; use a second
+word only when it genuinely adds meaning ("Public Transport"). Do not create
+near-duplicates of existing categories, and keep the total number of new
+categories small — prefer broad categories over merchant-specific ones.
+Positive amounts are income; only categorize them when a category clearly
+applies (e.g. salary), otherwise omit the transaction.
 
 Additionally propose reusable RULES for recurring merchants: a lowercase
 substring of the counterparty or booking text that uniquely identifies the

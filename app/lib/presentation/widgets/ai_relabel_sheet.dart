@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/formatters.dart';
 import '../../data/models/ai_categorization.dart';
 import '../providers/spending_provider.dart';
 
@@ -133,9 +134,14 @@ class _AiRelabelSheetState extends ConsumerState<AiRelabelSheet> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    // The target category is fixed and named in the sheet
+                    // title — per row only what the entry is labeled NOW
+                    // (an "old → new" pair per line gets unreadable with
+                    // long category names).
                     subtitle: Text(
-                      '${s.bookingDate} · ${s.amount} ${s.currency}\n'
-                      '${s.currentCategory ?? 'Uncategorized'} → ${s.category}',
+                      '${s.bookingDate} · '
+                      '${formatCurrencyExact(double.tryParse(s.amount) ?? 0, s.currency)}\n'
+                      'Currently: ${s.currentCategory ?? 'Uncategorized'}',
                       maxLines: 2,
                     ),
                     isThreeLine: true,

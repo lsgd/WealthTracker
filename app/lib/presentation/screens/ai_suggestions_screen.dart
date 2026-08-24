@@ -314,9 +314,18 @@ class _Review extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 );
               }),
-              subtitle: Text('${s.bookingDate} · ${s.amount} ${s.currency}'),
-              secondary: _CategoryLabel(
-                  name: s.category, isNew: s.isNewCategory),
+              // The category chip lives UNDER the entry, not beside it — as
+              // `secondary` it squeezed long merchant names into a sliver
+              // whenever the category name was long.
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${s.bookingDate} · '
+                      '${formatCurrencyExact(double.tryParse(s.amount) ?? 0, s.currency)}'),
+                  const SizedBox(height: 4),
+                  _CategoryLabel(name: s.category, isNew: s.isNewCategory),
+                ],
+              ),
             ),
         ],
         if (result.rules.isNotEmpty) ...[
