@@ -6,41 +6,33 @@
 set -e
 
 DJANGO_PROJECT_NAME="${1}"
-BASE_PATH='/var/www'
+BASE_PATH="${2}"
+
+if [ -z "${BASE_PATH}" ]
+then
+  BASE_PATH='/var/www'
+fi
 APP_PATH="${BASE_PATH}/app"
 
-# Install pip requirements
-if [ -f ${APP_PATH}/requirements.txt ]; then
-    python -m pip install --no-cache-dir --upgrade -r ${APP_PATH}/requirements.txt
-fi
+# App deps are baked into the image at build time (from the `app` build
+# context's requirements.txt) — no pip install here. Dependency changes
+# require an image rebuild (`docker compose up -d --build`).
+
+# Chromium is baked into the image (PLAYWRIGHT_BROWSERS_PATH). Self-heal if the
+# baked browser somehow drifted from the installed playwright (cheap no-op otherwise).
+python -m playwright install chromium >/dev/null 2>&1 || true
 
 # Wait for database
-echo "Waiting for database..."
-while ! python -c "import psycopg2; psycopg2.connect('${DATABASE_URL}')" 2>/dev/null; do
-    sleep 1
-done
-echo "Database is ready!"
-
-# Migrate models
-yes "yes" | python ${APP_PATH}/manage.py migrate
-
-# Collect static files
-python ${APP_PATH}/manage.py collectstatic --noinput
-
-# Set up cron jobs if crontabs file exists
-if test -f "/crontabs"; then
-    echo "Setting up cron jobs..."
-    # Export environment variables for cron (cron doesn't inherit container env)
-    # Use proper quoting to handle values with spaces/special chars
-    printenv | grep -E '^(DATABASE_URL|SECRET_KEY|FINTS_PRODUCT_ID|ADMIN_EMAIL|EMAIL_|DEFAULT_FROM_EMAIL|DEBUG|ALLOWED_HOSTS|DEMO_USERS)' | while IFS='=' read -r name value; do
-      echo "export ${name}=\"${value}\""
-    done > /etc/cron.env
-    service cron start
-    cat /crontabs | crontab -u root -
+if [ -n "${DATABASE_URL}" ]; then
+    echo "Waiting for database..."
+    while ! python -c "import psycopg2; psycopg2.connect('${DATABASE_URL}')" 2>/dev/null; do
+        sleep 1
+    done
+    echo "Database is ready!"
 fi
 
 # Start a virtual display for headful Chromium (MS's Akamai blocks headless) when
-# the MS browser login runs in server mode. gunicorn (below) inherits DISPLAY.
+# the MS browser login runs in server mode. gunicorn + cron (below) inherit DISPLAY.
 if [ "${MS_SERVER_MODE}" = "1" ]; then
     export DISPLAY="${DISPLAY:-:99}"
     if ! pgrep -x Xvfb >/dev/null 2>&1; then
@@ -50,10 +42,34 @@ if [ "${MS_SERVER_MODE}" = "1" ]; then
     fi
 fi
 
+# Migrate models
+yes "yes" | python ${APP_PATH}/manage.py migrate
+
+# Load broker fixtures (idempotent). Kept here — after migrate — so it always
+# runs once the DB schema is current. Doing it in a post-deploy script instead
+# races container startup, so keep broker seeding inside the entrypoint.
+python ${APP_PATH}/manage.py loaddata initial_brokers
+
+# Collect static files
+python ${APP_PATH}/manage.py collectstatic --noinput
+
+# Set up cron jobs if crontabs file exists
+if test -f "/crontabs"; then
+    echo "Setting up cron jobs..."
+    # Export environment variables for cron (cron doesn't inherit container env).
+    # Include DISPLAY + MS_* + PLAYWRIGHT so cron-triggered syncs find the browser.
+    printenv | grep -E '^(DATABASE_URL|SECRET_KEY|FINTS_PRODUCT_ID|ADMIN_EMAIL|EMAIL_|DEFAULT_FROM_EMAIL|DEBUG|ALLOWED_HOSTS|DEMO_USERS|DISPLAY|MS_|PLAYWRIGHT)' | while IFS='=' read -r name value; do
+      echo "export ${name}=\"${value}\""
+    done > /etc/cron.env
+    service cron start
+    cat /crontabs | crontab -u root -
+fi
+
 # Start gunicorn with uvicorn worker
 # GUNICORN_WORKERS defaults to 1 for FinTS 2FA (German banks require maintaining
 # an active TCP connection during 2FA - the bank closes dialogs that are
-# paused/serialized, making multi-worker 2FA impossible without Redis).
+# paused/serialized, making multi-worker 2FA impossible without Redis) and for
+# other in-memory state (discovery sessions, sync task queue).
 python -m gunicorn \
   ${DJANGO_PROJECT_NAME}.asgi:application \
   --bind 0.0.0.0:8000 \

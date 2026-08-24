@@ -1,0 +1,7 @@
+# This dir is passed as the `app` build context (see docker/backend/Dockerfile);
+# only requirements.txt is COPY'd — keep local-only files out of the context.
+.env
+db.sqlite3
+__pycache__
+**/__pycache__
+*.pyc

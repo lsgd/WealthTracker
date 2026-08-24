@@ -54,7 +54,13 @@ services:
       - wealth
 
   wealth-py:
-    build: ./backend
+    build:
+      context: ./backend
+      additional_contexts:
+        # App backend dir: its requirements.txt is baked into the image at
+        # build time (no pip install at container start). Dependency changes
+        # need an image rebuild (`docker compose up -d --build`).
+        - app=../backend
     container_name: wealth-py
     restart: always
     working_dir: /var/www/app
