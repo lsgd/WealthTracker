@@ -1,0 +1,14 @@
+# Wealth Tracker Cron Jobs — demo instance
+# Same base jobs as `crontabs`, plus daily demo-data regeneration.
+# Mount this file (instead of `crontabs`) as /crontabs on a demo container.
+# All times are server time
+
+# Regenerate demo data daily at 5:00 AM (deletes and recreates is_demo_user
+# accounts only; reads username:password pairs from DEMO_USERS in /etc/cron.env)
+0 5 * * * . /etc/cron.env && cd /var/www/app && /venv-python/bin/python manage.py generate_demo_data >> /var/log/cron.log 2>&1
+
+# Fetch exchange rates daily at 6:00 AM (fetch past week to catch any missed days)
+0 6 * * * . /etc/cron.env && cd /var/www/app && /venv-python/bin/python manage.py fetch_exchange_rates --backfill --start $(date -d "7 days ago" +\%Y-\%m-\%d) >> /var/log/cron.log 2>&1
+
+# Send weekly wealth report emails on Mondays at 19:54
+54 19 * * 1 . /etc/cron.env && cd /var/www/app && /venv-python/bin/python manage.py send_wealth_report >> /var/log/cron.log 2>&1
