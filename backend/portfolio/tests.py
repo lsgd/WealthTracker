@@ -1049,7 +1049,7 @@ class AiCategorizationClientTests(TestCase):
 
         suggest_categories('key', 'gemini-3.6-flash', tx, [], mode='items')
         items_prompt = m_post.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
-        self.assertIn('Do NOT propose rules', items_prompt)
+        self.assertIn('Do NOT propose', items_prompt)
 
         suggest_categories(
             'key', 'gemini-3.6-flash', tx, [], mode='rules',
@@ -1123,9 +1123,9 @@ class AiEndpointTests(APITestCase):
     def test_suggest_rules_mode_passes_existing_rules(self, m_suggest):
         from portfolio.models import CategoryRule, TransactionCategory
         groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
-        CategoryRule.objects.create(
+        rewe = CategoryRule.objects.create(
             user=self.user, match_text='rewe', category=groceries, position=0)
-        CategoryRule.objects.create(
+        broker = CategoryRule.objects.create(
             user=self.user, match_text='broker top', is_transfer=True, position=1)
         self.client.put(reverse('ai_config'), {
             'api_key': 'k', 'model': 'gemini-3.6-flash',
@@ -1140,10 +1140,98 @@ class AiEndpointTests(APITestCase):
         self.assertEqual(m_suggest.call_args.kwargs['mode'], 'rules')
         self.assertEqual(
             m_suggest.call_args.kwargs['existing_rules'],
-            ['rewe -> Groceries', 'broker top -> Transfer'],
+            [f'{rewe.id} | rewe | Groceries',
+             f'{broker.id} | broker top | Transfer'],
         )
         self.assertEqual(resp.data['suggestions'], [])
         self.assertEqual(len(resp.data['rules']), 1)
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_rules_mode_regex_replaces_and_transfer(self, m_suggest):
+        from portfolio.models import CategoryRule, TransactionCategory
+        subs = TransactionCategory.objects.create(user=self.user, name='Subscriptions')
+        yt = CategoryRule.objects.create(
+            user=self.user, match_text='youtubepremium', category=subs, position=0)
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [],
+            'rules': [
+                # Variant-merging regex proposal, explicitly replacing a rule.
+                {'match_text': 'dm[-.]drogerie', 'category': 'Groceries',
+                 'is_regex': True, 'replaces': None},
+                # Near-duplicate of an existing rule with no replaces set —
+                # linked deterministically via normalization.
+                {'match_text': 'youtube premium', 'category': 'Subscriptions'},
+                # Exact duplicate — dropped as noise.
+                {'match_text': 'youtubepremium', 'category': 'Subscriptions'},
+                # Broken regex — dropped (it would silently match nothing).
+                {'match_text': '(broker', 'category': 'X', 'is_regex': True},
+                # Transfer rule: no category.
+                {'match_text': 'broker top-up', 'transfer': True},
+            ],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': 0.0},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {'mode': 'rules'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        rules = resp.data['rules']
+        self.assertEqual(len(rules), 3)
+        self.assertTrue(rules[0]['is_regex'])
+        self.assertEqual(rules[1]['replaces_rule_id'], yt.id)
+        self.assertEqual(rules[1]['replaced_match_text'], 'youtubepremium')
+        self.assertTrue(rules[2]['is_transfer'])
+        self.assertIsNone(rules[2]['category'])
+
+    @patch('portfolio.ai_categorization.suggest_categories')
+    def test_suggest_items_mode_can_flag_transfers(self, m_suggest):
+        self.client.put(reverse('ai_config'), {
+            'api_key': 'k', 'model': 'gemini-3.6-flash',
+        }, format='json')
+        m_suggest.return_value = {
+            'assignments': [{'id': self.tx.id, 'transfer': True}],
+            'rules': [],
+            'usage': {'input_tokens': 1, 'output_tokens': 1, 'estimated_cost_usd': 0.0},
+        }
+        resp = self.client.post(reverse('ai_suggest'), {'mode': 'items'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.data['suggestions'][0]['is_transfer'])
+        self.assertIsNone(resp.data['suggestions'][0]['category'])
+
+    def test_apply_transfer_assignment_and_rule_replacement(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        subs = TransactionCategory.objects.create(user=self.user, name='Subscriptions')
+        yt = CategoryRule.objects.create(
+            user=self.user, match_text='youtubepremium', category=subs,
+            position=0, spread_months=3)
+        resp = self.client.post(reverse('ai_apply'), {
+            'assignments': [
+                {'transaction_id': self.tx.id, 'is_transfer': True},
+            ],
+            'rules': [
+                {'match_text': 'youtube ?premium', 'category': 'Subscriptions',
+                 'is_regex': True, 'replaces_rule_id': yt.id},
+                {'match_text': 'broker top-up', 'is_transfer': True},
+            ],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['assigned'], 1)
+        self.assertEqual(resp.data['rules_updated'], 1)
+        self.assertEqual(resp.data['rules_created'], 1)
+        self.tx.refresh_from_db()
+        self.assertTrue(self.tx.is_transfer)
+        self.assertTrue(self.tx.transfer_manual)
+        yt.refresh_from_db()
+        # Updated in place: pattern and regex flag change, position and
+        # spread survive, no duplicate rule appears.
+        self.assertEqual(yt.match_text, 'youtube ?premium')
+        self.assertTrue(yt.is_regex)
+        self.assertEqual(yt.position, 0)
+        self.assertEqual(yt.spread_months, 3)
+        transfer_rule = CategoryRule.objects.get(
+            user=self.user, match_text='broker top-up')
+        self.assertTrue(transfer_rule.is_transfer)
+        self.assertIsNone(transfer_rule.category)
 
     @patch('portfolio.ai_categorization.suggest_categories')
     def test_suggest_items_mode_sends_no_rules_context(self, m_suggest):

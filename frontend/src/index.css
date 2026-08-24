@@ -2342,6 +2342,89 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   transform: rotate(180deg);
 }
 
+/* Rules grouped by category: one titled bucket of compact chips per target.
+   The flat evaluation-order list stays behind the Order toggle. */
+.rule-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.rule-group-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.rule-group-title span {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.rule-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 0.85rem;
+}
+
+.rule-chip code {
+  background: none;
+  padding: 0;
+}
+
+.rule-chip em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.rule-chip button {
+  display: flex;
+  background: none;
+  border: none;
+  padding: 2px;
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.rule-chip button:hover {
+  color: #f87171;
+}
+
+.rule-chip-add {
+  padding: 3px 10px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.rule-chip-add:hover {
+  color: inherit;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.rule-filter {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: inherit;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  width: 130px;
+}
+
 /* Collapsed AI card: just the model name, clickable to expand. */
 .ai-model-summary {
   display: flex;

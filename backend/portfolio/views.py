@@ -1591,12 +1591,17 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
             }
             for t in transactions
         ]
+        own_rules = list(
+            CategoryRule.objects.filter(user=request.user).select_related('category')
+        )
         existing_rules = None
         if mode == 'rules':
+            # Ids included so Gemini can propose an improvement that REPLACES
+            # a rule (e.g. a regex covering spellings the rule misses).
             existing_rules = [
-                f"{r.match_text} -> {'Transfer' if r.is_transfer else r.category.name}"
-                for r in CategoryRule.objects
-                .filter(user=request.user).select_related('category')
+                f"{r.id} | {r.match_text} | "
+                f"{'Transfer' if r.is_transfer else r.category.name}"
+                for r in own_rules
             ]
 
         try:
@@ -1607,6 +1612,8 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
         except GeminiError as e:
             return Response({'error': str(e)}, status=502)
 
+        import re as re_mod
+
         by_id = {t.id: t for t in transactions}
         existing = {c.lower() for c in categories}
         suggestions = []
@@ -1614,7 +1621,8 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
             tx = by_id.get(assignment['id'])
             if tx is None:
                 continue  # never act on ids we did not send
-            name = str(assignment['category']).strip()[:64]
+            is_transfer = assignment.get('transfer') is True
+            name = None if is_transfer else str(assignment['category']).strip()[:64]
             suggestions.append({
                 'transaction_id': tx.id,
                 'booking_date': tx.booking_date,
@@ -1623,17 +1631,50 @@ class AiSuggestView(KEKAuthenticationMixin, APIView):
                 'amount': str(tx.amount),
                 'currency': tx.currency,
                 'category': name,
-                'is_new_category': name.lower() not in existing,
+                'is_transfer': is_transfer,
+                'is_new_category': bool(name) and name.lower() not in existing,
             })
 
-        rules = [
-            {
-                'match_text': str(r['match_text']).strip().lower()[:128],
-                'category': str(r['category']).strip()[:64],
-                'is_new_category': str(r['category']).strip().lower() not in existing,
-            }
-            for r in result['rules']
-        ]
+        def normalized(text):
+            return re_mod.sub(r'[^a-z0-9äöüß]+', '', text.lower())
+
+        rules_by_id = {r.id: r for r in own_rules}
+        rules_by_norm = {}
+        for r in own_rules:
+            rules_by_norm.setdefault(normalized(r.match_text), r)
+
+        rules = []
+        for r in result['rules']:
+            match_text = str(r['match_text']).strip().lower()[:128]
+            is_regex = bool(r.get('is_regex'))
+            if is_regex:
+                try:
+                    re_mod.compile(match_text)
+                except re_mod.error:
+                    continue  # a broken pattern would silently match nothing
+            is_transfer = r.get('transfer') is True
+            name = None if is_transfer else str(r['category']).strip()[:64]
+            replaces = r.get('replaces')
+            replaced = rules_by_id.get(replaces) if isinstance(replaces, int) else None
+            if replaced is None and not is_regex:
+                # Deterministic near-duplicate link Gemini may miss: a plain
+                # suggestion whose normalized text equals an existing rule's
+                # ("youtube premium" vs "youtubepremium") is an improvement of
+                # that rule, not a new one — and an exact duplicate is noise.
+                same = rules_by_norm.get(normalized(match_text))
+                if same is not None:
+                    if same.match_text == match_text:
+                        continue
+                    replaced = same
+            rules.append({
+                'match_text': match_text,
+                'category': name,
+                'is_regex': is_regex,
+                'is_transfer': is_transfer,
+                'is_new_category': bool(name) and name.lower() not in existing,
+                'replaces_rule_id': replaced.id if replaced else None,
+                'replaced_match_text': replaced.match_text if replaced else None,
+            })
 
         return Response({
             'suggestions': suggestions,
@@ -1928,8 +1969,17 @@ class AiApplyView(APIView):
             )
             return category
 
+        import re as re_mod
+
         assigned = 0
         for item in request.data.get('assignments', []):
+            if item.get('is_transfer') is True:
+                # Confirmed transfer: excluded from spending, sticky like any
+                # manual transfer decision.
+                assigned += Transaction.objects.filter(
+                    pk=item.get('transaction_id'), account__user=request.user,
+                ).update(is_transfer=True, transfer_manual=True, category=None)
+                continue
             category = category_for(item.get('category'))
             if category is None:
                 continue
@@ -1941,10 +1991,31 @@ class AiApplyView(APIView):
         from django.db.models import F
 
         rules_created = 0
+        rules_updated = 0
         for item in request.data.get('rules', []):
             match_text = str(item.get('match_text', '')).strip().lower()[:128]
-            category = category_for(item.get('category'))
-            if not match_text or category is None:
+            is_regex = bool(item.get('is_regex'))
+            is_transfer = item.get('is_transfer') is True
+            category = None if is_transfer else category_for(item.get('category'))
+            if not match_text or (category is None and not is_transfer):
+                continue
+            if is_regex:
+                try:
+                    re_mod.compile(match_text)
+                except re_mod.error:
+                    continue
+            # An improvement proposal updates the named rule in place —
+            # position and spread survive, no near-duplicate is created.
+            replaces = CategoryRule.objects.filter(
+                user=request.user, pk=item.get('replaces_rule_id') or -1,
+            ).first()
+            if replaces is not None:
+                replaces.match_text = match_text
+                replaces.is_regex = is_regex
+                if not replaces.is_transfer and category is not None:
+                    replaces.category = category
+                replaces.save()
+                rules_updated += 1
                 continue
             # Rules are first-match-wins. A corrective rule from the relabel
             # flow names the rule that mislabeled its transactions — the new
@@ -1963,15 +2034,19 @@ class AiApplyView(APIView):
                 defaults={
                     'category': category, 'spread_months': 1,
                     'position': position,
+                    'is_regex': is_regex, 'is_transfer': is_transfer,
                 },
             )
             rules_created += created
 
-        rule_applied = apply_rules(request.user) if rules_created else 0
+        rule_applied = (
+            apply_rules(request.user) if rules_created or rules_updated else 0
+        )
         return Response({
             'status': 'success',
             'assigned': assigned,
             'rules_created': rules_created,
+            'rules_updated': rules_updated,
             'rule_applied': rule_applied,
         })
 

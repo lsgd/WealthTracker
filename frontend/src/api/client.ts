@@ -1127,14 +1127,21 @@ export interface AiSuggestion {
   description: string;
   amount: string;
   currency: string;
-  category: string;
+  category: string | null;
+  is_transfer?: boolean;
   is_new_category: boolean;
 }
 
 export interface AiRuleSuggestion {
   match_text: string;
-  category: string;
+  category: string | null;
+  is_regex?: boolean;
+  is_transfer?: boolean;
   is_new_category: boolean;
+  // Set when the proposal improves an existing rule instead of adding one
+  // (e.g. a regex covering spellings the old match text missed).
+  replaces_rule_id?: number | null;
+  replaced_match_text?: string | null;
 }
 
 export interface AiSuggestResponse {
@@ -1208,9 +1215,24 @@ export async function aiSuggest(mode: 'items' | 'rules'): Promise<AiSuggestRespo
 }
 
 export async function aiApply(fields: {
-  assignments: { transaction_id: number; category: string }[];
-  rules: { match_text: string; category: string }[];
-}): Promise<{ assigned: number; rules_created: number; rule_applied: number }> {
+  assignments: {
+    transaction_id: number;
+    category?: string | null;
+    is_transfer?: boolean;
+  }[];
+  rules: {
+    match_text: string;
+    category?: string | null;
+    is_regex?: boolean;
+    is_transfer?: boolean;
+    replaces_rule_id?: number | null;
+  }[];
+}): Promise<{
+  assigned: number;
+  rules_created: number;
+  rules_updated?: number;
+  rule_applied: number;
+}> {
   const res = await fetchWithAuth('/api/spending/ai/apply/', {
     method: 'POST',
     body: JSON.stringify(fields),

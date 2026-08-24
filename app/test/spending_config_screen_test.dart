@@ -56,10 +56,24 @@ void _useTallViewport(WidgetTester tester) {
 
 void main() {
   group('SpendingConfigScreen', () {
-    testWidgets('lists rules in evaluation order with their position',
+    testWidgets('defaults to rules grouped by category', (tester) async {
+      _useTallViewport(tester);
+      await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
+
+      // Group headers with counts; the spread is surfaced on the chip.
+      expect(find.text('Groceries (1)'), findsOneWidget);
+      expect(find.text('Insurance (1)'), findsOneWidget);
+      expect(find.text('rewe'), findsOneWidget);
+      expect(find.text('axa · /12m'), findsOneWidget);
+    });
+
+    testWidgets('order toggle shows the flat list with positions',
         (tester) async {
       _useTallViewport(tester);
       await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Order'));
       await tester.pumpAndSettle();
 
       expect(find.text('rewe'), findsOneWidget);

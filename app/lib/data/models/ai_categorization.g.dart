@@ -55,7 +55,8 @@ _AiSuggestion _$AiSuggestionFromJson(Map<String, dynamic> json) =>
       description: json['description'] as String? ?? '',
       amount: json['amount'] as String,
       currency: json['currency'] as String,
-      category: json['category'] as String,
+      category: json['category'] as String?,
+      isTransfer: json['is_transfer'] as bool? ?? false,
       currentCategory: json['current_category'] as String?,
       isNewCategory: json['is_new_category'] as bool? ?? false,
     );
@@ -69,6 +70,7 @@ Map<String, dynamic> _$AiSuggestionToJson(_AiSuggestion instance) =>
       'amount': instance.amount,
       'currency': instance.currency,
       'category': instance.category,
+      'is_transfer': instance.isTransfer,
       'current_category': instance.currentCategory,
       'is_new_category': instance.isNewCategory,
     };
@@ -76,8 +78,12 @@ Map<String, dynamic> _$AiSuggestionToJson(_AiSuggestion instance) =>
 _AiRuleSuggestion _$AiRuleSuggestionFromJson(Map<String, dynamic> json) =>
     _AiRuleSuggestion(
       matchText: json['match_text'] as String,
-      category: json['category'] as String,
+      category: json['category'] as String?,
+      isRegex: json['is_regex'] as bool? ?? false,
+      isTransfer: json['is_transfer'] as bool? ?? false,
       isNewCategory: json['is_new_category'] as bool? ?? false,
+      replacesRuleId: (json['replaces_rule_id'] as num?)?.toInt(),
+      replacedMatchText: json['replaced_match_text'] as String?,
       placeBeforeRuleId: (json['place_before_rule_id'] as num?)?.toInt(),
       shadowedMatchText: json['shadowed_match_text'] as String?,
     );
@@ -86,7 +92,11 @@ Map<String, dynamic> _$AiRuleSuggestionToJson(_AiRuleSuggestion instance) =>
     <String, dynamic>{
       'match_text': instance.matchText,
       'category': instance.category,
+      'is_regex': instance.isRegex,
+      'is_transfer': instance.isTransfer,
       'is_new_category': instance.isNewCategory,
+      'replaces_rule_id': instance.replacesRuleId,
+      'replaced_match_text': instance.replacedMatchText,
       'place_before_rule_id': instance.placeBeforeRuleId,
       'shadowed_match_text': instance.shadowedMatchText,
     };

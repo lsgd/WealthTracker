@@ -8,30 +8,54 @@ import '../widgets/ai_consolidate_sheet.dart';
 
 /// Rules and AI configuration for the spending insight.
 ///
-/// Rules are evaluated top to bottom and the first match wins, so the list is
-/// reorderable — a specific rule has to be able to sit above a broader one.
-class SpendingConfigScreen extends ConsumerWidget {
+/// Rules default to a compact by-category view; the flat first-match-wins
+/// order (with drag-to-reorder) is one toggle away for the rare
+/// specific-before-generic conflict.
+class SpendingConfigScreen extends ConsumerStatefulWidget {
   const SpendingConfigScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SpendingConfigScreen> createState() =>
+      _SpendingConfigScreenState();
+}
+
+class _SpendingConfigScreenState extends ConsumerState<SpendingConfigScreen> {
+  bool _orderView = false;
+
+  @override
+  Widget build(BuildContext context) {
     final rules = ref.watch(categoryRulesProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Spending settings')),
       body: ListView(
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text('Rules', style: TextStyle(fontWeight: FontWeight.w600)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+            child: Row(
+              children: [
+                const Text('Rules',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => setState(() => _orderView = !_orderView),
+                  icon: Icon(_orderView ? Icons.category_outlined : Icons.swap_vert,
+                      size: 18),
+                  label: Text(_orderView ? 'Grouped' : 'Order'),
+                ),
+              ],
+            ),
           ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              'Match text is compared against counterparty and description. '
-              'Checked top to bottom — the first match wins, so drag to reorder. '
-              'New rules also apply to transactions that are still uncategorized.',
-              style: TextStyle(fontSize: 12),
+              _orderView
+                  ? 'Checked top to bottom — the first match wins, so drag a '
+                      'specific rule above a broader one.'
+                  : 'Match text is compared against counterparty and '
+                      'description; the first matching rule wins. Order only '
+                      'matters when rules overlap — switch to Order to drag.',
+              style: const TextStyle(fontSize: 12),
             ),
           ),
           rules.when(
@@ -43,7 +67,9 @@ class SpendingConfigScreen extends ConsumerWidget {
               padding: const EdgeInsets.all(16),
               child: Text('$e'),
             ),
-            data: (list) => _RuleList(rules: list),
+            data: (list) => _orderView
+                ? _RuleList(rules: list)
+                : _GroupedRuleList(rules: list),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
@@ -251,6 +277,86 @@ class _CategoriesSection extends ConsumerWidget {
     try {
       await ref.read(spendingRepositoryProvider).deleteCategory(category.id);
       _invalidate(ref);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+}
+
+/// Compact default view: rules bucketed by target category, one chip each.
+class _GroupedRuleList extends ConsumerWidget {
+  final List<CategoryRule> rules;
+  const _GroupedRuleList({required this.rules});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (rules.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('No rules yet.'),
+      );
+    }
+
+    final groups = <String, List<CategoryRule>>{};
+    for (final rule in rules) {
+      final label =
+          rule.isTransfer ? 'Transfer (excluded)' : (rule.categoryName ?? '—');
+      groups.putIfAbsent(label, () => []).add(rule);
+    }
+    final entries = groups.entries.toList()
+      ..sort((a, b) {
+        // Transfer group last, otherwise alphabetical.
+        final aTransfer = a.value.first.isTransfer ? 1 : 0;
+        final bTransfer = b.value.first.isTransfer ? 1 : 0;
+        return aTransfer != bTransfer
+            ? aTransfer - bTransfer
+            : a.key.compareTo(b.key);
+      });
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final entry in entries)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${entry.key} (${entry.value.length})',
+                    style: theme.textTheme.labelMedium),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final rule in entry.value)
+                      InputChip(
+                        label: Text(
+                          (rule.isRegex
+                                  ? '/${rule.matchText}/'
+                                  : rule.matchText) +
+                              (rule.spreadMonths > 1
+                                  ? ' · /${rule.spreadMonths}m'
+                                  : ''),
+                        ),
+                        onDeleted: () => _delete(context, ref, rule),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _delete(
+      BuildContext context, WidgetRef ref, CategoryRule rule) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(spendingRepositoryProvider).deleteRule(rule.id);
+      ref.invalidate(categoryRulesProvider);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('$e')));
     }

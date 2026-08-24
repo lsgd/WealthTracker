@@ -36,6 +36,10 @@
 - Web: import and AI outcomes now show as green success banners (yellow for warnings) instead of muted hint text; CSV import hints mention Commerzbank
 - AI suggestions split into two flows (web and app): "Suggest rules" proposes reusable rules for recurring merchants (now aware of your existing rules, so no duplicates), "Categorize items" labels one-off transactions — no more mixed review round
 - Historical exchange rates are fetched in yearly ranges (one API call per currency per year) instead of one call per missing day; a first-time 24-month spending view no longer stalls for many seconds
+- Rules now default to a compact by-category view (web and app): one group of chips per category, with a filter on the web; the flat first-match-wins list with drag-to-reorder moved behind an Order toggle
+- AI rule suggestions merge near-identical merchant spellings ("dm-drogerie" / "dm.drogerie") into one regex rule instead of one rule per spelling
+- AI rule suggestions can improve an existing rule in place (shown as "replaces ...") when it misses spellings seen in your transactions — e.g. a "youtubepremium" rule becomes a regex also matching "youtube premium"; exact duplicates of existing rules are no longer suggested
+- AI suggestions can now propose transfers: recurring own-account movements (broker top-ups, credit-card settlements) can be marked "Transfer (excluded)" per transaction or via a suggested transfer rule
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

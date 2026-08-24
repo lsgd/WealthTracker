@@ -213,20 +213,25 @@ For every transaction pick the best fitting existing category, or propose a NEW
 concise category name (in the same language/style as the existing ones) when
 none fits. """ + _NAMING + """
 Positive amounts are income; only categorize them when a category clearly
-applies (e.g. salary), otherwise omit the transaction. Do NOT propose rules —
-only per-transaction assignments.
+applies (e.g. salary), otherwise omit the transaction. A transaction that
+clearly moves money between the user's OWN accounts (broker or savings
+top-up, credit-card settlement) is a TRANSFER, not spending: return
+{{"id": <id>, "transfer": true}} for it instead of a category. Do NOT propose
+rules — only per-transaction assignments.
 
 Return JSON only:
-{{"assignments": [{{"id": <transaction id>, "category": "<name>"}}]}}"""
+{{"assignments": [{{"id": <transaction id>, "category": "<name>"}},
+  {{"id": <transaction id>, "transfer": true}}]}}"""
 
 _RULES_PROMPT = """You write substring rules that categorize personal bank transactions.
 
-A rule assigns its category to any future or current transaction whose
-counterparty or booking text contains the match text (case-insensitive).
+A rule assigns its target to any future or current transaction whose
+counterparty or booking text contains the match text (case-insensitive). A
+rule may instead be a Python regular expression (mark it "is_regex": true).
 
 Existing categories: {categories}
 
-Existing rules (match text -> category) — do NOT duplicate or shadow them:
+Existing rules (id | match text | target) — do NOT duplicate or shadow them:
 {rules}
 
 Uncategorized transactions (id | counterparty | booking text | signed amount):
@@ -236,12 +241,26 @@ Propose rules for the RECURRING merchants and bills in the list: a lowercase
 substring of the counterparty or booking text that uniquely identifies the
 merchant (e.g. "rewe"), mapped to the best fitting existing category — or a
 NEW concise category name when none fits. """ + _NAMING + """
-Only propose a rule when the substring is specific to that merchant; skip
-one-off purchases — they are categorized individually instead. Do NOT assign
-categories to individual transactions.
+
+- Near-identical spellings of ONE merchant ("dm-drogerie" / "dm.drogerie",
+  "baeckerhaus" / "bäckerhaus") get a single rule with a regex covering all
+  variants (e.g. "dm[-.]drogerie", "b(ae|ä)ckerhaus") — never one rule per
+  spelling.
+- When an EXISTING rule almost covers a merchant but misses spellings seen in
+  the transactions, propose ONE improved rule with "replaces": <that rule's
+  id> (e.g. regex "youtube ?premium" replacing a "youtubepremium" rule)
+  instead of a near-duplicate new rule. Keep the existing rule's target.
+- A recurring movement between the user's OWN accounts (broker or savings
+  top-up, credit-card settlement) is a transfer, not spending: use
+  "transfer": true instead of a category.
+- Only propose a rule when the match is specific to that merchant; skip
+  one-off purchases — they are categorized individually instead. Do NOT assign
+  categories to individual transactions.
 
 Return JSON only:
-{{"rules": [{{"match_text": "<substring>", "category": "<name>"}}]}}"""
+{{"rules": [{{"match_text": "<substring or regex>", "category": "<name>",
+  "is_regex": <bool>, "replaces": <existing rule id or null>,
+  "transfer": <bool>}}]}}"""
 
 
 _RELABEL_PROMPT = """You fix categorization mistakes in personal bank transactions.
@@ -376,11 +395,13 @@ def suggest_categories(api_key: str, model: str, transactions: list, categories:
     return {
         'assignments': [
             a for a in parsed.get('assignments', [])
-            if isinstance(a, dict) and 'id' in a and a.get('category')
+            if isinstance(a, dict) and 'id' in a
+            and (a.get('category') or a.get('transfer') is True)
         ],
         'rules': [
             r for r in parsed.get('rules', [])
-            if isinstance(r, dict) and r.get('match_text') and r.get('category')
+            if isinstance(r, dict) and r.get('match_text')
+            and (r.get('category') or r.get('transfer') is True)
         ],
         'usage': usage,
     }

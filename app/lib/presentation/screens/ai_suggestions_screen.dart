@@ -280,7 +280,12 @@ class _Review extends StatelessWidget {
                   Text('${s.bookingDate} · '
                       '${formatCurrencyExact(double.tryParse(s.amount) ?? 0, s.currency)}'),
                   const SizedBox(height: 4),
-                  _CategoryLabel(name: s.category, isNew: s.isNewCategory),
+                  _CategoryLabel(
+                    name: s.isTransfer
+                        ? 'Transfer (excluded)'
+                        : (s.category ?? ''),
+                    isNew: s.isNewCategory,
+                  ),
                 ],
               ),
             ),
@@ -297,8 +302,15 @@ class _Review extends StatelessWidget {
             CheckboxListTile(
               value: acceptedRules.contains(i),
               onChanged: (_) => onToggleRule(i),
-              title: Text(result.rules[i].matchText),
-              subtitle: Text('→ ${result.rules[i].category}'),
+              title: Text(result.rules[i].isRegex
+                  ? '/${result.rules[i].matchText}/'
+                  : result.rules[i].matchText),
+              subtitle: Text([
+                '→ ${result.rules[i].isTransfer ? 'Transfer (excluded)' : result.rules[i].category}',
+                if (result.rules[i].isRegex) 'regex',
+                if (result.rules[i].replacedMatchText != null)
+                  'replaces “${result.rules[i].replacedMatchText}”',
+              ].join(' · ')),
               secondary: result.rules[i].isNewCategory
                   ? const _CategoryLabel(name: 'NEW', isNew: true)
                   : null,

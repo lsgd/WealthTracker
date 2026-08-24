@@ -195,12 +195,16 @@ class SpendingRepository {
           .map((s) => {
                 'transaction_id': s.transactionId,
                 'category': s.category,
+                'is_transfer': s.isTransfer,
               })
           .toList(),
       'rules': rules
           .map((r) => {
                 'match_text': r.matchText,
                 'category': r.category,
+                'is_regex': r.isRegex,
+                'is_transfer': r.isTransfer,
+                'replaces_rule_id': r.replacesRuleId,
                 'place_before_rule_id': r.placeBeforeRuleId,
               })
           .toList(),

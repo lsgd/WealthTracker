@@ -105,6 +105,12 @@ export default function SpendingPage() {
     useState<number | '' | '__new__' | '__transfer__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
   const [ruleIsRegex, setRuleIsRegex] = useState(false);
+  // Rules default to a compact by-category view; the flat first-match-wins
+  // list (with drag-to-reorder) is one toggle away for the rare
+  // specific-before-generic conflict.
+  const [rulesView, setRulesView] = useState<'grouped' | 'order'>('grouped');
+  const [ruleFilter, setRuleFilter] = useState('');
+  const ruleInputRef = useRef<HTMLInputElement>(null);
   const [draggedRule, setDraggedRule] = useState<number | null>(null);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   // When set, the naming dialog assigns the new category to this transaction
@@ -359,6 +365,41 @@ export default function SpendingPage() {
       category: value ? Number(value) : null,
       ...(tx.is_transfer ? { is_transfer: false } : {}),
     });
+  };
+
+  /// Rules bucketed by target for the compact view. Groups sort
+  /// alphabetically with Transfer last; the filter narrows by match text or
+  /// target name.
+  const ruleGroups = useMemo(() => {
+    const q = ruleFilter.trim().toLowerCase();
+    const visible = q
+      ? rules.filter((r) =>
+          r.match_text.toLowerCase().includes(q)
+          || (r.is_transfer ? 'transfer' : (r.category_name ?? ''))
+            .toLowerCase().includes(q))
+      : rules;
+    const groups = new Map<string, {
+      label: string;
+      target: number | '__transfer__';
+      rules: CategoryRule[];
+    }>();
+    for (const r of visible) {
+      const label = r.is_transfer ? 'Transfer (excluded)' : (r.category_name ?? '—');
+      const entry = groups.get(label)
+        ?? { label, target: r.is_transfer ? '__transfer__' as const : (r.category as number), rules: [] };
+      entry.rules.push(r);
+      groups.set(label, entry);
+    }
+    return [...groups.values()].sort((a, b) =>
+      Number(a.target === '__transfer__') - Number(b.target === '__transfer__')
+      || a.label.localeCompare(b.label));
+  }, [rules, ruleFilter]);
+
+  /// The "+" on a group: prefill the form's target and put the cursor in the
+  /// match-text input.
+  const startRuleFor = (target: number | '__transfer__') => {
+    setRuleCategory(target);
+    setTimeout(() => ruleInputRef.current?.focus(), 0);
   };
 
   /// Prefill the rule form from one transaction and jump to it.
@@ -806,17 +847,89 @@ export default function SpendingPage() {
         {tab === 'config' && (<>
         <div className="card">
           <div className="chart-header">
-            <h2>Rules</h2>
+            <h2>
+              Rules
+              {rules.length > 0 && (
+                <span className="spending-month-title"> · {rules.length}</span>
+              )}
+            </h2>
+            <div className="range-buttons">
+              {rulesView === 'grouped' && rules.length > 0 && (
+                <input
+                  className="rule-filter"
+                  placeholder="Filter…"
+                  value={ruleFilter}
+                  onChange={(e) => setRuleFilter(e.target.value)}
+                />
+              )}
+              <button
+                className={`btn btn-sm ${rulesView === 'grouped' ? 'btn-primary' : 'btn-ghost'}`}
+                title="Rules bucketed by category"
+                onClick={() => setRulesView('grouped')}
+              >
+                Grouped
+              </button>
+              <button
+                className={`btn btn-sm ${rulesView === 'order' ? 'btn-primary' : 'btn-ghost'}`}
+                title="Flat evaluation order with drag-to-reorder"
+                onClick={() => setRulesView('order')}
+              >
+                Order
+              </button>
+            </div>
           </div>
           <p className="form-hint">
-            Match text is compared against counterparty and description. New rules apply
-            to all still-uncategorized transactions. A spread of 12 shows a yearly bill
-            as one twelfth per month in the normalized view. Rules are checked top to
-            bottom and the first match wins — drag to reorder, so a specific rule can sit
-            above a broader one.
+            Match text is compared against counterparty and description; rules are
+            checked top to bottom and the first match wins. New rules apply to all
+            still-uncategorized transactions; a spread of 12 shows a yearly bill as one
+            twelfth per month in the normalized view. Order only matters when rules
+            overlap — switch to Order to drag a specific rule above a broader one.
           </p>
+          {rulesView === 'grouped' && rules.length > 0 && (
+            <div className="rule-groups">
+              {ruleGroups.map((group) => (
+                <div key={group.label} className="rule-group">
+                  <div className="rule-group-title">
+                    {group.label} <span>({group.rules.length})</span>
+                  </div>
+                  <div className="rule-chips">
+                    {group.rules.map((rule) => (
+                      <span
+                        key={rule.id}
+                        className="rule-chip"
+                        title={[
+                          rule.is_regex ? 'regular expression' : null,
+                          rule.spread_months > 1
+                            ? `spread over ${rule.spread_months} months` : null,
+                        ].filter(Boolean).join(' · ') || undefined}
+                      >
+                        <code>{rule.is_regex ? `/${rule.match_text}/` : rule.match_text}</code>
+                        {rule.spread_months > 1 && <em>/{rule.spread_months}m</em>}
+                        <button
+                          aria-label={`Delete rule ${rule.match_text}`}
+                          onClick={() => handleDeleteRule(rule.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                    <button
+                      className="rule-chip rule-chip-add"
+                      title={`New ${group.label} rule`}
+                      onClick={() => startRuleFor(group.target)}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {ruleGroups.length === 0 && (
+                <p className="form-hint">No rules match the filter.</p>
+              )}
+            </div>
+          )}
           <div className="spending-rules">
-            {rules.map((rule, index) => (
+            {rulesView === 'order' && rules.map((rule, index) => (
               <div
                 key={rule.id}
                 className={`spending-rule-row spending-rule-draggable ${draggedRule === index ? 'dragging' : ''}`}
@@ -843,6 +956,7 @@ export default function SpendingPage() {
             ))}
             <div className="spending-rule-row spending-rule-new" ref={ruleFormRef}>
               <input
+                ref={ruleInputRef}
                 className="spending-rule-match"
                 placeholder="match text, e.g. rewe"
                 value={ruleText}

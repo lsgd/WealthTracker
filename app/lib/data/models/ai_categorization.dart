@@ -49,7 +49,9 @@ abstract class AiSuggestion with _$AiSuggestion {
     @Default('') String description,
     required String amount,
     required String currency,
-    required String category,
+    /// Null when the proposal is "this is a transfer" instead of a category.
+    String? category,
+    @JsonKey(name: 'is_transfer') @Default(false) bool isTransfer,
     /// What the transaction is labeled right now (relabel flow only) — lets
     /// the review UI show "Groceries → Health". Null when uncategorized.
     @JsonKey(name: 'current_category') String? currentCategory,
@@ -65,8 +67,15 @@ abstract class AiSuggestion with _$AiSuggestion {
 abstract class AiRuleSuggestion with _$AiRuleSuggestion {
   const factory AiRuleSuggestion({
     @JsonKey(name: 'match_text') required String matchText,
-    required String category,
+    /// Null for transfer rules.
+    String? category,
+    @JsonKey(name: 'is_regex') @Default(false) bool isRegex,
+    @JsonKey(name: 'is_transfer') @Default(false) bool isTransfer,
     @JsonKey(name: 'is_new_category') @Default(false) bool isNewCategory,
+    /// Set when the proposal improves an existing rule in place (e.g. a regex
+    /// covering spellings the old match text missed) instead of adding one.
+    @JsonKey(name: 'replaces_rule_id') int? replacesRuleId,
+    @JsonKey(name: 'replaced_match_text') String? replacedMatchText,
     /// Rules are first-match-wins: when an existing rule caused the mislabel,
     /// the new rule must be inserted before it (relabel flow only).
     @JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,

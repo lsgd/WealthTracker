@@ -598,7 +598,8 @@ $AiPricingCopyWith<$Res>? get pricing {
 /// @nodoc
 mixin _$AiSuggestion {
 
-@JsonKey(name: 'transaction_id') int get transactionId;@JsonKey(name: 'booking_date') String get bookingDate; String get counterparty; String get description; String get amount; String get currency; String get category;/// What the transaction is labeled right now (relabel flow only) — lets
+@JsonKey(name: 'transaction_id') int get transactionId;@JsonKey(name: 'booking_date') String get bookingDate; String get counterparty; String get description; String get amount; String get currency;/// Null when the proposal is "this is a transfer" instead of a category.
+ String? get category;@JsonKey(name: 'is_transfer') bool get isTransfer;/// What the transaction is labeled right now (relabel flow only) — lets
 /// the review UI show "Groceries → Health". Null when uncategorized.
 @JsonKey(name: 'current_category') String? get currentCategory;@JsonKey(name: 'is_new_category') bool get isNewCategory;
 /// Create a copy of AiSuggestion
@@ -613,16 +614,16 @@ $AiSuggestionCopyWith<AiSuggestion> get copyWith => _$AiSuggestionCopyWithImpl<A
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AiSuggestion&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.counterparty, counterparty) || other.counterparty == counterparty)&&(identical(other.description, description) || other.description == description)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.currency, currency) || other.currency == currency)&&(identical(other.category, category) || other.category == category)&&(identical(other.currentCategory, currentCategory) || other.currentCategory == currentCategory)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AiSuggestion&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.counterparty, counterparty) || other.counterparty == counterparty)&&(identical(other.description, description) || other.description == description)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.currency, currency) || other.currency == currency)&&(identical(other.category, category) || other.category == category)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.currentCategory, currentCategory) || other.currentCategory == currentCategory)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,transactionId,bookingDate,counterparty,description,amount,currency,category,currentCategory,isNewCategory);
+int get hashCode => Object.hash(runtimeType,transactionId,bookingDate,counterparty,description,amount,currency,category,isTransfer,currentCategory,isNewCategory);
 
 @override
 String toString() {
-  return 'AiSuggestion(transactionId: $transactionId, bookingDate: $bookingDate, counterparty: $counterparty, description: $description, amount: $amount, currency: $currency, category: $category, currentCategory: $currentCategory, isNewCategory: $isNewCategory)';
+  return 'AiSuggestion(transactionId: $transactionId, bookingDate: $bookingDate, counterparty: $counterparty, description: $description, amount: $amount, currency: $currency, category: $category, isTransfer: $isTransfer, currentCategory: $currentCategory, isNewCategory: $isNewCategory)';
 }
 
 
@@ -633,7 +634,7 @@ abstract mixin class $AiSuggestionCopyWith<$Res>  {
   factory $AiSuggestionCopyWith(AiSuggestion value, $Res Function(AiSuggestion) _then) = _$AiSuggestionCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: 'transaction_id') int transactionId,@JsonKey(name: 'booking_date') String bookingDate, String counterparty, String description, String amount, String currency, String category,@JsonKey(name: 'current_category') String? currentCategory,@JsonKey(name: 'is_new_category') bool isNewCategory
+@JsonKey(name: 'transaction_id') int transactionId,@JsonKey(name: 'booking_date') String bookingDate, String counterparty, String description, String amount, String currency, String? category,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'current_category') String? currentCategory,@JsonKey(name: 'is_new_category') bool isNewCategory
 });
 
 
@@ -650,7 +651,7 @@ class _$AiSuggestionCopyWithImpl<$Res>
 
 /// Create a copy of AiSuggestion
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? transactionId = null,Object? bookingDate = null,Object? counterparty = null,Object? description = null,Object? amount = null,Object? currency = null,Object? category = null,Object? currentCategory = freezed,Object? isNewCategory = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? transactionId = null,Object? bookingDate = null,Object? counterparty = null,Object? description = null,Object? amount = null,Object? currency = null,Object? category = freezed,Object? isTransfer = null,Object? currentCategory = freezed,Object? isNewCategory = null,}) {
   return _then(_self.copyWith(
 transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
 as int,bookingDate: null == bookingDate ? _self.bookingDate : bookingDate // ignore: cast_nullable_to_non_nullable
@@ -658,8 +659,9 @@ as String,counterparty: null == counterparty ? _self.counterparty : counterparty
 as String,description: null == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
 as String,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as String,currency: null == currency ? _self.currency : currency // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,currentCategory: freezed == currentCategory ? _self.currentCategory : currentCategory // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,currentCategory: freezed == currentCategory ? _self.currentCategory : currentCategory // ignore: cast_nullable_to_non_nullable
 as String?,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
@@ -746,10 +748,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String category, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String? category, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _AiSuggestion() when $default != null:
-return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.currentCategory,_that.isNewCategory);case _:
+return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.isTransfer,_that.currentCategory,_that.isNewCategory);case _:
   return orElse();
 
 }
@@ -767,10 +769,10 @@ return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.d
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String category, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String? category, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)  $default,) {final _that = this;
 switch (_that) {
 case _AiSuggestion():
-return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.currentCategory,_that.isNewCategory);case _:
+return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.isTransfer,_that.currentCategory,_that.isNewCategory);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -787,10 +789,10 @@ return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.d
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String category, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'transaction_id')  int transactionId, @JsonKey(name: 'booking_date')  String bookingDate,  String counterparty,  String description,  String amount,  String currency,  String? category, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'current_category')  String? currentCategory, @JsonKey(name: 'is_new_category')  bool isNewCategory)?  $default,) {final _that = this;
 switch (_that) {
 case _AiSuggestion() when $default != null:
-return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.currentCategory,_that.isNewCategory);case _:
+return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.description,_that.amount,_that.currency,_that.category,_that.isTransfer,_that.currentCategory,_that.isNewCategory);case _:
   return null;
 
 }
@@ -802,7 +804,7 @@ return $default(_that.transactionId,_that.bookingDate,_that.counterparty,_that.d
 @JsonSerializable()
 
 class _AiSuggestion implements AiSuggestion {
-  const _AiSuggestion({@JsonKey(name: 'transaction_id') required this.transactionId, @JsonKey(name: 'booking_date') required this.bookingDate, this.counterparty = '', this.description = '', required this.amount, required this.currency, required this.category, @JsonKey(name: 'current_category') this.currentCategory, @JsonKey(name: 'is_new_category') this.isNewCategory = false});
+  const _AiSuggestion({@JsonKey(name: 'transaction_id') required this.transactionId, @JsonKey(name: 'booking_date') required this.bookingDate, this.counterparty = '', this.description = '', required this.amount, required this.currency, this.category, @JsonKey(name: 'is_transfer') this.isTransfer = false, @JsonKey(name: 'current_category') this.currentCategory, @JsonKey(name: 'is_new_category') this.isNewCategory = false});
   factory _AiSuggestion.fromJson(Map<String, dynamic> json) => _$AiSuggestionFromJson(json);
 
 @override@JsonKey(name: 'transaction_id') final  int transactionId;
@@ -811,7 +813,9 @@ class _AiSuggestion implements AiSuggestion {
 @override@JsonKey() final  String description;
 @override final  String amount;
 @override final  String currency;
-@override final  String category;
+/// Null when the proposal is "this is a transfer" instead of a category.
+@override final  String? category;
+@override@JsonKey(name: 'is_transfer') final  bool isTransfer;
 /// What the transaction is labeled right now (relabel flow only) — lets
 /// the review UI show "Groceries → Health". Null when uncategorized.
 @override@JsonKey(name: 'current_category') final  String? currentCategory;
@@ -830,16 +834,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AiSuggestion&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.counterparty, counterparty) || other.counterparty == counterparty)&&(identical(other.description, description) || other.description == description)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.currency, currency) || other.currency == currency)&&(identical(other.category, category) || other.category == category)&&(identical(other.currentCategory, currentCategory) || other.currentCategory == currentCategory)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AiSuggestion&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.counterparty, counterparty) || other.counterparty == counterparty)&&(identical(other.description, description) || other.description == description)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.currency, currency) || other.currency == currency)&&(identical(other.category, category) || other.category == category)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.currentCategory, currentCategory) || other.currentCategory == currentCategory)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,transactionId,bookingDate,counterparty,description,amount,currency,category,currentCategory,isNewCategory);
+int get hashCode => Object.hash(runtimeType,transactionId,bookingDate,counterparty,description,amount,currency,category,isTransfer,currentCategory,isNewCategory);
 
 @override
 String toString() {
-  return 'AiSuggestion(transactionId: $transactionId, bookingDate: $bookingDate, counterparty: $counterparty, description: $description, amount: $amount, currency: $currency, category: $category, currentCategory: $currentCategory, isNewCategory: $isNewCategory)';
+  return 'AiSuggestion(transactionId: $transactionId, bookingDate: $bookingDate, counterparty: $counterparty, description: $description, amount: $amount, currency: $currency, category: $category, isTransfer: $isTransfer, currentCategory: $currentCategory, isNewCategory: $isNewCategory)';
 }
 
 
@@ -850,7 +854,7 @@ abstract mixin class _$AiSuggestionCopyWith<$Res> implements $AiSuggestionCopyWi
   factory _$AiSuggestionCopyWith(_AiSuggestion value, $Res Function(_AiSuggestion) _then) = __$AiSuggestionCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: 'transaction_id') int transactionId,@JsonKey(name: 'booking_date') String bookingDate, String counterparty, String description, String amount, String currency, String category,@JsonKey(name: 'current_category') String? currentCategory,@JsonKey(name: 'is_new_category') bool isNewCategory
+@JsonKey(name: 'transaction_id') int transactionId,@JsonKey(name: 'booking_date') String bookingDate, String counterparty, String description, String amount, String currency, String? category,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'current_category') String? currentCategory,@JsonKey(name: 'is_new_category') bool isNewCategory
 });
 
 
@@ -867,7 +871,7 @@ class __$AiSuggestionCopyWithImpl<$Res>
 
 /// Create a copy of AiSuggestion
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? transactionId = null,Object? bookingDate = null,Object? counterparty = null,Object? description = null,Object? amount = null,Object? currency = null,Object? category = null,Object? currentCategory = freezed,Object? isNewCategory = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? transactionId = null,Object? bookingDate = null,Object? counterparty = null,Object? description = null,Object? amount = null,Object? currency = null,Object? category = freezed,Object? isTransfer = null,Object? currentCategory = freezed,Object? isNewCategory = null,}) {
   return _then(_AiSuggestion(
 transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
 as int,bookingDate: null == bookingDate ? _self.bookingDate : bookingDate // ignore: cast_nullable_to_non_nullable
@@ -875,8 +879,9 @@ as String,counterparty: null == counterparty ? _self.counterparty : counterparty
 as String,description: null == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
 as String,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as String,currency: null == currency ? _self.currency : currency // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,currentCategory: freezed == currentCategory ? _self.currentCategory : currentCategory // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,currentCategory: freezed == currentCategory ? _self.currentCategory : currentCategory // ignore: cast_nullable_to_non_nullable
 as String?,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
@@ -889,7 +894,10 @@ as bool,
 /// @nodoc
 mixin _$AiRuleSuggestion {
 
-@JsonKey(name: 'match_text') String get matchText; String get category;@JsonKey(name: 'is_new_category') bool get isNewCategory;/// Rules are first-match-wins: when an existing rule caused the mislabel,
+@JsonKey(name: 'match_text') String get matchText;/// Null for transfer rules.
+ String? get category;@JsonKey(name: 'is_regex') bool get isRegex;@JsonKey(name: 'is_transfer') bool get isTransfer;@JsonKey(name: 'is_new_category') bool get isNewCategory;/// Set when the proposal improves an existing rule in place (e.g. a regex
+/// covering spellings the old match text missed) instead of adding one.
+@JsonKey(name: 'replaces_rule_id') int? get replacesRuleId;@JsonKey(name: 'replaced_match_text') String? get replacedMatchText;/// Rules are first-match-wins: when an existing rule caused the mislabel,
 /// the new rule must be inserted before it (relabel flow only).
 @JsonKey(name: 'place_before_rule_id') int? get placeBeforeRuleId;@JsonKey(name: 'shadowed_match_text') String? get shadowedMatchText;
 /// Create a copy of AiRuleSuggestion
@@ -904,16 +912,16 @@ $AiRuleSuggestionCopyWith<AiRuleSuggestion> get copyWith => _$AiRuleSuggestionCo
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AiRuleSuggestion&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory)&&(identical(other.placeBeforeRuleId, placeBeforeRuleId) || other.placeBeforeRuleId == placeBeforeRuleId)&&(identical(other.shadowedMatchText, shadowedMatchText) || other.shadowedMatchText == shadowedMatchText));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AiRuleSuggestion&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory)&&(identical(other.replacesRuleId, replacesRuleId) || other.replacesRuleId == replacesRuleId)&&(identical(other.replacedMatchText, replacedMatchText) || other.replacedMatchText == replacedMatchText)&&(identical(other.placeBeforeRuleId, placeBeforeRuleId) || other.placeBeforeRuleId == placeBeforeRuleId)&&(identical(other.shadowedMatchText, shadowedMatchText) || other.shadowedMatchText == shadowedMatchText));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,matchText,category,isNewCategory,placeBeforeRuleId,shadowedMatchText);
+int get hashCode => Object.hash(runtimeType,matchText,category,isRegex,isTransfer,isNewCategory,replacesRuleId,replacedMatchText,placeBeforeRuleId,shadowedMatchText);
 
 @override
 String toString() {
-  return 'AiRuleSuggestion(matchText: $matchText, category: $category, isNewCategory: $isNewCategory, placeBeforeRuleId: $placeBeforeRuleId, shadowedMatchText: $shadowedMatchText)';
+  return 'AiRuleSuggestion(matchText: $matchText, category: $category, isRegex: $isRegex, isTransfer: $isTransfer, isNewCategory: $isNewCategory, replacesRuleId: $replacesRuleId, replacedMatchText: $replacedMatchText, placeBeforeRuleId: $placeBeforeRuleId, shadowedMatchText: $shadowedMatchText)';
 }
 
 
@@ -924,7 +932,7 @@ abstract mixin class $AiRuleSuggestionCopyWith<$Res>  {
   factory $AiRuleSuggestionCopyWith(AiRuleSuggestion value, $Res Function(AiRuleSuggestion) _then) = _$AiRuleSuggestionCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: 'match_text') String matchText, String category,@JsonKey(name: 'is_new_category') bool isNewCategory,@JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,@JsonKey(name: 'shadowed_match_text') String? shadowedMatchText
+@JsonKey(name: 'match_text') String matchText, String? category,@JsonKey(name: 'is_regex') bool isRegex,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'is_new_category') bool isNewCategory,@JsonKey(name: 'replaces_rule_id') int? replacesRuleId,@JsonKey(name: 'replaced_match_text') String? replacedMatchText,@JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,@JsonKey(name: 'shadowed_match_text') String? shadowedMatchText
 });
 
 
@@ -941,12 +949,16 @@ class _$AiRuleSuggestionCopyWithImpl<$Res>
 
 /// Create a copy of AiRuleSuggestion
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? matchText = null,Object? category = null,Object? isNewCategory = null,Object? placeBeforeRuleId = freezed,Object? shadowedMatchText = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? matchText = null,Object? category = freezed,Object? isRegex = null,Object? isTransfer = null,Object? isNewCategory = null,Object? replacesRuleId = freezed,Object? replacedMatchText = freezed,Object? placeBeforeRuleId = freezed,Object? shadowedMatchText = freezed,}) {
   return _then(_self.copyWith(
 matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
-as bool,placeBeforeRuleId: freezed == placeBeforeRuleId ? _self.placeBeforeRuleId : placeBeforeRuleId // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
+as bool,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
+as bool,replacesRuleId: freezed == replacesRuleId ? _self.replacesRuleId : replacesRuleId // ignore: cast_nullable_to_non_nullable
+as int?,replacedMatchText: freezed == replacedMatchText ? _self.replacedMatchText : replacedMatchText // ignore: cast_nullable_to_non_nullable
+as String?,placeBeforeRuleId: freezed == placeBeforeRuleId ? _self.placeBeforeRuleId : placeBeforeRuleId // ignore: cast_nullable_to_non_nullable
 as int?,shadowedMatchText: freezed == shadowedMatchText ? _self.shadowedMatchText : shadowedMatchText // ignore: cast_nullable_to_non_nullable
 as String?,
   ));
@@ -1033,10 +1045,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'match_text')  String matchText,  String category, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'match_text')  String matchText,  String? category, @JsonKey(name: 'is_regex')  bool isRegex, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'replaces_rule_id')  int? replacesRuleId, @JsonKey(name: 'replaced_match_text')  String? replacedMatchText, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _AiRuleSuggestion() when $default != null:
-return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
+return $default(_that.matchText,_that.category,_that.isRegex,_that.isTransfer,_that.isNewCategory,_that.replacesRuleId,_that.replacedMatchText,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
   return orElse();
 
 }
@@ -1054,10 +1066,10 @@ return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBe
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'match_text')  String matchText,  String category, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'match_text')  String matchText,  String? category, @JsonKey(name: 'is_regex')  bool isRegex, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'replaces_rule_id')  int? replacesRuleId, @JsonKey(name: 'replaced_match_text')  String? replacedMatchText, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)  $default,) {final _that = this;
 switch (_that) {
 case _AiRuleSuggestion():
-return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
+return $default(_that.matchText,_that.category,_that.isRegex,_that.isTransfer,_that.isNewCategory,_that.replacesRuleId,_that.replacedMatchText,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1074,10 +1086,10 @@ return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBe
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'match_text')  String matchText,  String category, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'match_text')  String matchText,  String? category, @JsonKey(name: 'is_regex')  bool isRegex, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'is_new_category')  bool isNewCategory, @JsonKey(name: 'replaces_rule_id')  int? replacesRuleId, @JsonKey(name: 'replaced_match_text')  String? replacedMatchText, @JsonKey(name: 'place_before_rule_id')  int? placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text')  String? shadowedMatchText)?  $default,) {final _that = this;
 switch (_that) {
 case _AiRuleSuggestion() when $default != null:
-return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
+return $default(_that.matchText,_that.category,_that.isRegex,_that.isTransfer,_that.isNewCategory,_that.replacesRuleId,_that.replacedMatchText,_that.placeBeforeRuleId,_that.shadowedMatchText);case _:
   return null;
 
 }
@@ -1089,12 +1101,19 @@ return $default(_that.matchText,_that.category,_that.isNewCategory,_that.placeBe
 @JsonSerializable()
 
 class _AiRuleSuggestion implements AiRuleSuggestion {
-  const _AiRuleSuggestion({@JsonKey(name: 'match_text') required this.matchText, required this.category, @JsonKey(name: 'is_new_category') this.isNewCategory = false, @JsonKey(name: 'place_before_rule_id') this.placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text') this.shadowedMatchText});
+  const _AiRuleSuggestion({@JsonKey(name: 'match_text') required this.matchText, this.category, @JsonKey(name: 'is_regex') this.isRegex = false, @JsonKey(name: 'is_transfer') this.isTransfer = false, @JsonKey(name: 'is_new_category') this.isNewCategory = false, @JsonKey(name: 'replaces_rule_id') this.replacesRuleId, @JsonKey(name: 'replaced_match_text') this.replacedMatchText, @JsonKey(name: 'place_before_rule_id') this.placeBeforeRuleId, @JsonKey(name: 'shadowed_match_text') this.shadowedMatchText});
   factory _AiRuleSuggestion.fromJson(Map<String, dynamic> json) => _$AiRuleSuggestionFromJson(json);
 
 @override@JsonKey(name: 'match_text') final  String matchText;
-@override final  String category;
+/// Null for transfer rules.
+@override final  String? category;
+@override@JsonKey(name: 'is_regex') final  bool isRegex;
+@override@JsonKey(name: 'is_transfer') final  bool isTransfer;
 @override@JsonKey(name: 'is_new_category') final  bool isNewCategory;
+/// Set when the proposal improves an existing rule in place (e.g. a regex
+/// covering spellings the old match text missed) instead of adding one.
+@override@JsonKey(name: 'replaces_rule_id') final  int? replacesRuleId;
+@override@JsonKey(name: 'replaced_match_text') final  String? replacedMatchText;
 /// Rules are first-match-wins: when an existing rule caused the mislabel,
 /// the new rule must be inserted before it (relabel flow only).
 @override@JsonKey(name: 'place_before_rule_id') final  int? placeBeforeRuleId;
@@ -1113,16 +1132,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AiRuleSuggestion&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory)&&(identical(other.placeBeforeRuleId, placeBeforeRuleId) || other.placeBeforeRuleId == placeBeforeRuleId)&&(identical(other.shadowedMatchText, shadowedMatchText) || other.shadowedMatchText == shadowedMatchText));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AiRuleSuggestion&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.isNewCategory, isNewCategory) || other.isNewCategory == isNewCategory)&&(identical(other.replacesRuleId, replacesRuleId) || other.replacesRuleId == replacesRuleId)&&(identical(other.replacedMatchText, replacedMatchText) || other.replacedMatchText == replacedMatchText)&&(identical(other.placeBeforeRuleId, placeBeforeRuleId) || other.placeBeforeRuleId == placeBeforeRuleId)&&(identical(other.shadowedMatchText, shadowedMatchText) || other.shadowedMatchText == shadowedMatchText));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,matchText,category,isNewCategory,placeBeforeRuleId,shadowedMatchText);
+int get hashCode => Object.hash(runtimeType,matchText,category,isRegex,isTransfer,isNewCategory,replacesRuleId,replacedMatchText,placeBeforeRuleId,shadowedMatchText);
 
 @override
 String toString() {
-  return 'AiRuleSuggestion(matchText: $matchText, category: $category, isNewCategory: $isNewCategory, placeBeforeRuleId: $placeBeforeRuleId, shadowedMatchText: $shadowedMatchText)';
+  return 'AiRuleSuggestion(matchText: $matchText, category: $category, isRegex: $isRegex, isTransfer: $isTransfer, isNewCategory: $isNewCategory, replacesRuleId: $replacesRuleId, replacedMatchText: $replacedMatchText, placeBeforeRuleId: $placeBeforeRuleId, shadowedMatchText: $shadowedMatchText)';
 }
 
 
@@ -1133,7 +1152,7 @@ abstract mixin class _$AiRuleSuggestionCopyWith<$Res> implements $AiRuleSuggesti
   factory _$AiRuleSuggestionCopyWith(_AiRuleSuggestion value, $Res Function(_AiRuleSuggestion) _then) = __$AiRuleSuggestionCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: 'match_text') String matchText, String category,@JsonKey(name: 'is_new_category') bool isNewCategory,@JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,@JsonKey(name: 'shadowed_match_text') String? shadowedMatchText
+@JsonKey(name: 'match_text') String matchText, String? category,@JsonKey(name: 'is_regex') bool isRegex,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'is_new_category') bool isNewCategory,@JsonKey(name: 'replaces_rule_id') int? replacesRuleId,@JsonKey(name: 'replaced_match_text') String? replacedMatchText,@JsonKey(name: 'place_before_rule_id') int? placeBeforeRuleId,@JsonKey(name: 'shadowed_match_text') String? shadowedMatchText
 });
 
 
@@ -1150,12 +1169,16 @@ class __$AiRuleSuggestionCopyWithImpl<$Res>
 
 /// Create a copy of AiRuleSuggestion
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? matchText = null,Object? category = null,Object? isNewCategory = null,Object? placeBeforeRuleId = freezed,Object? shadowedMatchText = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? matchText = null,Object? category = freezed,Object? isRegex = null,Object? isTransfer = null,Object? isNewCategory = null,Object? replacesRuleId = freezed,Object? replacedMatchText = freezed,Object? placeBeforeRuleId = freezed,Object? shadowedMatchText = freezed,}) {
   return _then(_AiRuleSuggestion(
 matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
-as bool,placeBeforeRuleId: freezed == placeBeforeRuleId ? _self.placeBeforeRuleId : placeBeforeRuleId // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as String?,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
+as bool,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,isNewCategory: null == isNewCategory ? _self.isNewCategory : isNewCategory // ignore: cast_nullable_to_non_nullable
+as bool,replacesRuleId: freezed == replacesRuleId ? _self.replacesRuleId : replacesRuleId // ignore: cast_nullable_to_non_nullable
+as int?,replacedMatchText: freezed == replacedMatchText ? _self.replacedMatchText : replacedMatchText // ignore: cast_nullable_to_non_nullable
+as String?,placeBeforeRuleId: freezed == placeBeforeRuleId ? _self.placeBeforeRuleId : placeBeforeRuleId // ignore: cast_nullable_to_non_nullable
 as int?,shadowedMatchText: freezed == shadowedMatchText ? _self.shadowedMatchText : shadowedMatchText // ignore: cast_nullable_to_non_nullable
 as String?,
   ));

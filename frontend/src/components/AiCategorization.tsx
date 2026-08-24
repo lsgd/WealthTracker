@@ -166,15 +166,29 @@ export default function AiCategorization({ onApplied }: Props) {
       const outcome = await aiApply({
         assignments: result.suggestions
           .filter((s) => checkedTx.has(s.transaction_id))
-          .map((s) => ({ transaction_id: s.transaction_id, category: s.category })),
+          .map((s) => ({
+            transaction_id: s.transaction_id,
+            category: s.category,
+            is_transfer: s.is_transfer ?? false,
+          })),
         rules: result.rules
           .filter((_, i) => checkedRules.has(i))
-          .map((r) => ({ match_text: r.match_text, category: r.category })),
+          .map((r) => ({
+            match_text: r.match_text,
+            category: r.category,
+            is_regex: r.is_regex ?? false,
+            is_transfer: r.is_transfer ?? false,
+            replaces_rule_id: r.replaces_rule_id ?? null,
+          })),
       });
-      setNotice(
-        `Applied: ${outcome.assigned} transactions categorized, ${outcome.rules_created} rules created`
-        + (outcome.rule_applied ? `, rules categorized ${outcome.rule_applied} more transactions` : ''),
-      );
+      const parts = [
+        outcome.assigned ? `${outcome.assigned} transactions updated` : null,
+        outcome.rules_created ? `${outcome.rules_created} rules created` : null,
+        outcome.rules_updated ? `${outcome.rules_updated} rules improved` : null,
+        outcome.rule_applied
+          ? `rules categorized ${outcome.rule_applied} more transactions` : null,
+      ].filter(Boolean);
+      setNotice(`Applied: ${parts.join(', ') || 'nothing selected'}`);
       setResult(null);
       onApplied();
     } catch (e) {
@@ -419,7 +433,7 @@ export default function AiCategorization({ onApplied }: Props) {
                     <td>{stripLeadingIban(s.counterparty)}</td>
                     <td>{s.description}</td>
                     <td>
-                      {s.category}
+                      {s.is_transfer ? 'Transfer (excluded)' : s.category}
                       {s.is_new_category && <span className="ai-new-badge">NEW</span>}
                     </td>
                     <td className={`spending-amount-col ${Number(s.amount) < 0 ? 'spending-neg' : 'spending-pos'}`}>
@@ -443,8 +457,14 @@ export default function AiCategorization({ onApplied }: Props) {
                       checked={checkedRules.has(i)}
                       onChange={() => toggle(checkedRules, i, setCheckedRules)}
                     />
-                    <code>{r.match_text}</code>
-                    <span>→ {r.category}</span>
+                    <code>{r.is_regex ? `/${r.match_text}/` : r.match_text}</code>
+                    <span>→ {r.is_transfer ? 'Transfer (excluded)' : r.category}</span>
+                    {r.is_regex && <span className="spending-spread-badge">regex</span>}
+                    {r.replaced_match_text && (
+                      <span className="spending-spread-badge">
+                        replaces “{r.replaced_match_text}”
+                      </span>
+                    )}
                     {r.is_new_category && <span className="ai-new-badge">NEW</span>}
                   </div>
                 ))}
