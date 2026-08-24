@@ -1003,8 +1003,63 @@ class AccountSnapshotDetailView(generics.RetrieveUpdateDestroyAPIView):
         snapshot.save()
 
 
+_CSV_IMPORT_MAX_SIZE = 5 * 1024 * 1024
+
+
+def _read_csv_upload(request):
+    """(content bytes, None) or (None, error Response)."""
+    upload = request.FILES.get('file')
+    if upload is None:
+        return None, Response({'error': 'Attach the CSV as "file"'}, status=400)
+    if upload.size > _CSV_IMPORT_MAX_SIZE:
+        return None, Response({'error': 'File is larger than 5 MB'}, status=400)
+    return upload.read(), None
+
+
+def _import_parsed_csv(request, account, fmt, currency, infos, skipped):
+    """Common tail of the CSV import views: guards, storage, classification."""
+    from .transaction_importer import store_transactions
+
+    if not infos:
+        return Response({'error': 'No importable rows found in the file'}, status=400)
+    # The exports are per account — a currency mismatch means the file
+    # belongs to a different account. Refuse rather than corrupt.
+    if currency != account.currency:
+        return Response({
+            'error': f'The file contains {currency} entries but the account '
+                     f'"{account.name}" is in {account.currency}. '
+                     'Pick the matching account.',
+        }, status=400)
+
+    imported = store_transactions(account, infos, source='csv')
+    if imported:
+        from .classification import apply_rules, detect_transfers
+        apply_rules(request.user)
+        detect_transfers(request.user)
+
+    dates = [i.booking_date for i in infos]
+    covered_start, covered_end = min(dates), max(dates)
+    message = f'{imported} new transactions imported into {account.name}'
+    if imported != len(infos):
+        message += f' ({len(infos)} rows read, the rest were already stored)'
+    message += f'. The file covers {covered_start} to {covered_end}.'
+
+    return Response({
+        'status': 'success',
+        'format': fmt,
+        'account_id': account.id,
+        'account_name': account.name,
+        'imported': imported,
+        'fetched': len(infos),
+        'skipped': skipped,
+        'covered_start': covered_start,
+        'covered_end': covered_end,
+        'message': message,
+    })
+
+
 class AccountTransactionCsvImportView(APIView):
-    """Import a bank CSV export into one account (web-only backfill).
+    """Import a bank CSV export into one specific account (web-only backfill).
 
     Multipart body: ``file`` — a per-account export from the bank's online
     banking (ZKB "with details" or DKB; format is auto-detected). Storage is
@@ -1014,62 +1069,88 @@ class AccountTransactionCsvImportView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    MAX_SIZE = 5 * 1024 * 1024
-
     def post(self, request, pk):
         from .csv_import import CsvImportError, parse_transactions_csv
-        from .transaction_importer import store_transactions
 
         try:
             account = FinancialAccount.objects.get(pk=pk, user=request.user)
         except FinancialAccount.DoesNotExist:
             return Response({'error': 'Account not found'}, status=404)
 
-        upload = request.FILES.get('file')
-        if upload is None:
-            return Response({'error': 'Attach the CSV as "file"'}, status=400)
-        if upload.size > self.MAX_SIZE:
-            return Response({'error': 'File is larger than 5 MB'}, status=400)
-
+        content, error = _read_csv_upload(request)
+        if error is not None:
+            return error
         try:
-            fmt, currency, infos, skipped = parse_transactions_csv(
-                upload.read(), account.currency,
+            fmt, currency, infos, skipped, file_iban = parse_transactions_csv(
+                content, account.currency,
             )
         except CsvImportError as e:
             return Response({'error': str(e)}, status=400)
 
-        if not infos:
-            return Response({'error': 'No importable rows found in the file'}, status=400)
-        # The exports are per account — a currency mismatch means the file
-        # belongs to a different account. Refuse rather than corrupt.
-        if currency != account.currency:
+        # When the file names its own account (DKB preamble IBAN), a mismatch
+        # with the chosen account is a wrong-file mistake — refuse.
+        own = (account.account_identifier or '').replace(' ', '').upper()
+        if file_iban and own and file_iban != own:
             return Response({
-                'error': f'The file contains {currency} entries but the account '
-                         f'is in {account.currency}. Pick the matching account.',
+                'error': f'The file belongs to {file_iban}, not to '
+                         f'"{account.name}". Pick the matching account.',
             }, status=400)
 
-        imported = store_transactions(account, infos, source='csv')
-        if imported:
-            from .classification import apply_rules, detect_transfers
-            apply_rules(request.user)
-            detect_transfers(request.user)
+        return _import_parsed_csv(request, account, fmt, currency, infos, skipped)
 
-        dates = [i.booking_date for i in infos]
-        covered_start, covered_end = min(dates), max(dates)
-        message = f'{imported} new transactions imported'
-        if imported != len(infos):
-            message += f' ({len(infos)} rows read, the rest were already stored)'
-        message += f'. The file covers {covered_start} to {covered_end}.'
 
+class TransactionCsvImportView(APIView):
+    """Import a bank CSV export, resolving the target account from the file.
+
+    DKB exports name their own IBAN in the preamble — matched against the
+    account identifiers. ZKB exports carry no identifier; when exactly one
+    account has the file's currency the choice is unambiguous, otherwise the
+    response lists the candidates (``status: 'ambiguous'``) and the client
+    retries via the per-account endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .csv_import import CsvImportError, parse_transactions_csv
+
+        content, error = _read_csv_upload(request)
+        if error is not None:
+            return error
+        try:
+            fmt, currency, infos, skipped, file_iban = parse_transactions_csv(content, '')
+        except CsvImportError as e:
+            return Response({'error': str(e)}, status=400)
+
+        accounts = list(FinancialAccount.objects.filter(user=request.user))
+        if file_iban:
+            account = next(
+                (a for a in accounts
+                 if (a.account_identifier or '').replace(' ', '').upper() == file_iban),
+                None,
+            )
+            if account is None:
+                return Response({
+                    'error': f'The file belongs to {file_iban}, but no account '
+                             'has that identifier. Use the import action on the '
+                             'account itself.',
+                }, status=400)
+            return _import_parsed_csv(request, account, fmt, currency, infos, skipped)
+
+        candidates = [a for a in accounts if a.currency == currency]
+        if len(candidates) == 1:
+            return _import_parsed_csv(
+                request, candidates[0], fmt, currency, infos, skipped,
+            )
+        if not candidates:
+            return Response({
+                'error': f'The file contains {currency} entries but no account '
+                         f'uses {currency}.',
+            }, status=400)
         return Response({
-            'status': 'success',
+            'status': 'ambiguous',
             'format': fmt,
-            'imported': imported,
-            'fetched': len(infos),
-            'skipped': skipped,
-            'covered_start': covered_start,
-            'covered_end': covered_end,
-            'message': message,
+            'currency': currency,
+            'accounts': [{'id': a.id, 'name': a.name} for a in candidates],
         })
 
 
@@ -1267,21 +1348,31 @@ class CategoryRulesReplaceView(APIView):
             c.name.lower(): c
             for c in TransactionCategory.objects.filter(user=request.user)
         }
+        import re as re_module
+
         new_rules = []
         seen = set()
         for item in items:
             match_text = str(item.get('match_text', '')).strip().lower()[:128]
             category = categories.get(str(item.get('category', '')).strip().lower())
+            is_regex = bool(item.get('is_regex'))
             try:
                 spread = max(1, int(item.get('spread_months', 1)))
             except (TypeError, ValueError):
                 return Response({'error': f'Invalid spread_months: {item}'}, status=400)
             if not match_text or category is None or match_text in seen:
                 return Response({'error': f'Invalid or duplicate rule: {item}'}, status=400)
+            if is_regex:
+                try:
+                    re_module.compile(match_text)
+                except re_module.error as e:
+                    return Response(
+                        {'error': f'Invalid regular expression "{match_text}": {e}'},
+                        status=400)
             seen.add(match_text)
             new_rules.append(CategoryRule(
                 user=request.user, match_text=match_text, category=category,
-                spread_months=spread, position=len(new_rules),
+                spread_months=spread, position=len(new_rules), is_regex=is_regex,
             ))
 
         with db_transaction.atomic():
@@ -1700,8 +1791,13 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
             CategoryRule.objects.filter(user=request.user)
             .select_related('category').order_by('position', 'id')
         )
-        if len(rules) < 2:
-            return Response({'error': 'Not enough rules to consolidate'}, status=400)
+        # Regex rules are hand-crafted and follow different semantics than the
+        # substring merging the prompt describes — they pass through untouched
+        # (and are never sent to Gemini).
+        plain = [r for r in rules if not r.is_regex]
+        if len(plain) < 2:
+            return Response(
+                {'error': 'Not enough substring rules to consolidate'}, status=400)
 
         # Per-rule match counts in one pass over the transaction texts: a
         # strong dead-rule signal that discloses no transaction data.
@@ -1716,7 +1812,7 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
                 'category': r.category.name, 'spread_months': r.spread_months,
                 'matches': sum(1 for t in texts if r.match_text.lower() in t),
             }
-            for r in rules
+            for r in plain
         ]
 
         try:
@@ -1726,11 +1822,11 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
 
         # Only categories the rules already map to — consolidation never
         # invents categories, so anything else is a hallucination to drop.
-        valid = {r.category.name.lower(): r.category.name for r in rules}
-        by_id = {r.id: r for r in rules}
+        valid = {r.category.name.lower(): r.category.name for r in plain}
+        by_id = {r.id: r for r in plain}
         proposed = []
-        seen = set()
-        for r in result['rules']:
+        seen = {r.match_text for r in rules if r.is_regex}
+        for index, r in enumerate(result['rules']):
             match_text = str(r['match_text']).strip().lower()[:128]
             name = valid.get(str(r['category']).strip().lower())
             if not match_text or name is None or match_text in seen:
@@ -1748,7 +1844,28 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
                 'category': name,
                 'spread_months': spread,
                 'sources': sources,
+                'is_regex': False,
+                # Evaluation order: a merged rule takes its earliest source's
+                # place; regex passthroughs keep theirs (interleaved below).
+                '_position': min(
+                    (by_id[i].position for i in sources),
+                    default=len(rules) + index,
+                ),
             })
+        proposed += [
+            {
+                'match_text': r.match_text,
+                'category': r.category.name,
+                'spread_months': r.spread_months,
+                'sources': [r.id],
+                'is_regex': True,
+                '_position': r.position,
+            }
+            for r in rules if r.is_regex
+        ]
+        proposed.sort(key=lambda r: r['_position'])
+        for r in proposed:
+            del r['_position']
 
         return Response({
             'rules': proposed,

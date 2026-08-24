@@ -23,6 +23,26 @@ def next_rule_position(user) -> int:
     return 0 if highest is None else highest + 1
 
 
+def rule_matcher(rule):
+    """Predicate haystack -> bool for one rule (substring or regex).
+
+    Haystacks are lowercased ``"{counterparty} {description}"``. A regex that
+    no longer compiles (edited outside the validated paths) matches nothing
+    instead of taking down the whole run.
+    """
+    import re
+
+    if rule.is_regex:
+        try:
+            pattern = re.compile(rule.match_text, re.IGNORECASE)
+        except re.error:
+            logger.warning('Rule %d has an invalid regex, skipping', rule.id)
+            return lambda haystack: False
+        return lambda haystack: pattern.search(haystack) is not None
+    needle = rule.match_text.lower()
+    return lambda haystack: needle in haystack
+
+
 def first_matching_rule(user, tx):
     """The rule that would classify ``tx`` (first match wins), or None.
 
@@ -31,7 +51,7 @@ def first_matching_rule(user, tx):
     """
     haystack = f'{tx.counterparty} {tx.description}'.lower()
     for rule in user.category_rules.select_related('category').order_by('position', 'id'):
-        if rule.match_text.lower() in haystack:
+        if rule_matcher(rule)(haystack):
             return rule
     return None
 
@@ -56,11 +76,14 @@ def apply_rules(user, transactions=None) -> int:
     )
     qs = qs.filter(category__isnull=True, category_manual=False)
 
+    # Compile each rule's predicate once, not once per transaction.
+    matchers = [(rule, rule_matcher(rule)) for rule in rules]
+
     updated = []
     for tx in qs:
         haystack = f'{tx.counterparty} {tx.description}'.lower()
-        for rule in rules:
-            if rule.match_text.lower() in haystack:
+        for rule, matches in matchers:
+            if matches(haystack):
                 tx.category = rule.category
                 if rule.spread_months > 1 and tx.spread_months == 1:
                     tx.spread_months = rule.spread_months

@@ -68,6 +68,8 @@ abstract class CategoryRule with _$CategoryRule {
     @JsonKey(name: 'category_name') String? categoryName,
     @JsonKey(name: 'spread_months') @Default(1) int spreadMonths,
     @Default(0) int position,
+    /// Regex rules are created on the web; the app renders them read-only.
+    @JsonKey(name: 'is_regex') @Default(false) bool isRegex,
   }) = _CategoryRule;
 
   factory CategoryRule.fromJson(Map<String, dynamic> json) =>

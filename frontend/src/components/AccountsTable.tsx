@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Key, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat } from 'lucide-react';
+import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Key, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat, FileUp } from 'lucide-react';
 import { syncAccount, completeAccountAuth, deleteAccount, updateAccount, updateAccountCredentials, getAccountCredentials, getBroker } from '../api/client';
 import AddSnapshotModal from './AddSnapshotModal';
 import AddAccountModal from './AddAccountModal';
 import MigrateAccountModal from './MigrateAccountModal';
 import SnapshotsModal from './SnapshotsModal';
 import ImportModal from './ImportModal';
+import TransactionCsvImportModal from './TransactionCsvImportModal';
 import Tooltip from './Tooltip';
 import ExportModal from './ExportModal';
 import Toast from './Toast';
@@ -155,6 +156,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
   const [deleteConfirm, setDeleteConfirm] = useState<Account | null>(null);
   const [snapshotAccount, setSnapshotAccount] = useState<Account | null>(null);
   const [snapshotsAccount, setSnapshotsAccount] = useState<Account | null>(null);
+  const [txImportAccount, setTxImportAccount] = useState<Account | null>(null);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -500,6 +502,13 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                         </button>
                         <button
                           className="btn btn-sm btn-ghost"
+                          onClick={() => setTxImportAccount(a)}
+                          title="Import Transactions (CSV)"
+                        >
+                          <FileUp size={14} />
+                        </button>
+                        <button
+                          className="btn btn-sm btn-ghost"
                           onClick={() => openCredentialsModal(a)}
                           title="Account Settings"
                         >
@@ -561,6 +570,15 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
             setShowAddAccount(false);
             onRefresh();
           }}
+        />
+      )}
+
+      {txImportAccount && (
+        <TransactionCsvImportModal
+          accountId={txImportAccount.id}
+          accountName={txImportAccount.name}
+          onClose={() => setTxImportAccount(null)}
+          onImported={onRefresh}
         />
       )}
 

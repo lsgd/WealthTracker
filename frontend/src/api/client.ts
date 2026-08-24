@@ -880,6 +880,7 @@ export interface CategoryRule {
   category_name: string;
   spread_months: number;
   position: number;
+  is_regex: boolean;
 }
 
 export interface Transaction {
@@ -954,6 +955,7 @@ export async function createCategoryRule(fields: {
   match_text: string;
   category: number;
   spread_months?: number;
+  is_regex?: boolean;
 }): Promise<CategoryRule> {
   const res = await fetchWithAuth('/api/spending/rules/', {
     method: 'POST',
@@ -1044,11 +1046,17 @@ export async function backfillTransactions(
 }
 
 export async function importTransactionsCsv(
-  accountId: number,
   file: File,
+  accountId?: number,
 ): Promise<{
-  status: string;
+  // 'ambiguous': the file names no account and several share its currency —
+  // `accounts` lists the candidates, retry with an explicit accountId.
+  status: 'success' | 'ambiguous';
   format?: string;
+  account_id?: number;
+  account_name?: string;
+  currency?: string;
+  accounts?: { id: number; name: string }[];
   imported?: number;
   fetched?: number;
   skipped?: number;
@@ -1058,10 +1066,10 @@ export async function importTransactionsCsv(
 }> {
   const body = new FormData();
   body.append('file', file);
-  const res = await fetchWithAuth(`/api/accounts/${accountId}/transactions/import-csv/`, {
-    method: 'POST',
-    body,
-  });
+  const url = accountId
+    ? `/api/accounts/${accountId}/transactions/import-csv/`
+    : '/api/transactions/import-csv/';
+  const res = await fetchWithAuth(url, { method: 'POST', body });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || 'CSV import failed');

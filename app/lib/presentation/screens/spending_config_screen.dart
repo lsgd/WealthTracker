@@ -283,10 +283,11 @@ class _RuleList extends ConsumerWidget {
         return ListTile(
           key: ValueKey(rule.id),
           leading: Text('${index + 1}'),
-          title: Text(rule.matchText),
+          title: Text(rule.isRegex ? '/${rule.matchText}/' : rule.matchText),
           subtitle: Text(
             [
               '→ ${rule.categoryName ?? ''}',
+              if (rule.isRegex) 'regex',
               if (rule.spreadMonths > 1) 'spread over ${rule.spreadMonths} months',
             ].join(' · '),
           ),

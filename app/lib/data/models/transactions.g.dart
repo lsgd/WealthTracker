@@ -73,6 +73,7 @@ _CategoryRule _$CategoryRuleFromJson(Map<String, dynamic> json) =>
       categoryName: json['category_name'] as String?,
       spreadMonths: (json['spread_months'] as num?)?.toInt() ?? 1,
       position: (json['position'] as num?)?.toInt() ?? 0,
+      isRegex: json['is_regex'] as bool? ?? false,
     );
 
 Map<String, dynamic> _$CategoryRuleToJson(_CategoryRule instance) =>
@@ -83,4 +84,5 @@ Map<String, dynamic> _$CategoryRuleToJson(_CategoryRule instance) =>
       'category_name': instance.categoryName,
       'spread_months': instance.spreadMonths,
       'position': instance.position,
+      'is_regex': instance.isRegex,
     };

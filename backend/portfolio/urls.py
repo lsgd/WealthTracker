@@ -20,6 +20,7 @@ urlpatterns = [
     path('transactions/<int:pk>/', views.TransactionDetailView.as_view(), name='transaction_detail'),
     path('accounts/<int:pk>/transactions/backfill/', views.AccountTransactionBackfillView.as_view(), name='transaction_backfill'),
     path('accounts/<int:pk>/transactions/import-csv/', views.AccountTransactionCsvImportView.as_view(), name='transaction_csv_import'),
+    path('transactions/import-csv/', views.TransactionCsvImportView.as_view(), name='transaction_csv_import_auto'),
     # Spending insight: categories, rules, transfer detection, monthly report
     path('spending/categories/', views.TransactionCategoryListCreateView.as_view(), name='category_list'),
     path('spending/categories/<int:pk>/', views.TransactionCategoryDetailView.as_view(), name='category_detail'),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   CartesianGrid,
@@ -95,6 +95,7 @@ export default function SpendingPage() {
   const [ruleText, setRuleText] = useState('');
   const [ruleCategory, setRuleCategory] = useState<number | '' | '__new__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
+  const [ruleIsRegex, setRuleIsRegex] = useState(false);
   const [draggedRule, setDraggedRule] = useState<number | null>(null);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -110,9 +111,13 @@ export default function SpendingPage() {
   // A short-served range is not an error, but it must not read like a success either:
   // the chart's earlier months stay empty and only this notice explains why.
   const [backfillTruncated, setBackfillTruncated] = useState(false);
-  // CSV import (web only): a per-account export from the bank's online banking.
+  // CSV import (web only): the file resolves its own account (DKB names its
+  // IBAN; ZKB is matched by currency) — only an ambiguous match needs a pick.
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvBusy, setCsvBusy] = useState(false);
+  const [csvCandidates, setCsvCandidates] = useState<{ id: number; name: string }[]>([]);
+  const [csvAccountChoice, setCsvAccountChoice] = useState<number | ''>('');
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const loadReport = useCallback(async () => {
     try {
@@ -255,11 +260,13 @@ export default function SpendingPage() {
         match_text: ruleText.trim(),
         category: categoryId,
         spread_months: ruleSpread,
+        is_regex: ruleIsRegex,
       });
       setRules((prev) => [...prev, rule]);
       setRuleText('');
       setRuleCategory('');
       setRuleSpread(1);
+      setRuleIsRegex(false);
       // The rule applied retroactively — refresh everything that may have changed.
       loadReport();
       if (accountId !== null) loadTransactions(accountId, 1);
@@ -274,6 +281,17 @@ export default function SpendingPage() {
 
   const handleAddRule = () => {
     if (!ruleText.trim() || ruleCategory === '') return;
+    // Instant feedback for a broken pattern. The server re-validates with
+    // Python's `re` (the engine that actually runs the rule) — this JS check
+    // only catches the obvious cases early.
+    if (ruleIsRegex) {
+      try {
+        new RegExp(ruleText.trim());
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Invalid regular expression');
+        return;
+      }
+    }
     if (ruleCategory === '__new__') {
       setCategoryDialogOpen(true);
       return;
@@ -361,15 +379,26 @@ export default function SpendingPage() {
   };
 
   const handleCsvImport = async () => {
-    if (backfillAccount === '' || !csvFile) return;
+    if (!csvFile) return;
     setError('');
     setBackfillNotice('');
     setBackfillTruncated(false);
     setCsvBusy(true);
     try {
-      const outcome = await importTransactionsCsv(backfillAccount, csvFile);
+      const outcome = await importTransactionsCsv(
+        csvFile,
+        csvAccountChoice === '' ? undefined : csvAccountChoice,
+      );
+      if (outcome.status === 'ambiguous') {
+        // Keep the file; the user picks one of the candidates and retries.
+        setCsvCandidates(outcome.accounts ?? []);
+        return;
+      }
       setBackfillNotice(outcome.message || `${outcome.imported ?? 0} new transactions imported`);
       setCsvFile(null);
+      setCsvCandidates([]);
+      setCsvAccountChoice('');
+      if (csvInputRef.current) csvInputRef.current.value = '';
       loadReport();
       if (accountId !== null) loadTransactions(accountId, 1);
     } catch (e) {
@@ -737,8 +766,9 @@ export default function SpendingPage() {
               >
                 <GripVertical size={14} className="spending-rule-grip" />
                 <span className="spending-rule-index">{index + 1}</span>
-                <code>{rule.match_text}</code>
+                <code>{rule.is_regex ? `/${rule.match_text}/` : rule.match_text}</code>
                 <span>→ {rule.category_name}</span>
+                {rule.is_regex && <span className="spending-spread-badge">regex</span>}
                 {rule.spread_months > 1 && <span className="spending-spread-badge">/{rule.spread_months} months</span>}
                 <button
                   className="btn btn-sm btn-ghost"
@@ -774,6 +804,14 @@ export default function SpendingPage() {
                 <option value={6}>/6 months</option>
                 <option value={12}>/12 months</option>
               </select>
+              <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
+                <input
+                  type="checkbox"
+                  checked={ruleIsRegex}
+                  onChange={(e) => setRuleIsRegex(e.target.checked)}
+                />
+                Regex
+              </label>
               <button
                 className="btn btn-sm btn-primary"
                 onClick={handleAddRule}
@@ -789,79 +827,113 @@ export default function SpendingPage() {
           <div className="chart-header">
             <h2>Import history</h2>
           </div>
-          <p className="form-hint">
-            A sync only fetches transactions newer than the ones already stored. Use this
-            to pull an older period once. Re-importing a period you already have changes
-            nothing. The default asks for the last {DEFAULT_BACKFILL_MONTHS} months — that
-            is the requested maximum, banks that keep less simply return what they have
-            (EBICS often serves years, FinTS/DKB typically about 90 days).
-          </p>
-          <div className="spending-rule-row spending-rule-new">
-            <select
-              value={backfillAccount}
-              onChange={(e) => setBackfillAccount(e.target.value ? Number(e.target.value) : '')}
-            >
-              <option value="">Account…</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            <label className="spending-switch">
-              <input
-                type="checkbox"
-                checked={backfillDefaultRange}
-                onChange={(e) => setBackfillDefaultRange(e.target.checked)}
-              />
-              Last {DEFAULT_BACKFILL_MONTHS} months (max)
-            </label>
-            {!backfillDefaultRange && (
-              <>
+          <div className="import-columns">
+            <div>
+              <h3 className="import-col-title">Fetch from bank</h3>
+              <p className="form-hint">
+                A sync only fetches transactions newer than the ones already stored;
+                this pulls an older period once. The default asks for the last{' '}
+                {DEFAULT_BACKFILL_MONTHS} months — banks that keep less return what
+                they have (EBICS often serves years, FinTS/DKB about 90 days).
+              </p>
+              <div className="spending-rule-row spending-rule-new">
+                <select
+                  value={backfillAccount}
+                  onChange={(e) => setBackfillAccount(e.target.value ? Number(e.target.value) : '')}
+                >
+                  <option value="">Account…</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              {backfillAccount !== '' && (
+                <div className="spending-rule-row spending-rule-new">
+                  <label className="spending-switch">
+                    <input
+                      type="checkbox"
+                      checked={backfillDefaultRange}
+                      onChange={(e) => setBackfillDefaultRange(e.target.checked)}
+                    />
+                    Last {DEFAULT_BACKFILL_MONTHS} months (max)
+                  </label>
+                  {!backfillDefaultRange && (
+                    <>
+                      <input
+                        type="date"
+                        aria-label="Start date"
+                        value={backfillStart}
+                        onChange={(e) => setBackfillStart(e.target.value)}
+                      />
+                      <input
+                        type="date"
+                        aria-label="End date (defaults to today)"
+                        value={backfillEnd}
+                        onChange={(e) => setBackfillEnd(e.target.value)}
+                      />
+                    </>
+                  )}
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={handleBackfill}
+                    disabled={
+                      backfillBusy || (!backfillDefaultRange && !backfillStart)
+                    }
+                  >
+                    <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div>
+              <h3 className="import-col-title">Import CSV export</h3>
+              <p className="form-hint">
+                An export from the bank&apos;s online banking — ZKB (&quot;with
+                details&quot; export) and DKB are recognized automatically, and the
+                file determines its account. Re-importing an overlapping file
+                changes nothing.
+              </p>
+              <div className="spending-rule-row spending-rule-new">
                 <input
-                  type="date"
-                  aria-label="Start date"
-                  value={backfillStart}
-                  onChange={(e) => setBackfillStart(e.target.value)}
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  aria-label="CSV file"
+                  onChange={(e) => {
+                    setCsvFile(e.target.files?.[0] ?? null);
+                    setCsvCandidates([]);
+                    setCsvAccountChoice('');
+                  }}
                 />
-                <input
-                  type="date"
-                  aria-label="End date (defaults to today)"
-                  value={backfillEnd}
-                  onChange={(e) => setBackfillEnd(e.target.value)}
-                />
-              </>
-            )}
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={handleBackfill}
-              disabled={
-                backfillBusy || backfillAccount === ''
-                || (!backfillDefaultRange && !backfillStart)
-              }
-            >
-              <History size={14} /> {backfillBusy ? 'Fetching…' : 'Fetch'}
-            </button>
-          </div>
-          <p className="form-hint">
-            Or import a CSV export from the bank&apos;s online banking into the selected
-            account — ZKB (&quot;with details&quot; export) and DKB are recognized. Exports
-            are per account; re-importing an overlapping file changes nothing.
-          </p>
-          <div className="spending-rule-row spending-rule-new">
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              aria-label="CSV file"
-              // Keyed so a successful import visibly clears the chosen file.
-              key={csvFile ? 'chosen' : 'empty'}
-              onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
-            />
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={handleCsvImport}
-              disabled={csvBusy || backfillAccount === '' || !csvFile}
-            >
-              <Upload size={14} /> {csvBusy ? 'Importing…' : 'Import CSV'}
-            </button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={handleCsvImport}
+                  disabled={
+                    csvBusy || !csvFile
+                    || (csvCandidates.length > 0 && csvAccountChoice === '')
+                  }
+                >
+                  <Upload size={14} /> {csvBusy ? 'Importing…' : 'Import CSV'}
+                </button>
+              </div>
+              {csvCandidates.length > 0 && (
+                <div className="spending-rule-row spending-rule-new">
+                  <span className="form-hint">
+                    Several accounts match the file&apos;s currency — pick one:
+                  </span>
+                  <select
+                    value={csvAccountChoice}
+                    onChange={(e) =>
+                      setCsvAccountChoice(e.target.value ? Number(e.target.value) : '')}
+                  >
+                    <option value="">Account…</option>
+                    {csvCandidates.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
           </div>
           {backfillNotice && (
             <p className={backfillTruncated ? 'form-hint form-hint-warning' : 'form-hint'}>

@@ -2277,6 +2277,26 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   border-radius: 4px;
 }
 
+/* Import history: auto-fetch and CSV import side by side. */
+.import-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 24px;
+  align-items: start;
+}
+
+.import-col-title {
+  margin: 8px 0 2px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (max-width: 800px) {
+  .import-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 .spending-rule-new input,
 .spending-rule-new select,
 .range-buttons select {

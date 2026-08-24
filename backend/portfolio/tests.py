@@ -1245,6 +1245,52 @@ class AiEndpointTests(APITestCase):
         )
         self.assertEqual(order, ['apotheke', 'markt', 'coop'])
 
+    def test_regex_rule_creation_validation_and_matching(self):
+        from portfolio.models import Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        # Invalid pattern is rejected by the serializer.
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'apo(theke', 'category': health.id, 'is_regex': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        # Valid regex categorizes the uncategorized setUp transaction
+        # ("Apotheke am Markt") retroactively on creation.
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': r'apotheke.*(markt|nord)', 'category': health.id,
+            'is_regex': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertTrue(resp.data['is_regex'])
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.category, health)
+        # A plain substring rule with regex metacharacters stays literal.
+        other = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 3),
+            amount=Decimal('-2.00'), currency='EUR', counterparty='Kiosk (Markt)',
+            source='camt053', dedup_key='ref:L1',
+        )
+        self.client.post(reverse('rule_list'), {
+            'match_text': '(markt)', 'category': health.id,
+        }, format='json')
+        other.refresh_from_db()
+        self.assertEqual(other.category, health)  # literal "(markt)" matched
+
+    def test_rules_replace_validates_regex(self):
+        from portfolio.models import TransactionCategory
+        TransactionCategory.objects.create(user=self.user, name='Health')
+        resp = self.client.post(reverse('rule_replace'), {
+            'rules': [{'match_text': 'apo(theke', 'category': 'Health',
+                       'is_regex': True}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post(reverse('rule_replace'), {
+            'rules': [{'match_text': r'apotheke|drogerie', 'category': 'Health',
+                       'is_regex': True}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.category.name, 'Health')
+
     @patch('portfolio.ai_categorization.consolidate_rules')
     def test_consolidate_merges_and_drops_hallucinated_categories(self, m_consolidate):
         from portfolio.models import CategoryRule, TransactionCategory
@@ -1254,6 +1300,10 @@ class AiEndpointTests(APITestCase):
         r2 = CategoryRule.objects.create(
             user=self.user, match_text='migros bern', category=groceries,
             spread_months=3, position=1)
+        # A regex rule must pass through untouched and never reach Gemini.
+        regex_rule = CategoryRule.objects.create(
+            user=self.user, match_text=r'coop (city|pronto)', category=groceries,
+            is_regex=True, position=2)
         self.client.put(reverse('ai_config'), {
             'api_key': 'k', 'model': 'gemini-3.6-flash',
         }, format='json')
@@ -1267,18 +1317,25 @@ class AiEndpointTests(APITestCase):
         }
         resp = self.client.post(reverse('ai_consolidate'), {}, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(resp.data['before_count'], 2)
-        self.assertEqual(resp.data['after_count'], 1)
+        self.assertEqual(resp.data['before_count'], 3)
+        self.assertEqual(resp.data['after_count'], 2)
         rule = resp.data['rules'][0]
         self.assertEqual(rule['match_text'], 'migros')
         # Missing spread falls back to the largest source spread.
         self.assertEqual(rule['spread_months'], 3)
         self.assertEqual(rule['sources'], [r1.id, r2.id])
-        # Match counts are computed and sent (self.tx does not contain "migros").
+        # The regex rule passes through unchanged, in evaluation order.
+        passthrough = resp.data['rules'][1]
+        self.assertEqual(passthrough['match_text'], r'coop (city|pronto)')
+        self.assertTrue(passthrough['is_regex'])
+        self.assertEqual(passthrough['sources'], [regex_rule.id])
+        # Match counts are computed and sent (self.tx does not contain
+        # "migros"); the regex rule is never sent to Gemini.
         sent_rules = m_consolidate.call_args.args[2]
         self.assertEqual([r['matches'] for r in sent_rules], [0, 0])
-        # Nothing persisted: both original rules still there.
-        self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 2)
+        self.assertEqual([r['id'] for r in sent_rules], [r1.id, r2.id])
+        # Nothing persisted: all original rules still there.
+        self.assertEqual(CategoryRule.objects.filter(user=self.user).count(), 3)
 
     def test_rules_replace_swaps_the_set_and_reapplies(self):
         from portfolio.models import CategoryRule, Transaction, TransactionCategory
@@ -1435,6 +1492,53 @@ class CsvImportTests(APITestCase):
             {'file': SimpleUploadedFile('export.csv', text.encode('utf-8'))},
             format='multipart',
         )
+
+    def _upload_auto(self, text):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return self.client.post(
+            reverse('transaction_csv_import_auto'),
+            {'file': SimpleUploadedFile('export.csv', text.encode('utf-8'))},
+            format='multipart',
+        )
+
+    def test_auto_import_matches_dkb_account_by_preamble_iban(self):
+        self.eur.account_identifier = 'DE00000000000000000000'
+        self.eur.save()
+        resp = self._upload_auto(_DKB_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'success')
+        self.assertEqual(resp.data['account_id'], self.eur.id)
+        self.assertEqual(resp.data['imported'], 2)
+
+    def test_auto_import_rejects_unknown_iban(self):
+        resp = self._upload_auto(_DKB_CSV)  # no account carries that IBAN
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('DE00000000000000000000', resp.data['error'])
+
+    def test_auto_import_zkb_by_unique_currency(self):
+        resp = self._upload_auto(_ZKB_CSV)  # exactly one CHF account
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'success')
+        self.assertEqual(resp.data['account_id'], self.chf.id)
+
+    def test_auto_import_zkb_ambiguous_lists_candidates(self):
+        other = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Second CHF', currency='CHF',
+        )
+        resp = self._upload_auto(_ZKB_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'ambiguous')
+        self.assertEqual(
+            {a['id'] for a in resp.data['accounts']}, {self.chf.id, other.id})
+        from portfolio.models import Transaction
+        self.assertEqual(Transaction.objects.count(), 0)  # nothing imported
+
+    def test_account_import_rejects_foreign_iban_file(self):
+        self.chf.account_identifier = 'CH0000000000000000000'
+        self.chf.save()
+        resp = self._upload(self.chf, _DKB_CSV)  # file names a DE IBAN
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('DE00000000000000000000', resp.data['error'])
 
     def test_zkb_import_signs_refs_and_detail_rows(self):
         from portfolio.models import Transaction

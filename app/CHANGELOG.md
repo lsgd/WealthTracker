@@ -22,7 +22,8 @@
 - AI review sheets show amounts with 2 decimals instead of the raw 4-decimal value, and the fix-similar sheet lists each entry's current label instead of a cramped old-to-new pair (the target category is in the title)
 - AI suggestions: the proposed category chip moved below the entry text — beside it, a long category name squeezed the merchant into a sliver
 - AI proposes more concise category names: one word where possible, no "A & B" composites
-- Transaction history can now be backfilled from a bank CSV export in the web app (ZKB "with details" and DKB formats, auto-detected); re-imports and EBICS-synced ZKB entries are deduplicated
+- Transaction history can now be backfilled from a bank CSV export in the web app (ZKB "with details" and DKB formats, auto-detected); re-imports and EBICS-synced ZKB entries are deduplicated. The file determines its own account (DKB via its IBAN, ZKB by currency), with a picker only when several accounts match; per-account import is also available from the dashboard account list
+- Categorization rules can be regular expressions (new checkbox in the web rule form, validated in the browser and on the server); AI rule consolidation leaves regex rules untouched, and the app displays them read-only
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

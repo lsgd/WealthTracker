@@ -20,10 +20,13 @@ Format notes (structure learned from real exports; test fixtures are synthetic):
 """
 import csv
 import io
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from brokers.integrations.base import TransactionInfo
+
+_IBAN_RE = re.compile(r'^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$')
 
 
 class CsvImportError(Exception):
@@ -80,8 +83,11 @@ def _parse_amount(text: str, german: bool) -> Decimal:
 
 
 def parse_transactions_csv(content: bytes, fallback_currency: str):
-    """Parse a ZKB or DKB export. Returns (format_name, currency, infos, skipped).
+    """Parse a ZKB or DKB export.
 
+    Returns (format_name, currency, infos, skipped, account_iban) —
+    ``account_iban`` is the account the file itself claims to belong to (DKB
+    puts its IBAN in the preamble; ZKB exports carry no identifier → None).
     ``skipped`` counts rows without a parseable date or amount (detail
     continuation rows, pending entries). Raises CsvImportError when the file
     matches neither format.
@@ -92,14 +98,25 @@ def parse_transactions_csv(content: bytes, fallback_currency: str):
 
     header = [cell.strip().lower() for cell in rows[0]]
     if _find_column(header, _ZKB_REFERENCE) is not None:
-        return _parse_zkb(rows, fallback_currency)
+        return _parse_zkb(rows, fallback_currency) + (None,)
     for index, row in enumerate(rows):
         if row and row[0].strip().lower() == _DKB_HEADER_FIRST:
-            return _parse_dkb(rows, index, fallback_currency)
+            iban = _preamble_iban(rows[:index])
+            return _parse_dkb(rows, index, fallback_currency) + (iban,)
     raise CsvImportError(
         'Unrecognized CSV format. Supported: ZKB account export ("with details") '
         'and DKB account export.'
     )
+
+
+def _preamble_iban(preamble_rows):
+    """The account IBAN a DKB export names in its preamble, or None."""
+    for row in preamble_rows:
+        for cell in row:
+            candidate = cell.strip().replace(' ', '').upper()
+            if _IBAN_RE.match(candidate):
+                return candidate
+    return None
 
 
 def _parse_zkb(rows, fallback_currency):

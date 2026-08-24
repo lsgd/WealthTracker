@@ -58,7 +58,10 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CategoryRule
-        fields = ['id', 'match_text', 'category', 'category_name', 'spread_months', 'position']
+        fields = [
+            'id', 'match_text', 'category', 'category_name', 'spread_months',
+            'position', 'is_regex',
+        ]
         read_only_fields = ['position']
 
     def validate_category(self, category):
@@ -66,6 +69,21 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
         if request and category.user_id != request.user.id:
             raise serializers.ValidationError('Category not found')
         return category
+
+    def validate(self, attrs):
+        # Python's `re` is the engine that runs the rule — its compile is the
+        # authoritative check (the web UI pre-validates with JS RegExp, whose
+        # dialect differs slightly).
+        import re
+        is_regex = attrs.get('is_regex', getattr(self.instance, 'is_regex', False))
+        match_text = attrs.get('match_text', getattr(self.instance, 'match_text', ''))
+        if is_regex:
+            try:
+                re.compile(match_text)
+            except re.error as e:
+                raise serializers.ValidationError(
+                    {'match_text': f'Invalid regular expression: {e}'})
+        return attrs
 
 
 class TransactionSerializer(serializers.ModelSerializer):

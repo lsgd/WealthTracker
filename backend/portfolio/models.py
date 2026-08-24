@@ -221,7 +221,12 @@ class CategoryRule(models.Model):
     )
     match_text = models.CharField(
         max_length=128,
-        help_text='Case-insensitive substring matched against counterparty and description'
+        help_text='Case-insensitive substring (or regex, see is_regex) matched '
+                  'against counterparty and description'
+    )
+    is_regex = models.BooleanField(
+        default=False,
+        help_text='Interpret match_text as a regular expression instead of a substring'
     )
     category = models.ForeignKey(
         TransactionCategory,
