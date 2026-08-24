@@ -286,7 +286,7 @@ class _RuleList extends ConsumerWidget {
           title: Text(rule.isRegex ? '/${rule.matchText}/' : rule.matchText),
           subtitle: Text(
             [
-              '→ ${rule.categoryName ?? ''}',
+              '→ ${rule.isTransfer ? 'Transfer (excluded)' : rule.categoryName ?? ''}',
               if (rule.isRegex) 'regex',
               if (rule.spreadMonths > 1) 'spread over ${rule.spreadMonths} months',
             ].join(' · '),

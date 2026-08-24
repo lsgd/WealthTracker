@@ -1354,13 +1354,16 @@ class CategoryRulesReplaceView(APIView):
         seen = set()
         for item in items:
             match_text = str(item.get('match_text', '')).strip().lower()[:128]
-            category = categories.get(str(item.get('category', '')).strip().lower())
             is_regex = bool(item.get('is_regex'))
+            is_transfer = bool(item.get('is_transfer'))
+            category = None if is_transfer else categories.get(
+                str(item.get('category', '')).strip().lower())
             try:
                 spread = max(1, int(item.get('spread_months', 1)))
             except (TypeError, ValueError):
                 return Response({'error': f'Invalid spread_months: {item}'}, status=400)
-            if not match_text or category is None or match_text in seen:
+            if not match_text or (category is None and not is_transfer) \
+                    or match_text in seen:
                 return Response({'error': f'Invalid or duplicate rule: {item}'}, status=400)
             if is_regex:
                 try:
@@ -1372,7 +1375,8 @@ class CategoryRulesReplaceView(APIView):
             seen.add(match_text)
             new_rules.append(CategoryRule(
                 user=request.user, match_text=match_text, category=category,
-                spread_months=spread, position=len(new_rules), is_regex=is_regex,
+                spread_months=spread, position=len(new_rules),
+                is_regex=is_regex, is_transfer=is_transfer,
             ))
 
         with db_transaction.atomic():
@@ -1791,10 +1795,10 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
             CategoryRule.objects.filter(user=request.user)
             .select_related('category').order_by('position', 'id')
         )
-        # Regex rules are hand-crafted and follow different semantics than the
-        # substring merging the prompt describes — they pass through untouched
-        # (and are never sent to Gemini).
-        plain = [r for r in rules if not r.is_regex]
+        # Regex and transfer rules are hand-crafted and follow different
+        # semantics than the substring/category merging the prompt describes —
+        # they pass through untouched (and are never sent to Gemini).
+        plain = [r for r in rules if not r.is_regex and not r.is_transfer]
         if len(plain) < 2:
             return Response(
                 {'error': 'Not enough substring rules to consolidate'}, status=400)
@@ -1825,7 +1829,7 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
         valid = {r.category.name.lower(): r.category.name for r in plain}
         by_id = {r.id: r for r in plain}
         proposed = []
-        seen = {r.match_text for r in rules if r.is_regex}
+        seen = {r.match_text for r in rules if r.is_regex or r.is_transfer}
         for index, r in enumerate(result['rules']):
             match_text = str(r['match_text']).strip().lower()[:128]
             name = valid.get(str(r['category']).strip().lower())
@@ -1845,8 +1849,10 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
                 'spread_months': spread,
                 'sources': sources,
                 'is_regex': False,
+                'is_transfer': False,
                 # Evaluation order: a merged rule takes its earliest source's
-                # place; regex passthroughs keep theirs (interleaved below).
+                # place; regex/transfer passthroughs keep theirs (interleaved
+                # below).
                 '_position': min(
                     (by_id[i].position for i in sources),
                     default=len(rules) + index,
@@ -1855,13 +1861,14 @@ class AiConsolidateRulesView(KEKAuthenticationMixin, APIView):
         proposed += [
             {
                 'match_text': r.match_text,
-                'category': r.category.name,
+                'category': r.category.name if r.category else None,
                 'spread_months': r.spread_months,
                 'sources': [r.id],
-                'is_regex': True,
+                'is_regex': r.is_regex,
+                'is_transfer': r.is_transfer,
                 '_position': r.position,
             }
-            for r in rules if r.is_regex
+            for r in rules if r.is_regex or r.is_transfer
         ]
         proposed.sort(key=lambda r: r['_position'])
         for r in proposed:

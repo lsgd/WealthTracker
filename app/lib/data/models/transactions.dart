@@ -64,8 +64,11 @@ abstract class CategoryRule with _$CategoryRule {
   const factory CategoryRule({
     required int id,
     @JsonKey(name: 'match_text') required String matchText,
-    required int category,
+    /// Null for transfer rules (see [isTransfer]).
+    int? category,
     @JsonKey(name: 'category_name') String? categoryName,
+    /// Marks matches as transfers instead of assigning a category.
+    @JsonKey(name: 'is_transfer') @Default(false) bool isTransfer,
     @JsonKey(name: 'spread_months') @Default(1) int spreadMonths,
     @Default(0) int position,
     /// Regex rules are created on the web; the app renders them read-only.

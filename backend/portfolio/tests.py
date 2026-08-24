@@ -1275,6 +1275,50 @@ class AiEndpointTests(APITestCase):
         other.refresh_from_db()
         self.assertEqual(other.category, health)  # literal "(markt)" matched
 
+    def test_transfer_rule_marks_matches_as_transfers(self):
+        from portfolio.models import Transaction, TransactionCategory
+        health = TransactionCategory.objects.create(user=self.user, name='Health')
+        # XOR validation: both targets, or neither, is invalid.
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'apotheke', 'category': health.id, 'is_transfer': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'apotheke',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        # A user's manual "not a transfer" decision outranks the rule, and the
+        # entry falls through to later category rules.
+        unmarked = Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 2),
+            amount=Decimal('-5.00'), currency='EUR', counterparty='Apotheke Nord',
+            transfer_manual=True, source='camt053', dedup_key='ref:T1',
+        )
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'apotheke', 'is_transfer': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertIsNone(resp.data['category'])
+        self.client.post(reverse('rule_list'), {
+            'match_text': 'nord', 'category': health.id,
+        }, format='json')
+        self.tx.refresh_from_db()
+        self.assertTrue(self.tx.is_transfer)
+        self.assertIsNone(self.tx.category)
+        unmarked.refresh_from_db()
+        self.assertFalse(unmarked.is_transfer)
+        self.assertEqual(unmarked.category, health)  # later rule applied
+
+    def test_rules_replace_accepts_transfer_rules(self):
+        resp = self.client.post(reverse('rule_replace'), {
+            'rules': [{'match_text': 'vorsorge', 'is_transfer': True}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        from portfolio.models import CategoryRule
+        rule = CategoryRule.objects.get(user=self.user)
+        self.assertTrue(rule.is_transfer)
+        self.assertIsNone(rule.category)
+
     def test_rules_replace_validates_regex(self):
         from portfolio.models import TransactionCategory
         TransactionCategory.objects.create(user=self.user, name='Health')
@@ -1471,6 +1515,18 @@ _DKB_CSV = (
 )
 
 
+_COMMERZBANK_CSV = (
+    'Buchungstag;Wertstellung;Umsatzart;Buchungstext;Betrag;Währung;'
+    'IBAN Kontoinhaber;Kategorie;Sender;Empfänger;Verwendungszweck\n'
+    '11.08.2026;11.08.2026;Überweisung;Alice Example Auffuellung '
+    'End-to-End-Ref.: NOTPROVIDED;702;EUR;DE58000000000000000001;Einnahmen;'
+    'Alice Example;;Auffuellung\n'
+    '03.08.2026;03.08.2026;Dauerauftrag;BOB EXAMPLE BYLADEM1001 '
+    'DE57000000000000000002 TOPUP End-to-End-Ref.: NOTPROVIDED Dauerauftrag;'
+    '-1.702,50;EUR;DE58000000000000000001;Sonstige Ausgaben;;BOB EXAMPLE;TOPUP\n'
+)
+
+
 class CsvImportTests(APITestCase):
     """CSV transaction import (synthetic fixtures mimicking the bank formats)."""
 
@@ -1509,6 +1565,25 @@ class CsvImportTests(APITestCase):
         self.assertEqual(resp.data['status'], 'success')
         self.assertEqual(resp.data['account_id'], self.eur.id)
         self.assertEqual(resp.data['imported'], 2)
+
+    def test_commerzbank_auto_import_by_own_iban_column(self):
+        from portfolio.models import Transaction
+        self.eur.account_identifier = 'DE58000000000000000001'
+        self.eur.save()
+        resp = self._upload_auto(_COMMERZBANK_CSV)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['format'], 'commerzbank')
+        self.assertEqual(resp.data['account_id'], self.eur.id)
+        self.assertEqual(resp.data['imported'], 2)
+        credit = Transaction.objects.get(account=self.eur, amount=Decimal('702'))
+        self.assertEqual(credit.counterparty, 'Alice Example')  # sender on inflow
+        self.assertEqual(credit.description, 'Auffuellung')
+        debit = Transaction.objects.get(account=self.eur, amount=Decimal('-1702.50'))
+        self.assertEqual(debit.counterparty, 'BOB EXAMPLE')  # recipient on outflow
+        # The counterparty IBAN is embedded in the booking text — extracted so
+        # transfer auto-detection can pair it (the own IBAN is skipped).
+        self.assertEqual(debit.counterparty_account, 'DE57000000000000000002')
+        self.assertEqual(debit.currency, 'EUR')
 
     def test_auto_import_rejects_unknown_iban(self):
         resp = self._upload_auto(_DKB_CSV)  # no account carries that IBAN

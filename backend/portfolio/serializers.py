@@ -54,19 +54,22 @@ class TransactionCategorySerializer(serializers.ModelSerializer):
 
 
 class CategoryRuleSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source='category.name', read_only=True)
+    category_name = serializers.SerializerMethodField()
 
     class Meta:
         model = CategoryRule
         fields = [
             'id', 'match_text', 'category', 'category_name', 'spread_months',
-            'position', 'is_regex',
+            'position', 'is_regex', 'is_transfer',
         ]
         read_only_fields = ['position']
 
+    def get_category_name(self, rule):
+        return rule.category.name if rule.category else None
+
     def validate_category(self, category):
         request = self.context.get('request')
-        if request and category.user_id != request.user.id:
+        if category and request and category.user_id != request.user.id:
             raise serializers.ValidationError('Category not found')
         return category
 
@@ -83,6 +86,16 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
             except re.error as e:
                 raise serializers.ValidationError(
                     {'match_text': f'Invalid regular expression: {e}'})
+        # Exactly one target: a category, or the transfer flag.
+        is_transfer = attrs.get(
+            'is_transfer', getattr(self.instance, 'is_transfer', False))
+        category = attrs.get('category', getattr(self.instance, 'category', None))
+        if is_transfer and category is not None:
+            raise serializers.ValidationError(
+                'A transfer rule cannot also assign a category')
+        if not is_transfer and category is None:
+            raise serializers.ValidationError(
+                {'category': 'Pick a category (or make it a transfer rule)'})
         return attrs
 
 

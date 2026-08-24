@@ -30,8 +30,8 @@ import {
   createCategoryRule,
   deleteCategoryRule,
   detectTransfers,
-  getAccountTransactions,
   getAccounts,
+  getTransactions,
   getCategories,
   getCategoryRules,
   getSpendingMonthly,
@@ -93,13 +93,18 @@ export default function SpendingPage() {
   // New rule form. ruleCategory '__new__' means "create a category first" —
   // the Add Rule click then opens the naming dialog instead of saving directly.
   const [ruleText, setRuleText] = useState('');
-  const [ruleCategory, setRuleCategory] = useState<number | '' | '__new__'>('');
+  const [ruleCategory, setRuleCategory] =
+    useState<number | '' | '__new__' | '__transfer__'>('');
   const [ruleSpread, setRuleSpread] = useState(1);
   const [ruleIsRegex, setRuleIsRegex] = useState(false);
   const [draggedRule, setDraggedRule] = useState<number | null>(null);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  // When set, the naming dialog assigns the new category to this transaction
+  // instead of finishing a rule.
+  const [categoryDialogTx, setCategoryDialogTx] = useState<Transaction | null>(null);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [savingRule, setSavingRule] = useState(false);
+  const ruleFormRef = useRef<HTMLDivElement>(null);
 
   // Historical transaction backfill (web only — needs the KEK to decrypt credentials).
   const [backfillAccount, setBackfillAccount] = useState<number | ''>('');
@@ -127,9 +132,9 @@ export default function SpendingPage() {
     }
   }, [months, mode]);
 
-  const loadTransactions = useCallback(async (id: number, page: number) => {
+  const loadTransactions = useCallback(async (id: number | null, page: number) => {
     try {
-      const data = await getAccountTransactions(id, page);
+      const data = await getTransactions(page, id ?? undefined);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
@@ -156,9 +161,8 @@ export default function SpendingPage() {
           (a: { id: number; name: string }) => ({ id: a.id, name: a.name }),
         );
         setAccounts(options);
-        if (options.length > 0) {
-          setAccountId(options[0].id);
-        }
+        // No preselection: the list shows all accounts chronologically, the
+        // dropdown only narrows it.
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load data');
       }
@@ -166,9 +170,7 @@ export default function SpendingPage() {
   }, []);
 
   useEffect(() => {
-    if (accountId !== null) {
-      loadTransactions(accountId, 1);
-    }
+    loadTransactions(accountId, 1);
   }, [accountId, loadTransactions]);
 
   // Month selected for the pie breakdown (bar click or dropdown); defaults to
@@ -188,6 +190,11 @@ export default function SpendingPage() {
       ...m.by_category,
     }));
   }, [report]);
+
+  const accountNames = useMemo(
+    () => Object.fromEntries(accounts.map((a) => [a.id, a.name])),
+    [accounts],
+  );
 
   const monthDetail = useMemo(() => {
     if (!report || report.months.length === 0) return null;
@@ -253,12 +260,14 @@ export default function SpendingPage() {
     }
   };
 
-  const saveRule = async (categoryId: number) => {
+  const saveRule = async (target: number | '__transfer__') => {
     setSavingRule(true);
     try {
       const rule = await createCategoryRule({
         match_text: ruleText.trim(),
-        category: categoryId,
+        ...(target === '__transfer__'
+          ? { is_transfer: true }
+          : { category: target }),
         spread_months: ruleSpread,
         is_regex: ruleIsRegex,
       });
@@ -269,7 +278,7 @@ export default function SpendingPage() {
       setRuleIsRegex(false);
       // The rule applied retroactively — refresh everything that may have changed.
       loadReport();
-      if (accountId !== null) loadTransactions(accountId, 1);
+      loadTransactions(accountId, 1);
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create rule');
@@ -308,10 +317,49 @@ export default function SpendingPage() {
       setCategories((prev) => [...prev, category].sort((a, b) => a.name.localeCompare(b.name)));
       setNewCategoryName('');
       setCategoryDialogOpen(false);
-      await saveRule(category.id);
+      if (categoryDialogTx) {
+        // "+ New category…" was picked on a transaction row, not the rule form.
+        const tx = categoryDialogTx;
+        setCategoryDialogTx(null);
+        await handleClassify(tx, {
+          category: category.id,
+          ...(tx.is_transfer ? { is_transfer: false } : {}),
+        });
+      } else {
+        await saveRule(category.id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create category');
     }
+  };
+
+  /// One dropdown covers categories AND the transfer flag: they are mutually
+  /// exclusive on a transaction (transfers never carry a category).
+  const handleCategoryChoice = (tx: Transaction, value: string) => {
+    if (value === '__new__') {
+      setCategoryDialogTx(tx);
+      setCategoryDialogOpen(true);
+      return;
+    }
+    if (value === '__transfer__') {
+      handleClassify(tx, { is_transfer: true, category: null });
+      return;
+    }
+    handleClassify(tx, {
+      category: value ? Number(value) : null,
+      ...(tx.is_transfer ? { is_transfer: false } : {}),
+    });
+  };
+
+  /// Prefill the rule form from one transaction and jump to it.
+  const craftRuleFrom = (tx: Transaction) => {
+    const base = stripLeadingIban(tx.counterparty) || tx.description;
+    setRuleText(base.toLowerCase().slice(0, 128).trim());
+    setRuleCategory(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
+    setRuleIsRegex(false);
+    setTab('config');
+    setTimeout(() => ruleFormRef.current?.scrollIntoView(
+      { behavior: 'smooth', block: 'center' }), 50);
   };
 
   // Drag-and-drop rule ordering: rules are first-match-wins, so a more specific
@@ -369,7 +417,7 @@ export default function SpendingPage() {
         );
         setBackfillTruncated(Boolean(outcome.truncated));
         loadReport();
-        if (accountId !== null) loadTransactions(accountId, 1);
+        loadTransactions(accountId, 1);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Backfill failed');
@@ -400,7 +448,7 @@ export default function SpendingPage() {
       setCsvAccountChoice('');
       if (csvInputRef.current) csvInputRef.current.value = '';
       loadReport();
-      if (accountId !== null) loadTransactions(accountId, 1);
+      loadTransactions(accountId, 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'CSV import failed');
     } finally {
@@ -412,7 +460,7 @@ export default function SpendingPage() {
     try {
       await detectTransfers();
       loadReport();
-      if (accountId !== null) loadTransactions(accountId, 1);
+      loadTransactions(accountId, 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Transfer detection failed');
     }
@@ -652,8 +700,9 @@ export default function SpendingPage() {
             <div className="range-buttons">
               <select
                 value={accountId ?? ''}
-                onChange={(e) => setAccountId(Number(e.target.value))}
+                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
               >
+                <option value="">All accounts</option>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
@@ -668,17 +717,23 @@ export default function SpendingPage() {
             </div>
           </div>
           {transactions.length === 0 ? (
-            <p className="table-empty">No transactions for this account.</p>
+            <p className="table-empty">No transactions yet.</p>
           ) : (
             <div className="table-wrapper">
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>Date</th>
+                    <th>Account</th>
                     <th>Counterparty</th>
                     <th>Description</th>
+                    {/* One dropdown for category OR transfer: mutually
+                        exclusive, and transfers never carry a category.
+                        Manual transfer marking stays possible here because
+                        auto-detection only pairs entries between two
+                        accounts that both have a feed. */}
                     <th>Category</th>
-                    <th title="Exclude from the spending report">Transfer</th>
+                    <th aria-label="Actions" />
                     <th className="spending-amount-col">Amount</th>
                   </tr>
                 </thead>
@@ -686,38 +741,35 @@ export default function SpendingPage() {
                   {transactions.map((tx) => (
                     <tr key={tx.id} className={tx.is_transfer ? 'spending-transfer-row' : ''}>
                       <td>{tx.booking_date}</td>
+                      <td>{accountNames[tx.account] ?? ''}</td>
                       <td>{stripLeadingIban(tx.counterparty)}</td>
                       <td>
                         {tx.description}
-                        {tx.is_transfer && <span className="spending-transfer-badge">Transfer</span>}
                         {tx.spread_months > 1 && (
                           <span className="spending-spread-badge">/{tx.spread_months}m</span>
                         )}
                       </td>
                       <td>
                         <select
-                          value={tx.category ?? ''}
-                          onChange={(e) => handleClassify(tx, {
-                            category: e.target.value ? Number(e.target.value) : null,
-                          })}
+                          value={tx.is_transfer ? '__transfer__' : (tx.category ?? '')}
+                          onChange={(e) => handleCategoryChoice(tx, e.target.value)}
                         >
                           <option value="">—</option>
+                          <option value="__transfer__">Transfer (excluded)</option>
                           {categories.map((c) => (
                             <option key={c.id} value={c.id}>{c.name}</option>
                           ))}
+                          <option value="__new__">+ New category…</option>
                         </select>
                       </td>
                       <td>
-                        {/* Auto-detection only pairs entries between two accounts that
-                            both have a feed, so broker funding (e.g. a wire to IBKR)
-                            can never be detected — it has to be markable by hand. */}
-                        <input
-                          type="checkbox"
-                          aria-label="Mark as transfer"
-                          title="Transfers are excluded from the spending report"
-                          checked={tx.is_transfer}
-                          onChange={(e) => handleClassify(tx, { is_transfer: e.target.checked })}
-                        />
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          title="Create a rule from this transaction"
+                          onClick={() => craftRuleFrom(tx)}
+                        >
+                          <Plus size={14} /> Rule
+                        </button>
                       </td>
                       <td className={`spending-amount-col ${Number(tx.amount) < 0 ? 'spending-neg' : 'spending-pos'}`}>
                         {formatAmount(Number(tx.amount), tx.currency)}
@@ -730,7 +782,7 @@ export default function SpendingPage() {
                 <div className="table-actions">
                   <button
                     className="btn btn-sm btn-ghost"
-                    onClick={() => accountId !== null && loadTransactions(accountId, txPage + 1)}
+                    onClick={() => loadTransactions(accountId, txPage + 1)}
                   >
                     Load more ({transactions.length}/{txCount})
                   </button>
@@ -767,7 +819,7 @@ export default function SpendingPage() {
                 <GripVertical size={14} className="spending-rule-grip" />
                 <span className="spending-rule-index">{index + 1}</span>
                 <code>{rule.is_regex ? `/${rule.match_text}/` : rule.match_text}</code>
-                <span>→ {rule.category_name}</span>
+                <span>→ {rule.is_transfer ? 'Transfer (excluded)' : rule.category_name}</span>
                 {rule.is_regex && <span className="spending-spread-badge">regex</span>}
                 {rule.spread_months > 1 && <span className="spending-spread-badge">/{rule.spread_months} months</span>}
                 <button
@@ -779,7 +831,7 @@ export default function SpendingPage() {
                 </button>
               </div>
             ))}
-            <div className="spending-rule-row spending-rule-new">
+            <div className="spending-rule-row spending-rule-new" ref={ruleFormRef}>
               <input
                 placeholder="match text, e.g. rewe"
                 value={ruleText}
@@ -789,10 +841,12 @@ export default function SpendingPage() {
                 value={ruleCategory}
                 onChange={(e) => {
                   const v = e.target.value;
-                  setRuleCategory(v === '' ? '' : v === '__new__' ? '__new__' : Number(v));
+                  setRuleCategory(
+                    v === '' || v === '__new__' || v === '__transfer__' ? v : Number(v));
                 }}
               >
                 <option value="">Category…</option>
+                <option value="__transfer__">Transfer (excluded)</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -946,7 +1000,7 @@ export default function SpendingPage() {
           loadReport();
           getCategories().then(setCategories).catch(() => {});
           getCategoryRules().then(setRules).catch(() => {});
-          if (accountId !== null) loadTransactions(accountId, 1);
+          loadTransactions(accountId, 1);
         }} />
         </>)}
 
@@ -972,13 +1026,18 @@ export default function SpendingPage() {
                   />
                 </div>
                 <p className="form-hint">
-                  The rule <code>{ruleText}</code> will be created with this category.
+                  {categoryDialogTx
+                    ? 'The selected transaction will be assigned this category.'
+                    : <>The rule <code>{ruleText}</code> will be created with this category.</>}
                 </p>
                 <div className="form-actions">
                   <button
                     type="button"
                     className="btn btn-ghost"
-                    onClick={() => setCategoryDialogOpen(false)}
+                    onClick={() => {
+                      setCategoryDialogOpen(false);
+                      setCategoryDialogTx(null);
+                    }}
                   >
                     Cancel
                   </button>

@@ -24,6 +24,11 @@
 - AI proposes more concise category names: one word where possible, no "A & B" composites
 - Transaction history can now be backfilled from a bank CSV export in the web app (ZKB "with details" and DKB formats, auto-detected); re-imports and EBICS-synced ZKB entries are deduplicated. The file determines its own account (DKB via its IBAN, ZKB by currency), with a picker only when several accounts match; per-account import is also available from the dashboard account list
 - Categorization rules can be regular expressions (new checkbox in the web rule form, validated in the browser and on the server); AI rule consolidation leaves regex rules untouched, and the app displays them read-only
+- Web transactions list now shows all accounts in one chronological list with an account column (dropdown only narrows), matching the app
+- Web: category and transfer are one dropdown now — pick a category, "Transfer (excluded)", or create a new category right from the row; the transfer checkbox column is gone and remaining checkboxes render as switches
+- Rules can mark matches as transfers ("Transfer" option as the rule target), excluding recurring transfers like broker top-ups from spending automatically; manual not-a-transfer decisions always win
+- New "+ Rule" action on every web transaction row prefills the rule form from that transaction
+- Commerzbank CSV export is now recognized by the transaction import, including automatic account matching via the file's own IBAN and counterparty-IBAN extraction for transfer pairing
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)
 - A "Syncing accounts" bar below the app bar now shows while a Sync All run is in progress, including automatic syncs on app open

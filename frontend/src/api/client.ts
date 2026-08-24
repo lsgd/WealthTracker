@@ -876,11 +876,13 @@ export interface TransactionCategory {
 export interface CategoryRule {
   id: number;
   match_text: string;
-  category: number;
-  category_name: string;
+  category: number | null;
+  category_name: string | null;
   spread_months: number;
   position: number;
   is_regex: boolean;
+  // Transfer rules mark matches as transfers instead of categorizing them.
+  is_transfer: boolean;
 }
 
 export interface Transaction {
@@ -953,9 +955,10 @@ export async function getCategoryRules(): Promise<CategoryRule[]> {
 // Creating a rule also applies it retroactively to uncategorized transactions.
 export async function createCategoryRule(fields: {
   match_text: string;
-  category: number;
+  category?: number;
   spread_months?: number;
   is_regex?: boolean;
+  is_transfer?: boolean;
 }): Promise<CategoryRule> {
   const res = await fetchWithAuth('/api/spending/rules/', {
     method: 'POST',
@@ -989,6 +992,20 @@ export async function getAccountTransactions(
 ): Promise<{ count: number; results: Transaction[] }> {
   const url = `/api/accounts/${accountId}/transactions/${page > 1 ? `?page=${page}` : ''}`;
   const res = await fetchWithAuth(url);
+  if (!res.ok) throw new Error('Failed to fetch transactions');
+  return res.json();
+}
+
+// All accounts in one chronological list; accountId narrows to one account.
+export async function getTransactions(
+  page = 1,
+  accountId?: number,
+): Promise<{ count: number; results: Transaction[] }> {
+  const params = new URLSearchParams();
+  if (page > 1) params.set('page', String(page));
+  if (accountId) params.set('account', String(accountId));
+  const qs = params.toString();
+  const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');
   return res.json();
 }

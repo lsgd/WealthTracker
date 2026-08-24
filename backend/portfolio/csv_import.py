@@ -17,6 +17,12 @@ Format notes (structure learned from real exports; test fixtures are synthetic):
   change on booking and would come back as duplicates. The "Kundenreferenz" is
   not a guaranteed-unique bank reference, so DKB entries use the importer's
   order-stable content-hash dedup instead of a ``ref:`` key.
+- **Commerzbank**: header in row one ("Buchungstag;…"), German number format,
+  currency in its own column, and the account's OWN IBAN per row ("IBAN
+  Kontoinhaber") — used for account auto-matching. Counterparty name comes
+  from Sender (credits) / Empfänger (debits); the counterparty IBAN is only
+  embedded in the booking text and gets extracted so transfer auto-detection
+  can pair entries. No unique bank reference → content-hash dedup.
 """
 import csv
 import io
@@ -44,6 +50,7 @@ _ZKB_PURPOSE = ('payment purpose', 'zahlungszweck')
 _ZKB_DETAILS = ('details',)
 
 _DKB_HEADER_FIRST = 'buchungsdatum'
+_COMMERZBANK_HEADER_FIRST = 'buchungstag'
 
 
 def _decode(content: bytes) -> str:
@@ -99,13 +106,15 @@ def parse_transactions_csv(content: bytes, fallback_currency: str):
     header = [cell.strip().lower() for cell in rows[0]]
     if _find_column(header, _ZKB_REFERENCE) is not None:
         return _parse_zkb(rows, fallback_currency) + (None,)
+    if header and header[0] == _COMMERZBANK_HEADER_FIRST:
+        return _parse_commerzbank(rows, fallback_currency)
     for index, row in enumerate(rows):
         if row and row[0].strip().lower() == _DKB_HEADER_FIRST:
             iban = _preamble_iban(rows[:index])
             return _parse_dkb(rows, index, fallback_currency) + (iban,)
     raise CsvImportError(
-        'Unrecognized CSV format. Supported: ZKB account export ("with details") '
-        'and DKB account export.'
+        'Unrecognized CSV format. Supported: ZKB account export ("with details"), '
+        'DKB, and Commerzbank account exports.'
     )
 
 
@@ -166,6 +175,67 @@ def _parse_zkb(rows, fallback_currency):
             external_id=cell(row, ref_col) or None,
         ))
     return 'zkb', currency, infos, skipped
+
+
+def _parse_commerzbank(rows, fallback_currency):
+    """Returns the full 5-tuple: the file names its own IBAN per row."""
+    columns = {cell.strip().lower(): i for i, cell in enumerate(rows[0])}
+
+    def col(name):
+        return columns.get(name)
+
+    date_col = col('buchungstag')
+    value_col = col('wertstellung')
+    text_col = col('buchungstext')
+    amount_col = col('betrag')
+    currency_col = col('währung')
+    own_iban_col = col('iban kontoinhaber')
+    sender_col = col('sender')
+    recipient_col = col('empfänger')
+    purpose_col = col('verwendungszweck')
+    if None in (date_col, amount_col):
+        raise CsvImportError('Commerzbank export is missing expected columns.')
+
+    def cell(row, c):
+        return row[c].strip() if c is not None and c < len(row) else ''
+
+    account_iban = None
+    currency = fallback_currency
+    infos, skipped = [], 0
+    for row in rows[1:]:
+        booking_date = _parse_date(cell(row, date_col), ('%d.%m.%Y',))
+        if booking_date is None:
+            skipped += 1
+            continue
+        try:
+            amount = _parse_amount(cell(row, amount_col), german=True)
+        except InvalidOperation:
+            skipped += 1
+            continue
+        account_iban = account_iban or cell(row, own_iban_col).replace(' ', '').upper() or None
+        currency = cell(row, currency_col).upper() or currency
+        counterparty = cell(row, recipient_col) if amount < 0 else cell(row, sender_col)
+        text = cell(row, text_col)
+        # The counterparty IBAN only appears inside the booking text — pull it
+        # out (skipping the account's own) so transfer detection can pair.
+        counterparty_account = next(
+            (t for t in text.replace(' ', ' ').split()
+             if _IBAN_RE.match(t.upper()) and t.upper() != account_iban),
+            '',
+        )
+        purpose = cell(row, purpose_col)
+        infos.append(TransactionInfo(
+            booking_date=booking_date,
+            amount=amount,
+            currency=currency,
+            value_date=_parse_date(cell(row, value_col), ('%d.%m.%Y',)),
+            counterparty=counterparty,
+            counterparty_account=counterparty_account.upper(),
+            description=purpose or text,
+            # End-to-end refs are mostly NOTPROVIDED → content-hash dedup.
+            external_id=None,
+        ))
+    return 'commerzbank', currency, infos, skipped, account_iban
 
 
 def _parse_dkb(rows, header_index, fallback_currency):

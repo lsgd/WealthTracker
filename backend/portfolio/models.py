@@ -231,7 +231,15 @@ class CategoryRule(models.Model):
     category = models.ForeignKey(
         TransactionCategory,
         on_delete=models.CASCADE,
-        related_name='rules'
+        related_name='rules',
+        null=True,
+        blank=True,
+        help_text='Target category; NULL for transfer rules (see is_transfer)'
+    )
+    is_transfer = models.BooleanField(
+        default=False,
+        help_text='Mark matches as transfers between own accounts instead of '
+                  'assigning a category (transfers never carry a category)'
     )
     spread_months = models.PositiveSmallIntegerField(
         default=1,
@@ -248,9 +256,20 @@ class CategoryRule(models.Model):
         # Rules are evaluated first-match-wins, so order is meaningful and
         # user-controlled; id is only the tie-breaker for equal positions.
         ordering = ['position', 'id']
+        constraints = [
+            # Exactly one target: a category, or the transfer flag.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(is_transfer=True, category__isnull=True)
+                    | models.Q(is_transfer=False, category__isnull=False)
+                ),
+                name='rule_category_xor_transfer',
+            ),
+        ]
 
     def __str__(self):
-        return f"'{self.match_text}' -> {self.category.name}"
+        target = 'Transfer' if self.is_transfer else self.category.name
+        return f"'{self.match_text}' -> {target}"
 
 
 class Transaction(models.Model):

@@ -62,7 +62,9 @@ def apply_rules(user, transactions=None) -> int:
     First matching rule wins (rules in creation order). Only uncategorized,
     non-manually-classified transactions are considered. A rule with
     ``spread_months`` > 1 also sets the spread on matches that still have the
-    default of 1.
+    default of 1. A transfer rule marks the match as a transfer instead of
+    categorizing it — but never against the user's manual transfer decision,
+    and a manually-unmarked entry falls through to the later rules.
     """
     from .models import Transaction
 
@@ -83,15 +85,24 @@ def apply_rules(user, transactions=None) -> int:
     for tx in qs:
         haystack = f'{tx.counterparty} {tx.description}'.lower()
         for rule, matches in matchers:
-            if matches(haystack):
-                tx.category = rule.category
-                if rule.spread_months > 1 and tx.spread_months == 1:
-                    tx.spread_months = rule.spread_months
-                updated.append(tx)
+            if not matches(haystack):
+                continue
+            if rule.is_transfer:
+                if tx.transfer_manual:
+                    continue  # the user decided otherwise; try later rules
+                if not tx.is_transfer:
+                    tx.is_transfer = True
+                    updated.append(tx)
                 break
+            tx.category = rule.category
+            if rule.spread_months > 1 and tx.spread_months == 1:
+                tx.spread_months = rule.spread_months
+            updated.append(tx)
+            break
 
     if updated:
-        Transaction.objects.bulk_update(updated, ['category', 'spread_months'])
+        Transaction.objects.bulk_update(
+            updated, ['category', 'spread_months', 'is_transfer'])
     return len(updated)
 
 

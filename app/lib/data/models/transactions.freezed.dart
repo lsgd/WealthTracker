@@ -852,7 +852,9 @@ as String,
 /// @nodoc
 mixin _$CategoryRule {
 
- int get id;@JsonKey(name: 'match_text') String get matchText; int get category;@JsonKey(name: 'category_name') String? get categoryName;@JsonKey(name: 'spread_months') int get spreadMonths; int get position;/// Regex rules are created on the web; the app renders them read-only.
+ int get id;@JsonKey(name: 'match_text') String get matchText;/// Null for transfer rules (see [isTransfer]).
+ int? get category;@JsonKey(name: 'category_name') String? get categoryName;/// Marks matches as transfers instead of assigning a category.
+@JsonKey(name: 'is_transfer') bool get isTransfer;@JsonKey(name: 'spread_months') int get spreadMonths; int get position;/// Regex rules are created on the web; the app renders them read-only.
 @JsonKey(name: 'is_regex') bool get isRegex;
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
@@ -866,16 +868,16 @@ $CategoryRuleCopyWith<CategoryRule> get copyWith => _$CategoryRuleCopyWithImpl<C
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,spreadMonths,position,isRegex);
+int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex);
 
 @override
 String toString() {
-  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
+  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
 }
 
 
@@ -886,7 +888,7 @@ abstract mixin class $CategoryRuleCopyWith<$Res>  {
   factory $CategoryRuleCopyWith(CategoryRule value, $Res Function(CategoryRule) _then) = _$CategoryRuleCopyWithImpl;
 @useResult
 $Res call({
- int id,@JsonKey(name: 'match_text') String matchText, int category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
+ int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
 });
 
 
@@ -903,13 +905,14 @@ class _$CategoryRuleCopyWithImpl<$Res>
 
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? matchText = null,Object? category = null,Object? categoryName = freezed,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as int,matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as int,categoryName: freezed == categoryName ? _self.categoryName : categoryName // ignore: cast_nullable_to_non_nullable
-as String?,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as int?,categoryName: freezed == categoryName ? _self.categoryName : categoryName // ignore: cast_nullable_to_non_nullable
+as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
 as int,position: null == position ? _self.position : position // ignore: cast_nullable_to_non_nullable
 as int,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
 as bool,
@@ -997,10 +1000,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _CategoryRule() when $default != null:
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
   return orElse();
 
 }
@@ -1018,10 +1021,10 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)  $default,) {final _that = this;
 switch (_that) {
 case _CategoryRule():
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1038,10 +1041,10 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int id, @JsonKey(name: 'match_text')  String matchText,  int category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,) {final _that = this;
 switch (_that) {
 case _CategoryRule() when $default != null:
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
   return null;
 
 }
@@ -1053,13 +1056,16 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 @JsonSerializable()
 
 class _CategoryRule implements CategoryRule {
-  const _CategoryRule({required this.id, @JsonKey(name: 'match_text') required this.matchText, required this.category, @JsonKey(name: 'category_name') this.categoryName, @JsonKey(name: 'spread_months') this.spreadMonths = 1, this.position = 0, @JsonKey(name: 'is_regex') this.isRegex = false});
+  const _CategoryRule({required this.id, @JsonKey(name: 'match_text') required this.matchText, this.category, @JsonKey(name: 'category_name') this.categoryName, @JsonKey(name: 'is_transfer') this.isTransfer = false, @JsonKey(name: 'spread_months') this.spreadMonths = 1, this.position = 0, @JsonKey(name: 'is_regex') this.isRegex = false});
   factory _CategoryRule.fromJson(Map<String, dynamic> json) => _$CategoryRuleFromJson(json);
 
 @override final  int id;
 @override@JsonKey(name: 'match_text') final  String matchText;
-@override final  int category;
+/// Null for transfer rules (see [isTransfer]).
+@override final  int? category;
 @override@JsonKey(name: 'category_name') final  String? categoryName;
+/// Marks matches as transfers instead of assigning a category.
+@override@JsonKey(name: 'is_transfer') final  bool isTransfer;
 @override@JsonKey(name: 'spread_months') final  int spreadMonths;
 @override@JsonKey() final  int position;
 /// Regex rules are created on the web; the app renders them read-only.
@@ -1078,16 +1084,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,spreadMonths,position,isRegex);
+int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex);
 
 @override
 String toString() {
-  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
+  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
 }
 
 
@@ -1098,7 +1104,7 @@ abstract mixin class _$CategoryRuleCopyWith<$Res> implements $CategoryRuleCopyWi
   factory _$CategoryRuleCopyWith(_CategoryRule value, $Res Function(_CategoryRule) _then) = __$CategoryRuleCopyWithImpl;
 @override @useResult
 $Res call({
- int id,@JsonKey(name: 'match_text') String matchText, int category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
+ int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
 });
 
 
@@ -1115,13 +1121,14 @@ class __$CategoryRuleCopyWithImpl<$Res>
 
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? matchText = null,Object? category = null,Object? categoryName = freezed,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
   return _then(_CategoryRule(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as int,matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
-as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as int,categoryName: freezed == categoryName ? _self.categoryName : categoryName // ignore: cast_nullable_to_non_nullable
-as String?,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
+as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as int?,categoryName: freezed == categoryName ? _self.categoryName : categoryName // ignore: cast_nullable_to_non_nullable
+as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ignore: cast_nullable_to_non_nullable
+as bool,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
 as int,position: null == position ? _self.position : position // ignore: cast_nullable_to_non_nullable
 as int,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
 as bool,
