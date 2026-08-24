@@ -691,6 +691,28 @@ class TransactionImporterTests(TestCase):
         remaining = Transaction.objects.get()
         self.assertEqual(remaining.dedup_key, 'ref:ZKB-1')
 
+    def test_dedupe_command_never_deletes_hand_entered_rows(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        common = dict(
+            account=self.account, booking_date=date(2026, 8, 21),
+            amount=D('-30'), currency='CHF',
+        )
+        Transaction.objects.create(
+            **common, description='Noted by hand', source='manual',
+            dedup_key='manual-1',
+        )
+        Transaction.objects.create(
+            **common, description='Debit TWINT', source='camt053',
+            dedup_key='ref:ZKB-1',
+        )
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        # The user's own entry cannot be re-imported — it always survives, and
+        # it does not count as a feed that also saw the payment.
+        self.assertEqual(Transaction.objects.count(), 2)
+
     def test_dedupe_command_keeps_repeats_from_a_single_source(self):
         from decimal import Decimal as D
         from io import StringIO

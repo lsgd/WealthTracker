@@ -11,9 +11,10 @@ from MORE THAN ONE source are touched, and only the surplus over the largest
 per-source count is removed: if a day genuinely holds two identical payments,
 each feed reports two and nothing is deleted.
 
-Dry run by default; pass --apply to delete. Rows a user has classified by hand
-(category_manual / transfer_manual) are kept in preference to untouched ones,
-as are rows carrying a bank reference.
+Dry run by default; pass --apply to delete. Hand-entered rows (source
+'manual') are never deleted and never count as a feed. Among imported rows,
+ones the user classified by hand (category_manual / transfer_manual) are kept
+in preference to untouched ones, as are rows carrying a bank reference.
 """
 from collections import defaultdict
 
@@ -56,6 +57,11 @@ class Command(BaseCommand):
                 amount=group['amount'],
                 currency=group['currency'],
             ))
+            # Hand-entered rows are the user's own record and cannot be
+            # re-imported — never a deletion candidate, and never counted as
+            # a feed that "also saw" the payment.
+            manual = [row for row in rows if row.source == 'manual']
+            rows = [row for row in rows if row.source != 'manual']
             by_source = defaultdict(list)
             for row in rows:
                 by_source[row.source].append(row)
@@ -72,6 +78,7 @@ class Command(BaseCommand):
                 not t.dedup_key.startswith('ref:'),
                 t.id,
             ))
+            kept += len(manual)
             survivors, doomed = rows[:keep_count], rows[keep_count:]
             kept += len(survivors)
             for row in doomed:
