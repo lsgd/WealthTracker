@@ -47,6 +47,9 @@ interface AuthPrompt {
   accountId: number;
   accountName: string;
   twoFaType: string;
+  // What the broker said about the challenge, e.g. the masked phone number
+  // an SMS code was sent to.
+  challenge?: string;
 }
 
 interface CredentialField {
@@ -289,6 +292,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               accountId,
               accountName,
               twoFaType: result.two_fa_type || 'totp',
+              challenge: result.challenge?.message,
             });
             setAuthCode('');
             setAuthError('');
@@ -349,6 +353,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
           accountId,
           accountName,
           twoFaType: result.two_fa_type || 'totp',
+          challenge: result.challenge?.message,
         });
         setAuthCode('');
         setAuthError('');
@@ -613,13 +618,19 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
 
             <form onSubmit={handleAuthSubmit}>
               <p className="form-hint" style={{ marginBottom: 16 }}>
-                Enter the one-time code from your authenticator app to sync{' '}
+                {authPrompt.challenge
+                  || (authPrompt.twoFaType === 'sms'
+                    ? 'Enter the code the bank just sent you by SMS'
+                    : 'Enter the one-time code from your authenticator app')}
+                {' to sync '}
                 <strong>{authPrompt.accountName}</strong>.
               </p>
 
               <div className="form-group">
                 <label htmlFor="auth-code">
-                  {authPrompt.twoFaType === 'totp' ? 'TOTP Code' : 'Authentication Code'}
+                  {authPrompt.twoFaType === 'totp' ? 'TOTP Code'
+                    : authPrompt.twoFaType === 'sms' ? 'SMS Code'
+                    : 'Authentication Code'}
                 </label>
                 <input
                   id="auth-code"

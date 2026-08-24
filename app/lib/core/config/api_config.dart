@@ -39,6 +39,10 @@ class ApiConfig {
 
   static const String syncAllPath = '/api/accounts/sync/';
 
+  /// Answer a broker's 2FA challenge (e.g. an SMS code) and finish the sync.
+  static String accountAuthPath(int accountId) =>
+      '/api/accounts/$accountId/auth/';
+
   static const String spendingMonthlyPath = '/api/spending/monthly/';
   static const String spendingCategoriesPath = '/api/spending/categories/';
   static const String spendingRulesPath = '/api/spending/rules/';

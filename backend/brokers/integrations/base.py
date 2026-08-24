@@ -127,6 +127,16 @@ class BrokerIntegrationBase(ABC):
         """
         pass
 
+    def requires_reauth_before_2fa(self) -> bool:
+        """Must ``authenticate()`` run again before ``complete_2fa()``?
+
+        True for stateless protocols such as FinTS, where the second request
+        rebuilds the dialog from scratch. False where the first call already
+        started something the user is responding to — repeating it would send
+        a second SMS and invalidate the code they are holding.
+        """
+        return True
+
     def supports_positions(self) -> bool:
         """
         Returns True if this integration can fetch per-asset holdings.

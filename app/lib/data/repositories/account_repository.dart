@@ -87,6 +87,22 @@ class AccountRepository {
     return response.data as Map<String, dynamic>;
   }
 
+  /// Answer a broker's 2FA challenge and let the sync finish.
+  ///
+  /// Used by brokers that cannot sync unattended (Swisscard sends an SMS
+  /// code). The account is left in `pending_auth` until this succeeds.
+  Future<Map<String, dynamic>> completeAccountAuth(
+    int accountId,
+    String authCode,
+  ) async {
+    final response = await _apiClient.post(
+      ApiConfig.accountAuthPath(accountId),
+      data: {'auth_code': authCode},
+      timeout: ApiConfig.syncTimeout,
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
   /// Start sync for all accounts (returns immediately with task ID).
   Future<Map<String, dynamic>> syncAllAccounts() async {
     final response = await _apiClient.post(ApiConfig.syncAllPath);

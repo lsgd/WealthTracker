@@ -564,6 +564,26 @@ class EbicsAccountFallbackTests(APITestCase):
         account_ids = [aid for aid, _ in m_enqueue.call_args.kwargs['account_creds']]
         self.assertEqual(account_ids, [self.account.id])
 
+    def test_sync_all_skips_brokers_that_need_an_sms_code(self):
+        """A bulk run must not fire SMS codes nobody is waiting to type."""
+        self._activate()
+        swisscard = Broker.objects.create(
+            code='swisscard', name='Swisscard', integration_type='rest')
+        FinancialAccount.objects.create(
+            user=self.user, broker=swisscard, name='Card', currency='CHF',
+            encrypted_credentials=b'x', sync_enabled=True,
+        )
+        from portfolio.sync_queue import sync_queue
+        from portfolio.views import SyncAllAccountsView
+        with patch.object(SyncAllAccountsView, 'decrypt_sync_credentials', return_value={'k': 1}), \
+                patch.object(sync_queue, 'has_pending_task', return_value=None), \
+                patch.object(sync_queue, 'enqueue', return_value='t3') as m_enqueue:
+            resp = self.client.post(reverse('sync_all_accounts'))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        account_ids = [aid for aid, _ in m_enqueue.call_args.kwargs['account_creds']]
+        # Only the EBICS account; the card account syncs on demand instead.
+        self.assertEqual(account_ids, [self.account.id])
+
 
 class TransactionImporterTests(TestCase):
     """Dedup and window logic of the shared transaction importer."""

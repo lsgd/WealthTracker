@@ -15,6 +15,7 @@ import '../providers/wealth_provider.dart';
 import '../widgets/account_card.dart';
 import '../widgets/holdings_card.dart';
 import '../widgets/quick_snapshot_sheet.dart';
+import '../widgets/two_factor_prompt.dart';
 import '../widgets/wealth_line_chart.dart';
 import '../widgets/wealth_summary_card.dart';
 
@@ -162,6 +163,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         if (taskId != null) {
           final result = await _pollSyncTask(repo, taskId);
           await _refresh();
+          // Brokers that cannot sync unattended (Swisscard sends an SMS)
+          // stop here and wait for the code.
+          if (result?['status'] == 'pending_auth') {
+            await _askForAuthCode(repo, account, result!);
+            return;
+          }
           if (mounted) {
             final message = result?['message'] as String?;
             if (message != null) _showSuccessSnackBar(message);
@@ -178,6 +185,38 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       if (mounted) {
         setState(() => _syncingAccounts.remove(account.id));
       }
+    }
+  }
+
+  /// Ask for the broker's one-time code and finish the sync with it.
+  Future<void> _askForAuthCode(
+    AccountRepository repo,
+    Account account,
+    Map<String, dynamic> pending,
+  ) async {
+    if (!mounted) return;
+    final challenge = pending['challenge'];
+    final done = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TwoFactorPrompt(
+        accountName: account.name,
+        twoFaType: pending['two_fa_type'] as String? ?? 'sms',
+        challenge: challenge is Map ? challenge['message'] as String? : null,
+        onSubmit: (code) async {
+          try {
+            final result = await repo.completeAccountAuth(account.id, code);
+            final error = result['error'];
+            return error is String ? error : null;
+          } catch (e) {
+            return '$e';
+          }
+        },
+      ),
+    );
+    await _refresh();
+    if (done == true && mounted) {
+      _showSuccessSnackBar('${account.name} synced');
     }
   }
 

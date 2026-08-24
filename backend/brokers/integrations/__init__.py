@@ -8,6 +8,13 @@ from brokers.models import Broker
 from .base import BrokerIntegrationBase
 
 
+# Brokers whose sync cannot finish without the user answering a challenge in
+# that moment (an SMS code). Bulk and automatic syncs skip them: firing an SMS
+# on every "Sync all" would be noise at best, and repeated unanswered
+# challenges can trip a bank's fraud checks. They sync on demand, per account.
+INTERACTIVE_BROKER_CODES = {'swisscard'}
+
+
 def get_broker_integration(
     broker: Broker,
     credentials: Dict[str, Any],
@@ -61,6 +68,10 @@ def get_broker_integration(
     if broker.code == 'viac':
         from .viac import VIACIntegration
         return VIACIntegration(credentials=credentials)
+
+    if broker.code == 'swisscard':
+        from .swisscard import SwisscardIntegration
+        return SwisscardIntegration(credentials=credentials, account_id=account_id)
 
     if broker.code == 'morganstanley':
         from .morganstanley import MorganStanleyIntegration

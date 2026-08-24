@@ -320,9 +320,28 @@
       "website_url": "https://www.swisscard.ch",
       "country": "CH",
       "is_active": true,
-      "supports_2fa": false,
+      "supports_2fa": true,
       "supports_auto_sync": false,
-      "credential_schema": {},
+      "credential_schema": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "Your swisscard.ch login name"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "format": "password",
+            "description": "Your swisscard.ch password"
+          }
+        }
+      },
       "created_at": "2026-01-20T00:00:00Z",
       "updated_at": "2026-01-20T00:00:00Z"
     }

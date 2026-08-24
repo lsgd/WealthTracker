@@ -669,6 +669,8 @@ class SyncAllAccountsView(KEKAuthenticationMixin, APIView):
         # (state != 'active') can't sync, so it's excluded here — the account is
         # treated like a manual one until the bank activates it.
         from django.db.models import Q
+
+        from brokers.integrations import INTERACTIVE_BROKER_CODES
         accounts = FinancialAccount.objects.filter(
             user=request.user,
             is_manual=False,
@@ -676,6 +678,10 @@ class SyncAllAccountsView(KEKAuthenticationMixin, APIView):
         ).filter(
             ~Q(encrypted_credentials__isnull=True) & ~Q(encrypted_credentials=b'')
             | Q(ebics_credential__state='active')
+        ).exclude(
+            # These need an SMS code answered while the sync runs; a bulk run
+            # would only send codes nobody is waiting to type.
+            broker__code__in=INTERACTIVE_BROKER_CODES,
         ).select_related('broker', 'ebics_credential')
 
         if not accounts.exists():
@@ -767,10 +773,16 @@ class AccountAuthView(KEKAuthenticationMixin, APIView):
             credentials = self.decrypt_account_credentials(request, account)
             integration = get_broker_integration(account.broker, credentials, account_id=account.id)
 
-            # Re-authenticate to restore session
-            auth_result = integration.authenticate()
+            # Stateless protocols (FinTS) rebuild the dialog before answering
+            # the challenge; interactive ones must NOT — repeating the first
+            # step would send a second SMS and void the code the user holds.
+            if integration.requires_reauth_before_2fa():
+                auth_result = integration.authenticate()
+                needs_2fa = auth_result.requires_2fa
+            else:
+                needs_2fa = True
 
-            if auth_result.requires_2fa:
+            if needs_2fa:
                 # Complete 2FA
                 auth_result = integration.complete_2fa(auth_code, session_data)
 
