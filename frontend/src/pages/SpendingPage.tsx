@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import { stripLeadingIban } from '../utils/iban';
 import type {
@@ -30,7 +30,7 @@ import {
   createCategory,
   createCategoryRule,
   deleteCategoryRule,
-  detectTransfers,
+  updateCategoryRule,
   getAccounts,
   getTransactions,
   getCategories,
@@ -101,6 +101,9 @@ export default function SpendingPage() {
   const [rules, setRules] = useState<CategoryRule[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
+  // Transaction list filter: '' = all, 'none' = uncategorized, 'transfer', or
+  // a category id.
+  const [txCategory, setTxCategory] = useState<'' | 'none' | 'transfer' | number>('');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txCount, setTxCount] = useState(0);
   const [txPage, setTxPage] = useState(1);
@@ -124,6 +127,15 @@ export default function SpendingPage() {
   // that group's chips. Only the "+" moves it — changing the category
   // dropdown by hand does not. Null = form at the bottom of the card.
   const [ruleFormAnchor, setRuleFormAnchor] = useState<string | null>(null);
+  // "Regex enabled but the text has no regex syntax" confirmation dialog.
+  const [regexConfirmOpen, setRegexConfirmOpen] = useState(false);
+  // Rule being edited (chip click) — null when the dialog is closed.
+  const [editRule, setEditRule] = useState<CategoryRule | null>(null);
+  const [editText, setEditText] = useState('');
+  const [editTarget, setEditTarget] = useState<number | '__transfer__'>('__transfer__');
+  const [editSpread, setEditSpread] = useState(1);
+  const [editIsRegex, setEditIsRegex] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
   const [ruleFilter, setRuleFilter] = useState('');
   const ruleInputRef = useRef<HTMLInputElement>(null);
   const [draggedRule, setDraggedRule] = useState<number | null>(null);
@@ -163,16 +175,21 @@ export default function SpendingPage() {
     }
   }, [months, mode]);
 
-  const loadTransactions = useCallback(async (id: number | null, page: number) => {
+  const loadTransactions = useCallback(async (
+    id: number | null,
+    page: number,
+    category: '' | 'none' | 'transfer' | number = txCategory,
+  ) => {
     try {
-      const data = await getTransactions(page, id ?? undefined);
+      const data = await getTransactions(
+        page, id ?? undefined, category === '' ? undefined : category);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transactions');
     }
-  }, []);
+  }, [txCategory]);
 
   useEffect(() => {
     loadReport();
@@ -299,7 +316,8 @@ export default function SpendingPage() {
         ...(target === '__transfer__'
           ? { is_transfer: true }
           : { category: target }),
-        spread_months: ruleSpread,
+        // A hidden spread control must not smuggle a stale value along.
+        spread_months: target === '__transfer__' ? 1 : ruleSpread,
         is_regex: asRegex,
       });
       setRules((prev) => [...prev, rule]);
@@ -321,9 +339,21 @@ export default function SpendingPage() {
     }
   };
 
+  /// Second half of handleAddRule, also entered from the "not a regex?"
+  /// dialog with the user's choice.
+  const proceedSaveRule = (asRegex: boolean) => {
+    setRegexConfirmOpen(false);
+    if (!asRegex) setRuleIsRegex(false);
+    if (ruleCategory === '') return;
+    if (ruleCategory === '__new__') {
+      setCategoryDialogOpen(true);
+      return;
+    }
+    saveRule(ruleCategory, asRegex);
+  };
+
   const handleAddRule = () => {
     if (!ruleText.trim() || ruleCategory === '') return;
-    let asRegex = ruleIsRegex;
     if (ruleIsRegex) {
       // Instant feedback for a broken pattern. The server re-validates with
       // Python's `re` (the engine that actually runs the rule) — this JS
@@ -337,22 +367,11 @@ export default function SpendingPage() {
       // "hello" with the regex switch on is almost certainly a mistake — ask
       // instead of blindly submitting.
       if (!ANY_REGEX_SYNTAX.test(ruleText)) {
-        const asPlain = window.confirm(
-          `"${ruleText.trim()}" contains no regular-expression syntax. `
-          + 'Save it as a plain substring rule instead? '
-          + '(Cancel keeps it as a regex.)',
-        );
-        if (asPlain) {
-          asRegex = false;
-          setRuleIsRegex(false);
-        }
+        setRegexConfirmOpen(true);
+        return;
       }
     }
-    if (ruleCategory === '__new__') {
-      setCategoryDialogOpen(true);
-      return;
-    }
-    saveRule(ruleCategory, asRegex);
+    proceedSaveRule(ruleIsRegex);
   };
 
   const handleCreateCategoryAndRule = async (e: React.FormEvent) => {
@@ -466,6 +485,49 @@ export default function SpendingPage() {
     }
   };
 
+  const openRuleEditor = (rule: CategoryRule) => {
+    setEditRule(rule);
+    setEditText(rule.match_text);
+    setEditTarget(rule.is_transfer ? '__transfer__' : (rule.category as number));
+    setEditSpread(rule.spread_months);
+    setEditIsRegex(rule.is_regex);
+    setError('');
+  };
+
+  const handleSaveRuleEdit = async () => {
+    const rule = editRule;
+    if (!rule || !editText.trim()) return;
+    if (editIsRegex) {
+      try {
+        new RegExp(editText.trim());
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Invalid regular expression');
+        return;
+      }
+    }
+    const isTransfer = editTarget === '__transfer__';
+    setEditSaving(true);
+    try {
+      const updated = await updateCategoryRule(rule.id, {
+        match_text: editText.trim(),
+        is_regex: editIsRegex,
+        is_transfer: isTransfer,
+        category: isTransfer ? null : editTarget,
+        // Transfers are excluded from spending — nothing to amortize.
+        spread_months: isTransfer ? 1 : editSpread,
+      });
+      setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)));
+      setEditRule(null);
+      // Rules re-run server-side: the report and labels may have changed.
+      loadReport();
+      loadTransactions(accountId, 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update rule');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const handleDeleteRule = async (ruleId: number) => {
     try {
       await deleteCategoryRule(ruleId);
@@ -541,16 +603,6 @@ export default function SpendingPage() {
     }
   };
 
-  const handleDetectTransfers = async () => {
-    try {
-      await detectTransfers();
-      loadReport();
-      loadTransactions(accountId, 1);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Transfer detection failed');
-    }
-  };
-
   // Close the category dialog on Escape.
   useEffect(() => {
     if (!categoryDialogOpen) return;
@@ -560,6 +612,16 @@ export default function SpendingPage() {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [categoryDialogOpen]);
+
+  // Escape on the regex confirmation = cancel, i.e. save nothing.
+  useEffect(() => {
+    if (!regexConfirmOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRegexConfirmOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [regexConfirmOpen]);
 
   const currency = report?.base_currency ?? 'EUR';
 
@@ -606,12 +668,16 @@ export default function SpendingPage() {
         ))}
         <option value="__new__">+ New category…</option>
       </select>
-      <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
-        <option value={1}>no spread</option>
-        <option value={3}>/3 months</option>
-        <option value={6}>/6 months</option>
-        <option value={12}>/12 months</option>
-      </select>
+      {/* Transfers are excluded from spending entirely — there is nothing to
+          amortize, so the spread control does not apply to them. */}
+      {ruleCategory !== '__transfer__' && (
+        <select value={ruleSpread} onChange={(e) => setRuleSpread(Number(e.target.value))}>
+          <option value={1}>no spread</option>
+          <option value={3}>/3 months</option>
+          <option value={6}>/6 months</option>
+          <option value={12}>/12 months</option>
+        </select>
+      )}
       <button
         className="btn btn-sm btn-primary"
         onClick={handleAddRule}
@@ -855,13 +921,22 @@ export default function SpendingPage() {
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
-              <button
-                className="btn btn-sm btn-ghost"
-                title="Re-run transfer detection"
-                onClick={handleDetectTransfers}
+              <select
+                aria-label="Filter by category"
+                value={txCategory}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTxCategory(
+                    v === '' || v === 'none' || v === 'transfer' ? v : Number(v));
+                }}
               >
-                <ArrowLeftRight size={14} /> Detect transfers
-              </button>
+                <option value="">All categories</option>
+                <option value="none">Uncategorized</option>
+                <option value="transfer">Transfer (excluded)</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
             </div>
           </div>
           {transactions.length === 0 ? (
@@ -995,13 +1070,19 @@ export default function SpendingPage() {
                         key={rule.id}
                         className="rule-chip"
                         title={[
+                          'Click to edit',
                           rule.is_regex ? 'regular expression' : null,
                           rule.spread_months > 1
                             ? `spread over ${rule.spread_months} months` : null,
-                        ].filter(Boolean).join(' · ') || undefined}
+                        ].filter(Boolean).join(' · ')}
                       >
-                        <code>{rule.is_regex ? `/${rule.match_text}/` : rule.match_text}</code>
-                        {rule.spread_months > 1 && <em>/{rule.spread_months}m</em>}
+                        <button
+                          className="rule-chip-edit"
+                          onClick={() => openRuleEditor(rule)}
+                        >
+                          <code>{rule.is_regex ? `/${rule.match_text}/` : rule.match_text}</code>
+                          {rule.spread_months > 1 && <em>/{rule.spread_months}m</em>}
+                        </button>
                         <button
                           aria-label={`Delete rule ${rule.match_text}`}
                           onClick={() => handleDeleteRule(rule.id)}
@@ -1206,6 +1287,125 @@ export default function SpendingPage() {
           loadTransactions(accountId, 1);
         }} />
         </>)}
+
+        {editRule && (
+          <div className="modal-overlay" onClick={() => setEditRule(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Edit rule</h3>
+                <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-rule-text">Match text</label>
+                <input
+                  id="edit-rule-text"
+                  autoFocus
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label className="spending-switch">
+                  <input
+                    type="checkbox"
+                    checked={editIsRegex}
+                    onChange={(e) => setEditIsRegex(e.target.checked)}
+                  />
+                  Regular expression
+                </label>
+              </div>
+              <div className="form-group">
+                <label htmlFor="edit-rule-target">Target</label>
+                <select
+                  id="edit-rule-target"
+                  value={editTarget}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditTarget(v === '__transfer__' ? v : Number(v));
+                  }}
+                >
+                  <option value="__transfer__">Transfer (excluded)</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              {editTarget !== '__transfer__' && (
+                <div className="form-group">
+                  <label htmlFor="edit-rule-spread">Spread</label>
+                  <select
+                    id="edit-rule-spread"
+                    value={editSpread}
+                    onChange={(e) => setEditSpread(Number(e.target.value))}
+                  >
+                    <option value={1}>no spread</option>
+                    <option value={3}>/3 months</option>
+                    <option value={6}>/6 months</option>
+                    <option value={12}>/12 months</option>
+                  </select>
+                  <small className="form-hint">
+                    A yearly bill shows as one twelfth per month in the
+                    normalized view.
+                  </small>
+                </div>
+              )}
+              <div className="form-actions">
+                <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSaveRuleEdit}
+                  disabled={editSaving || !editText.trim()}
+                >
+                  {editSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {regexConfirmOpen && (
+          <div className="modal-overlay" onClick={() => setRegexConfirmOpen(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Not a regular expression?</h3>
+                <button className="btn btn-ghost" onClick={() => setRegexConfirmOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="form-hint">
+                <code>{ruleText.trim()}</code> contains no regular-expression
+                syntax — no <code>[ ]</code>, <code>|</code>, <code>?</code>,{' '}
+                <code>*</code>, <code>+</code> or similar. As a regex it behaves
+                exactly like a plain substring, only slower to read later.
+              </p>
+              <div className="form-actions">
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setRegexConfirmOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => proceedSaveRule(true)}
+                >
+                  Save as regex
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => proceedSaveRule(false)}
+                  autoFocus
+                >
+                  Save as plain text
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {categoryDialogOpen && (
           <div className="modal-overlay" onClick={() => setCategoryDialogOpen(false)}>

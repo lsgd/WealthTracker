@@ -71,6 +71,44 @@ def _dedup_keys(infos):
     return keys
 
 
+def cross_source_duplicate_budget(account, infos, source):
+    """How many entries per (date, amount, currency) are already covered by
+    ANOTHER source — those must not be imported a second time.
+
+    The same bank entry can arrive through two paths (an EBICS camt.053 sync
+    and a CSV export of the same account). Their keys only coincide when both
+    carry the bank's reference; ZKB's CSV and camt differ in wording
+    ("Belastung" vs "Debit"), so a content-hash fallback produces two rows for
+    one payment. Counting per (date, amount, currency) instead of matching
+    text keeps genuinely repeated payments: if a day really holds two 30 CHF
+    TWINTs, both sources report two, and the budget only covers two.
+    """
+    from .models import Transaction
+
+    incoming = {}
+    for info in infos:
+        key = (info.booking_date, info.amount, info.currency)
+        incoming[key] = incoming.get(key, 0) + 1
+    if not incoming:
+        return {}
+
+    budget = {}
+    existing = (
+        Transaction.objects
+        .filter(
+            account=account,
+            booking_date__in={k[0] for k in incoming},
+        )
+        .exclude(source=source)
+        .exclude(source='manual')  # hand-entered rows are the user's own truth
+        .values_list('booking_date', 'amount', 'currency')
+    )
+    for key in existing:
+        if key in incoming:
+            budget[key] = budget.get(key, 0) + 1
+    return budget
+
+
 def store_transactions(account, infos, source=None) -> int:
     """Persist a fetched batch idempotently. Returns the number of new rows.
 
@@ -82,9 +120,24 @@ def store_transactions(account, infos, source=None) -> int:
     source = source or _SOURCE_BY_INTEGRATION_TYPE.get(
         getattr(account.broker, 'integration_type', '') or '', 'broker',
     )
+    budget = cross_source_duplicate_budget(account, infos, source)
 
     created_count = 0
     for info, dedup_key in zip(infos, _dedup_keys(infos)):
+        # Already stored under this exact key: the normal idempotent path.
+        if Transaction.objects.filter(
+                account=account, dedup_key=dedup_key).exists():
+            continue
+        # Same payment already present from another feed, under a key that
+        # cannot match (different wording, or one side has no bank reference).
+        budget_key = (info.booking_date, info.amount, info.currency)
+        if budget.get(budget_key):
+            budget[budget_key] -= 1
+            logger.info(
+                'Skipping %s %s on %s for %s — already imported from another source',
+                info.amount, info.currency, info.booking_date, account.name,
+            )
+            continue
         _, created = Transaction.objects.get_or_create(
             account=account,
             dedup_key=dedup_key,

@@ -1163,8 +1163,9 @@ class TransactionCsvImportView(APIView):
 class TransactionListView(generics.ListAPIView):
     """All of the user's transactions, newest first, across accounts.
 
-    Optional query params: ``account`` (id, restrict to one account) and
-    ``uncategorized`` (truthy, only transactions without a category).
+    Optional query params: ``account`` (id, restrict to one account),
+    ``uncategorized`` (truthy, only transactions without a category),
+    ``category`` (id, or ``transfer`` for transfers only).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
@@ -1179,6 +1180,12 @@ class TransactionListView(generics.ListAPIView):
             qs = qs.filter(account_id=account)
         if self.request.query_params.get('uncategorized') in ('1', 'true'):
             qs = qs.filter(category__isnull=True)
+        category = self.request.query_params.get('category')
+        if category == 'transfer':
+            qs = qs.filter(is_transfer=True)
+        elif category:
+            # Own categories only — an id from another user must not leak rows.
+            qs = qs.filter(category_id=category, category__user=self.request.user)
         return qs
 
 

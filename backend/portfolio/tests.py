@@ -615,6 +615,96 @@ class TransactionImporterTests(TestCase):
             {'ref:R1', 'ref:R2'},
         )
 
+    def test_same_entry_from_two_sources_is_not_duplicated(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        # EBICS wording, no bank reference -> content hash.
+        store_transactions(self.account, [self._info(
+            amount=D('-30'), description='Debit TWINT: ALTERMATT, MANUEL',
+        )], source='camt053')
+        # The account's CSV export of the same payment: German wording, so the
+        # content hash differs and the keys can never match.
+        created = store_transactions(self.account, [self._info(
+            amount=D('-30'), description='Belastung TWINT: ALTERMATT, MANUEL',
+        )], source='csv')
+        self.assertEqual(created, 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+
+    def test_genuinely_repeated_payment_survives_a_second_source(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        # Two identical payments on one day, as the sync saw them.
+        store_transactions(self.account, [
+            self._info(amount=D('-30'), description='Debit TWINT: A'),
+            self._info(amount=D('-30'), description='Debit TWINT: A'),
+        ], source='camt053')
+        # The CSV reports the same two — neither is new, none is lost.
+        created = store_transactions(self.account, [
+            self._info(amount=D('-30'), description='Belastung TWINT: A'),
+            self._info(amount=D('-30'), description='Belastung TWINT: A'),
+        ], source='csv')
+        self.assertEqual(created, 0)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+
+    def test_third_payment_only_in_the_csv_is_still_imported(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        store_transactions(self.account, [
+            self._info(amount=D('-30'), description='Debit TWINT: A'),
+        ], source='camt053')
+        # The CSV covers the same day but holds one more such payment.
+        created = store_transactions(self.account, [
+            self._info(amount=D('-30'), description='Belastung TWINT: A'),
+            self._info(amount=D('-30'), description='Belastung TWINT: A'),
+        ], source='csv')
+        self.assertEqual(created, 1)
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 2)
+
+    def test_dedupe_command_removes_existing_cross_source_duplicates(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        common = dict(
+            account=self.account, booking_date=date(2026, 8, 21),
+            amount=D('-30'), currency='CHF',
+        )
+        Transaction.objects.create(
+            **common, description='Debit TWINT: ALTERMATT',
+            source='camt053', dedup_key='ref:ZKB-1',
+        )
+        Transaction.objects.create(
+            **common, description='Belastung TWINT: ALTERMATT',
+            source='csv', dedup_key='h:abc',
+        )
+        # Dry run reports but keeps both.
+        out = StringIO()
+        call_command('dedupe_transactions', stdout=out)
+        self.assertIn('would delete', out.getvalue())
+        self.assertEqual(Transaction.objects.count(), 2)
+
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        # The row with the bank reference survives.
+        remaining = Transaction.objects.get()
+        self.assertEqual(remaining.dedup_key, 'ref:ZKB-1')
+
+    def test_dedupe_command_keeps_repeats_from_a_single_source(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        for i in range(2):
+            Transaction.objects.create(
+                account=self.account, booking_date=date(2026, 8, 21),
+                amount=D('-30'), currency='CHF', description='Coffee',
+                source='camt053', dedup_key=f'h:same-{i}',
+            )
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        self.assertEqual(Transaction.objects.count(), 2)
+
     def test_identical_entries_without_reference_both_survive(self):
         from portfolio.models import Transaction
         from portfolio.transaction_importer import import_account_transactions
@@ -709,6 +799,29 @@ class TransactionEndpointTests(APITestCase):
         resp = self.client.get(url, {'uncategorized': '1'})
         self.assertEqual(resp.data['count'], 1)
         self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+        # Filtered to one category.
+        resp = self.client.get(url, {'category': category.id})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Coop')
+
+        # Transfers only.
+        Transaction.objects.create(
+            account=other_account, booking_date=date(2026, 8, 11),
+            amount=Decimal('-99'), currency='CHF', counterparty='Broker',
+            source='camt053', dedup_key='ref:R3', is_transfer=True,
+        )
+        resp = self.client.get(url, {'category': 'transfer'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Broker')
+
+    def test_category_filter_does_not_leak_other_users_categories(self):
+        from portfolio.models import TransactionCategory
+        other, _, _ = make_kek_user(username='mallory')
+        foreign = TransactionCategory.objects.create(user=other, name='Food')
+        resp = self.client.get(
+            reverse('transaction_list_all'), {'category': foreign.id})
+        self.assertEqual(resp.data['count'], 0)
 
     def test_global_list_is_scoped_to_the_user(self):
         other, _, _ = make_kek_user(username='eve')
@@ -2420,6 +2533,28 @@ class RuleOrderingTests(APITestCase):
             currency='EUR', counterparty=counterparty, source='camt053',
             dedup_key=f'k-{counterparty}',
         )
+
+    def test_duplicate_match_text_is_rejected(self):
+        url = reverse('rule_list')
+        first = self.client.post(
+            url, {'match_text': 'shell', 'category': self.fuel.id}, format='json')
+        self.assertEqual(first.status_code, 201, first.data)
+        # A second rule with the same text could never fire (first-match-wins).
+        dupe = self.client.post(
+            url, {'match_text': 'Shell', 'category': self.travel.id}, format='json')
+        self.assertEqual(dupe.status_code, 400, dupe.data)
+        self.assertEqual(self.CategoryRule.objects.filter(user=self.user).count(), 1)
+
+    def test_transfer_rule_cannot_spread(self):
+        resp = self.client.post(reverse('rule_list'), {
+            'match_text': 'broker top-up', 'is_transfer': True, 'spread_months': 12,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400, resp.data)
+        # Without the spread it is accepted.
+        ok = self.client.post(reverse('rule_list'), {
+            'match_text': 'broker top-up', 'is_transfer': True,
+        }, format='json')
+        self.assertEqual(ok.status_code, 201, ok.data)
 
     def test_first_matching_rule_wins_by_position(self):
         from portfolio.classification import apply_rules

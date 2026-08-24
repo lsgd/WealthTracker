@@ -971,6 +971,24 @@ export async function createCategoryRule(fields: {
   return data;
 }
 
+export async function updateCategoryRule(ruleId: number, fields: {
+  match_text?: string;
+  category?: number | null;
+  spread_months?: number;
+  is_regex?: boolean;
+  is_transfer?: boolean;
+}): Promise<CategoryRule> {
+  const res = await fetchWithAuth(`/api/spending/rules/${ruleId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(Object.values(data).flat().join(' ') || 'Failed to update rule');
+  }
+  return data;
+}
+
 // Rules are evaluated first-match-wins, so their order matters.
 export async function reorderCategoryRules(ids: number[]): Promise<CategoryRule[]> {
   const res = await fetchWithAuth('/api/spending/rules/reorder/', {
@@ -1000,10 +1018,14 @@ export async function getAccountTransactions(
 export async function getTransactions(
   page = 1,
   accountId?: number,
+  // Category id, 'transfer' for transfers only, or 'none' for uncategorized.
+  category?: number | 'transfer' | 'none',
 ): Promise<{ count: number; results: Transaction[] }> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
   if (accountId) params.set('account', String(accountId));
+  if (category === 'none') params.set('uncategorized', '1');
+  else if (category) params.set('category', String(category));
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');

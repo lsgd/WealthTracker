@@ -2390,6 +2390,23 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: var(--color-text-muted);
 }
 
+/* The chip body is a button: click to edit, the × deletes. */
+.rule-chip-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rule-chip-edit:hover code {
+  text-decoration: underline;
+}
+
 .rule-chip button {
   display: flex;
   background: none;

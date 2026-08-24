@@ -93,6 +93,25 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
         if is_transfer and category is not None:
             raise serializers.ValidationError(
                 'A transfer rule cannot also assign a category')
+        # Rules are first-match-wins, so a second rule with the same match
+        # text can never fire — reject it instead of growing dead entries.
+        request = self.context.get('request')
+        if match_text and request:
+            clashing = CategoryRule.objects.filter(
+                user=request.user, match_text__iexact=match_text,
+            )
+            if self.instance is not None:
+                clashing = clashing.exclude(pk=self.instance.pk)
+            if clashing.exists():
+                raise serializers.ValidationError(
+                    {'match_text': f'A rule for “{match_text}” already exists.'})
+        # A transfer is excluded from spending entirely, so amortizing it over
+        # several months is meaningless — keep the data honest.
+        spread = attrs.get(
+            'spread_months', getattr(self.instance, 'spread_months', 1))
+        if is_transfer and spread and spread > 1:
+            raise serializers.ValidationError(
+                {'spread_months': 'A transfer rule cannot spread over months'})
         if not is_transfer and category is None:
             raise serializers.ValidationError(
                 {'category': 'Pick a category (or make it a transfer rule)'})
