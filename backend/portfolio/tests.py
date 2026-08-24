@@ -691,6 +691,75 @@ class TransactionImporterTests(TestCase):
         remaining = Transaction.objects.get()
         self.assertEqual(remaining.dedup_key, 'ref:ZKB-1')
 
+    def test_two_unrelated_same_amount_payments_stay_apart(self):
+        """Two Riester contracts debit 10 EUR on the same day — not copies."""
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885318-88 Riester'),
+            self._info(amount=D('-10'), description='05-0885320-90 Riester'),
+        ], source='fints')
+        # The CSV lists them in the other order; each stored row must claim
+        # its OWN counterpart, not merely the first candidate.
+        created = store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885320-90 Riester'),
+            self._info(amount=D('-10'), description='05-0885318-88 Riester'),
+        ], source='csv')
+        self.assertEqual(created, 0)
+        self.assertEqual(
+            sorted(Transaction.objects.values_list('description', flat=True)),
+            ['05-0885318-88 Riester', '05-0885320-90 Riester'],
+        )
+
+    def test_entry_the_other_feed_missed_is_still_imported(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        # The sync only caught one of the two contracts.
+        store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885318-88 Riester'),
+        ], source='fints')
+        created = store_transactions(self.account, [
+            self._info(amount=D('-10'), description='05-0885320-90 Riester'),
+            self._info(amount=D('-10'), description='05-0885318-88 Riester'),
+        ], source='csv')
+        self.assertEqual(created, 1)
+        # The missing contract arrived; the known one was not duplicated.
+        self.assertEqual(
+            sorted(Transaction.objects.values_list('description', flat=True)),
+            ['05-0885318-88 Riester', '05-0885320-90 Riester'],
+        )
+
+    def test_dedupe_command_keeps_one_row_per_distinct_payment(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        common = dict(
+            account=self.account, booking_date=date(2026, 9, 1),
+            amount=D('-10'), currency='EUR',
+        )
+        # Ids interleave across feeds, so a naive "keep the first two" would
+        # keep both copies of one contract and delete the other outright.
+        Transaction.objects.create(
+            **common, description='05-0885318-88 Riester',
+            source='fints', dedup_key='h:f1')
+        Transaction.objects.create(
+            **common, description='05-0885318-88 Riester',
+            source='csv', dedup_key='h:c1')
+        Transaction.objects.create(
+            **common, description='05-0885320-90 Riester',
+            source='fints', dedup_key='h:f2')
+        Transaction.objects.create(
+            **common, description='05-0885320-90 Riester',
+            source='csv', dedup_key='h:c2')
+        call_command('dedupe_transactions', '--apply', stdout=StringIO())
+        self.assertEqual(
+            sorted(Transaction.objects.values_list('description', flat=True)),
+            ['05-0885318-88 Riester', '05-0885320-90 Riester'],
+        )
+
     def test_dedupe_command_never_deletes_hand_entered_rows(self):
         from decimal import Decimal as D
         from io import StringIO

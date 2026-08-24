@@ -36,6 +36,31 @@ class Command(BaseCommand):
             '--user', help='Limit to one username.',
         )
 
+    @staticmethod
+    def _split(rows, keep_count):
+        """(survivors, doomed) — one row per distinct payment before seconds.
+
+        A day can hold several same-amount payments that are NOT copies of one
+        another: two Riester contracts each debiting 10 EUR on the 1st. Taking
+        simply the first ``keep_count`` rows could keep both copies of one
+        contract and drop the other entirely, so distinct booking texts are
+        served first; only then are remaining slots filled.
+        """
+        survivors, seen = [], set()
+        for row in rows:
+            identity = (row.counterparty, row.description)
+            if identity not in seen and len(survivors) < keep_count:
+                seen.add(identity)
+                survivors.append(row)
+        if len(survivors) < keep_count:
+            for row in rows:
+                if row not in survivors:
+                    survivors.append(row)
+                    if len(survivors) == keep_count:
+                        break
+        doomed = [row for row in rows if row not in survivors]
+        return survivors, doomed
+
     def handle(self, *args, **options):
         transactions = Transaction.objects.select_related('account')
         if options['user']:
@@ -79,7 +104,7 @@ class Command(BaseCommand):
                 t.id,
             ))
             kept += len(manual)
-            survivors, doomed = rows[:keep_count], rows[keep_count:]
+            survivors, doomed = self._split(rows, keep_count)
             kept += len(survivors)
             for row in doomed:
                 self.stdout.write(
