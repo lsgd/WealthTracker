@@ -9,17 +9,26 @@ import '../providers/spending_provider.dart';
 import '../widgets/transactions_tab.dart';
 import 'spending_config_screen.dart';
 
-/// Category palette. Deliberately excludes the income color so the income line
-/// never shares a color with a category (same rule as the web UI).
+/// Category palette. Excludes the income and uncategorized colors so neither
+/// shares a color with a category. Eight hues cover the wheel; the rest are
+/// deep variants, since past that point only lightness can still tell two
+/// categories apart. With eight, a ninth category wrapped around and became a
+/// twin of the first. Same list and order as the web UI.
 const _categoryColors = <Color>[
   Color(0xFF4F8CFF),
+  Color(0xFFFB923C),
   Color(0xFFA3E635),
+  Color(0xFFE879F9),
   Color(0xFFFBBF24),
+  Color(0xFF38BDF8),
   Color(0xFFF87171),
   Color(0xFFA78BFA),
-  Color(0xFFFB923C),
-  Color(0xFF38BDF8),
-  Color(0xFFE879F9),
+  Color(0xFFF472B6),
+  Color(0xFF0E7490),
+  Color(0xFF4D7C0F),
+  Color(0xFFC2410C),
+  Color(0xFF6D28D9),
+  Color(0xFFBE123C),
 ];
 const _incomeColor = Color(0xFF34D399);
 const _uncategorizedColor = Color(0xFF5B6270);
@@ -121,7 +130,12 @@ class _SpendingBody extends ConsumerWidget {
 
   Color _colorFor(String category) {
     if (category == _uncategorizedLabel) return _uncategorizedColor;
-    final index = report.categories.indexOf(category);
+    // Counted without the uncategorized bucket, which holds no palette slot —
+    // otherwise the same category gets different colors here and on the web.
+    final index = report.categories
+        .where((c) => c != _uncategorizedLabel)
+        .toList()
+        .indexOf(category);
     return _categoryColors[(index < 0 ? 0 : index) % _categoryColors.length];
   }
 

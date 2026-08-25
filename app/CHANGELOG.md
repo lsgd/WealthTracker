@@ -50,6 +50,8 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Spending chart colors: every category now gets a distinct color (with eight in the palette, a ninth category became a twin of the first — "Restaurants" was indistinguishable from "Housing", "Subscriptions" from "Uncategorized"), and Uncategorized is always the same grey instead of taking a category color
+- Web spending chart tooltip is no longer painted over by the legend below it, which made its background look see-through
 - Long booking texts in the web transaction list are cut off after two lines with a "more" chip that reveals the rest (a DKB Rechnungsabschluss used to fill the screen with one row)
 - Web transaction list no longer scrolls sideways: date and account share a column, counterparty and description share the one column that takes the leftover width, and long bank wording wraps instead of pushing the amount out of sight
 - Transactions can now be filtered by month (web and app), and picking a month in the insights — a bar in the chart or the breakdown arrows — filters the transaction list to it automatically

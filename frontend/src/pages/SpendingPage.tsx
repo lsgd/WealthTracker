@@ -43,14 +43,22 @@ import {
   reorderCategoryRules,
 } from '../api/client';
 
-// Category palette. Deliberately does NOT contain INCOME_COLOR so the income
-// line never shares its color with a category.
+// Category palette. Excludes INCOME_COLOR and UNCATEGORIZED_COLOR so neither
+// the income line nor the uncategorized bucket shares a color with a category.
+// Eight hues cover the wheel; the rest are deliberately deep variants, since
+// past that point only lightness can still tell two categories apart. With
+// eight the ninth category wrapped around and became a twin of the first.
 const COLORS = [
-  '#4f8cff', '#a3e635', '#fbbf24', '#f87171',
-  '#a78bfa', '#fb923c', '#38bdf8', '#e879f9',
+  '#4f8cff', '#fb923c', '#a3e635', '#e879f9',
+  '#fbbf24', '#38bdf8', '#f87171', '#a78bfa',
+  '#f472b6', '#0e7490', '#4d7c0f', '#c2410c',
+  '#6d28d9', '#be123c',
 ];
 
 const INCOME_COLOR = '#34d399';
+// Not a category but the absence of one — grey, and the same grey as the app.
+const UNCATEGORIZED_COLOR = '#5b6270';
+const UNCATEGORIZED = 'Uncategorized';
 
 const MODES = [
   { label: 'Normalized', value: 'normalized' as const },
@@ -295,20 +303,22 @@ export default function SpendingPage() {
     if (next) selectMonth(next.month);
   };
 
+  /// One color per category, shared by the bars, the donut and its legend:
+  /// the position in the report's category order, with the uncategorized
+  /// bucket held out of the palette entirely.
+  const colorFor = useCallback((name: string) => {
+    if (name === UNCATEGORIZED) return UNCATEGORIZED_COLOR;
+    const index = report?.categories.filter((c) => c !== UNCATEGORIZED)
+      .indexOf(name) ?? -1;
+    return index >= 0 ? COLORS[index % COLORS.length] : UNCATEGORIZED_COLOR;
+  }, [report]);
+
   const pieData = useMemo(() => {
     if (!monthDetail || !report) return [];
-    // Colors follow the bar chart: index within the report's category order.
     return Object.entries(monthDetail.by_category)
-      .filter(([name]) => showUncatPie || name !== 'Uncategorized')
-      .map(([name, value]) => {
-        const index = report.categories.indexOf(name);
-        return {
-          name,
-          value,
-          color: index >= 0 ? COLORS[index % COLORS.length] : '#5b6270',
-        };
-      });
-  }, [monthDetail, report, showUncatPie]);
+      .filter(([name]) => showUncatPie || name !== UNCATEGORIZED)
+      .map(([name, value]) => ({ name, value, color: colorFor(name) }));
+  }, [monthDetail, report, showUncatPie, colorFor]);
 
   // Center total and percentages refer to what the donut actually shows.
   const pieTotal = useMemo(
@@ -828,14 +838,17 @@ export default function SpendingPage() {
                     ? -1
                     : report?.categories.indexOf(String(item.name)) ?? 0)}
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a3040' }}
+                  // The legend is a sibling div that would otherwise paint over
+                  // the tooltip, making its background look see-through.
+                  wrapperStyle={{ zIndex: 10 }}
                 />
                 <Legend />
-                {report?.categories.filter((name) => showUncatBars || name !== 'Uncategorized').map((name) => (
+                {report?.categories.filter((name) => showUncatBars || name !== UNCATEGORIZED).map((name) => (
                   <Bar
                     key={name}
                     dataKey={name}
                     stackId="expenses"
-                    fill={COLORS[(report?.categories.indexOf(name) ?? 0) % COLORS.length]}
+                    fill={colorFor(name)}
                     onClick={(data: { month?: string; payload?: { month?: string } }) => {
                       const m = data?.month ?? data?.payload?.month;
                       if (m) selectMonth(m);
