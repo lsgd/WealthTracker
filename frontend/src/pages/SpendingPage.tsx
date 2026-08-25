@@ -16,6 +16,11 @@ import {
 } from 'recharts';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
+import CategoryPatternDefs, {
+  categoryStyle,
+  INCOME_COLOR,
+  UNCATEGORIZED,
+} from '../components/CategoryPatterns';
 import ClampedText from '../components/ClampedText';
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
@@ -43,22 +48,6 @@ import {
   reorderCategoryRules,
 } from '../api/client';
 
-// Category palette. Excludes INCOME_COLOR and UNCATEGORIZED_COLOR so neither
-// the income line nor the uncategorized bucket shares a color with a category.
-// Eight hues cover the wheel; the rest are deliberately deep variants, since
-// past that point only lightness can still tell two categories apart. With
-// eight the ninth category wrapped around and became a twin of the first.
-const COLORS = [
-  '#4f8cff', '#fb923c', '#a3e635', '#e879f9',
-  '#fbbf24', '#38bdf8', '#f87171', '#a78bfa',
-  '#f472b6', '#0e7490', '#4d7c0f', '#c2410c',
-  '#6d28d9', '#be123c',
-];
-
-const INCOME_COLOR = '#34d399';
-// Not a category but the absence of one — grey, and the same grey as the app.
-const UNCATEGORIZED_COLOR = '#5b6270';
-const UNCATEGORIZED = 'Uncategorized';
 
 const MODES = [
   { label: 'Normalized', value: 'normalized' as const },
@@ -303,22 +292,28 @@ export default function SpendingPage() {
     if (next) selectMonth(next.month);
   };
 
-  /// One color per category, shared by the bars, the donut and its legend:
-  /// the position in the report's category order, with the uncategorized
-  /// bucket held out of the palette entirely.
-  const colorFor = useCallback((name: string) => {
-    if (name === UNCATEGORIZED) return UNCATEGORIZED_COLOR;
-    const index = report?.categories.filter((c) => c !== UNCATEGORIZED)
-      .indexOf(name) ?? -1;
-    return index >= 0 ? COLORS[index % COLORS.length] : UNCATEGORIZED_COLOR;
-  }, [report]);
+  /// Categories in report order without the uncategorized bucket, which is not
+  /// part of the color rotation (it always draws in its own grey).
+  const paletteCategories = useMemo(
+    () => (report?.categories ?? []).filter((c) => c !== UNCATEGORIZED),
+    [report],
+  );
+
+  /// One look per category — color, and past the palette a pattern too —
+  /// shared by the bars, the donut and both legends.
+  const styleFor = useCallback(
+    (name: string) => categoryStyle(
+      name === UNCATEGORIZED ? -1 : paletteCategories.indexOf(name),
+    ),
+    [paletteCategories],
+  );
 
   const pieData = useMemo(() => {
     if (!monthDetail || !report) return [];
     return Object.entries(monthDetail.by_category)
       .filter(([name]) => showUncatPie || name !== UNCATEGORIZED)
-      .map(([name, value]) => ({ name, value, color: colorFor(name) }));
-  }, [monthDetail, report, showUncatPie, colorFor]);
+      .map(([name, value]) => ({ name, value, ...styleFor(name) }));
+  }, [monthDetail, report, showUncatPie, styleFor]);
 
   // Center total and percentages refer to what the donut actually shows.
   const pieTotal = useMemo(
@@ -761,6 +756,9 @@ export default function SpendingPage() {
 
   return (
     <div className="dashboard">
+        {/* Shared by the bar chart, the donut and recharts' own legend, which
+            renders in a separate <svg> — paint references resolve document-wide. */}
+        <CategoryPatternDefs count={paletteCategories.length} />
         {error && (
           <div className="form-error" onClick={() => setError('')}>{error}</div>
         )}
@@ -848,7 +846,7 @@ export default function SpendingPage() {
                     key={name}
                     dataKey={name}
                     stackId="expenses"
-                    fill={colorFor(name)}
+                    fill={styleFor(name).fill}
                     onClick={(data: { month?: string; payload?: { month?: string } }) => {
                       const m = data?.month ?? data?.payload?.month;
                       if (m) selectMonth(m);
@@ -927,7 +925,7 @@ export default function SpendingPage() {
                       {pieData.map((entry, index) => (
                         <Cell
                           key={entry.name}
-                          fill={entry.color}
+                          fill={entry.fill}
                           opacity={hoveredSlice === null || hoveredSlice === index ? 1 : 0.4}
                           style={{ cursor: 'pointer' }}
                           onMouseEnter={() => setHoveredSlice(index)}
@@ -962,7 +960,7 @@ export default function SpendingPage() {
                   >
                     <span
                       className="breakdown-legend-color"
-                      style={{ backgroundColor: entry.color }}
+                      style={{ background: entry.background }}
                     />
                     <span className="breakdown-legend-label">{entry.name}</span>
                     <span className="breakdown-legend-value">

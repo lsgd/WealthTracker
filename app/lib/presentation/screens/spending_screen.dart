@@ -30,6 +30,21 @@ const _categoryColors = <Color>[
   Color(0xFF6D28D9),
   Color(0xFFBE123C),
 ];
+/// Shade applied per lap through the palette: a fraction towards white when
+/// positive, towards black when negative. Past fourteen categories the colors
+/// would otherwise repeat exactly; the web additionally hatches them, which a
+/// stacked bar rod here cannot do (fl_chart takes a flat color), so the shade
+/// is what keeps them apart. Both clients compute it the same way, so a
+/// category's color matches across them.
+const _lapShades = [0.0, 0.4, -0.4, 0.65];
+
+/// Mixes [color] towards white ([amount] > 0) or black ([amount] < 0).
+Color _shade(Color color, double amount) {
+  if (amount == 0) return color;
+  return Color.lerp(color, amount > 0 ? Colors.white : Colors.black,
+      amount.abs())!;
+}
+
 const _incomeColor = Color(0xFF34D399);
 const _uncategorizedColor = Color(0xFF5B6270);
 const _uncategorizedLabel = 'Uncategorized';
@@ -136,7 +151,11 @@ class _SpendingBody extends ConsumerWidget {
         .where((c) => c != _uncategorizedLabel)
         .toList()
         .indexOf(category);
-    return _categoryColors[(index < 0 ? 0 : index) % _categoryColors.length];
+    if (index < 0) return _uncategorizedColor;
+    return _shade(
+      _categoryColors[index % _categoryColors.length],
+      _lapShades[(index ~/ _categoryColors.length) % _lapShades.length],
+    );
   }
 
   @override
