@@ -16,12 +16,13 @@ import {
 } from 'recharts';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
-import CategoryPatternDefs, {
+import CategoryPatternDefs from '../components/CategoryPatternDefs';
+import ClampedText from '../components/ClampedText';
+import {
   categoryStyle,
   INCOME_COLOR,
   UNCATEGORIZED,
-} from '../components/CategoryPatterns';
-import ClampedText from '../components/ClampedText';
+} from '../utils/categoryPalette';
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
 import type {

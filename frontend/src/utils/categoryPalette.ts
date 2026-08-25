@@ -31,6 +31,9 @@ export type Pattern = 'solid' | 'stripes' | 'dots' | 'crosshatch';
 
 const PATTERNS: Pattern[] = ['solid', 'stripes', 'dots', 'crosshatch'];
 
+/** Dark overlay rather than a lighter tone: readable over any base color. */
+export const PATTERN_INK = 'rgba(0, 0, 0, 0.45)';
+
 /**
  * Shade applied per lap through the palette: a fraction towards white when
  * positive, towards black when negative.
@@ -43,6 +46,15 @@ const PATTERNS: Pattern[] = ['solid', 'stripes', 'dots', 'crosshatch'];
  */
 const LAP_SHADES = [0, 0.4, -0.4, 0.65];
 
+export interface CategoryStyle {
+  color: string;
+  pattern: Pattern;
+  /** SVG paint: the color itself, or a reference to the pattern definition. */
+  fill: string;
+  /** The same thing for an HTML swatch, which cannot reference SVG paint. */
+  background: string;
+}
+
 /** Mixes a hex color towards white (amount > 0) or black (amount < 0). */
 export function shade(hex: string, amount: number): string {
   if (!amount) return hex;
@@ -54,19 +66,7 @@ export function shade(hex: string, amount: number): string {
     .join('')}`;
 }
 
-/** Dark overlay rather than a lighter tone: readable over any base color. */
-const INK = 'rgba(0, 0, 0, 0.45)';
-
-export interface CategoryStyle {
-  color: string;
-  pattern: Pattern;
-  /** SVG paint: the color itself, or a reference to the pattern below. */
-  fill: string;
-  /** The same thing for an HTML swatch, which cannot reference SVG paint. */
-  background: string;
-}
-
-function patternId(index: number): string {
+export function patternId(index: number): string {
   return `cat-pattern-${index}`;
 }
 
@@ -98,65 +98,13 @@ export function categoryStyle(index: number): CategoryStyle {
 function cssBackground(color: string, pattern: Pattern): string {
   switch (pattern) {
     case 'stripes':
-      return `repeating-linear-gradient(45deg, transparent 0 3px, ${INK} 3px 6px), ${color}`;
+      return `repeating-linear-gradient(45deg, transparent 0 3px, ${PATTERN_INK} 3px 6px), ${color}`;
     case 'dots':
-      return `radial-gradient(${INK} 1.4px, transparent 1.5px) 0 0 / 6px 6px, ${color}`;
+      return `radial-gradient(${PATTERN_INK} 1.4px, transparent 1.5px) 0 0 / 6px 6px, ${color}`;
     case 'crosshatch':
-      return `repeating-linear-gradient(0deg, transparent 0 3px, ${INK} 3px 4px), `
-        + `repeating-linear-gradient(90deg, transparent 0 3px, ${INK} 3px 4px), ${color}`;
+      return `repeating-linear-gradient(0deg, transparent 0 3px, ${PATTERN_INK} 3px 4px), `
+        + `repeating-linear-gradient(90deg, transparent 0 3px, ${PATTERN_INK} 3px 4px), ${color}`;
     default:
       return color;
   }
-}
-
-function shapes(pattern: Pattern) {
-  switch (pattern) {
-    case 'stripes':
-      return <path d="M-2 2 L2 -2 M0 8 L8 0 M6 10 L10 6" stroke={INK} strokeWidth="2.5" />;
-    case 'dots':
-      return (
-        <>
-          <circle cx="2" cy="2" r="1.5" fill={INK} />
-          <circle cx="6" cy="6" r="1.5" fill={INK} />
-        </>
-      );
-    case 'crosshatch':
-      return <path d="M0 4 H8 M4 0 V8" stroke={INK} strokeWidth="1.4" />;
-    default:
-      return null;
-  }
-}
-
-/**
- * The pattern definitions the given categories need, in a zero-sized SVG.
- *
- * Kept out of the charts on purpose: recharts renders the legend in its own
- * <svg>, and paint references resolve against the whole HTML document, so one
- * shared set of defs serves chart and legend alike.
- */
-export default function CategoryPatternDefs({ count }: { count: number }) {
-  const patterned = Array.from({ length: Math.max(0, count) }, (_, i) => i)
-    .filter((i) => categoryStyle(i).pattern !== 'solid');
-  if (patterned.length === 0) return null;
-  return (
-    <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
-      <defs>
-        {patterned.map((index) => {
-          const { color, pattern } = categoryStyle(index);
-          return (
-            <pattern
-              key={index}
-              id={patternId(index)}
-              width="8"
-              height="8"
-              patternUnits="userSpaceOnUse"
-            >
-              <rect width="8" height="8" fill={color} />
-              {shapes(pattern)}
-            </pattern>
-          );
-        })}
-      </defs>
-    </svg>
-  );
 }
