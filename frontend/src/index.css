@@ -2545,12 +2545,30 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .spending-tx-party { font-weight: 500; }
 
-.spending-tx-desc {
+/* Text cut off after N lines (the count comes from the component as an inline
+   -webkit-line-clamp), revealed by the chip below it. */
+.clamped {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.clamp-toggle {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: none;
+  color: var(--text-secondary, #8b93a7);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.clamp-toggle:hover {
+  color: var(--color-text, #e6e9f0);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .spending-tx-controls {

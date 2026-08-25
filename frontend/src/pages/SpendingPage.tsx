@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
+import ClampedText from '../components/ClampedText';
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
 import type {
@@ -1047,7 +1048,9 @@ export default function SpendingPage() {
                       <td className="spending-tx-details">
                         {party && <div className="spending-tx-party">{party}</div>}
                         {tx.description && (
-                          <div className="spending-muted spending-tx-desc">{tx.description}</div>
+                          <div className="spending-muted">
+                            <ClampedText text={tx.description} />
+                          </div>
                         )}
                       </td>
                       <td>
