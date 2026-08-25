@@ -1016,6 +1016,64 @@ class TransactionEndpointTests(APITestCase):
         self.assertEqual(resp.data['count'], 1)
         self.assertEqual(resp.data['results'][0]['counterparty'], 'Broker')
 
+    def test_uncategorized_excludes_transfers(self):
+        """A transfer has no category by design — it is not awaiting a label.
+
+        Listing transfers under "uncategorized" buries the entries that still
+        need a decision under recurring own-account movements.
+        """
+        from portfolio.models import Transaction
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 5),
+            amount=Decimal('-500'), currency='CHF', counterparty='Broker',
+            source='camt053', dedup_key='ref:T1', is_transfer=True,
+        )
+        resp = self.client.get(reverse('transaction_list_all'), {'uncategorized': '1'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+    def test_month_filter(self):
+        from portfolio.models import Transaction
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 31),
+            amount=Decimal('-10'), currency='CHF', counterparty='Coop',
+            source='camt053', dedup_key='ref:M1',
+        )
+        url = reverse('transaction_list_all')
+
+        resp = self.client.get(url, {'month': '2026-08'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Migros')
+
+        # The day before is a different month, not a rounding question.
+        resp = self.client.get(url, {'month': '2026-07'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Coop')
+
+        # December must roll into the next year, not month 13.
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 12, 24),
+            amount=Decimal('-99'), currency='CHF', counterparty='Xmas',
+            source='camt053', dedup_key='ref:M2',
+        )
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2027, 1, 2),
+            amount=Decimal('-99'), currency='CHF', counterparty='NewYear',
+            source='camt053', dedup_key='ref:M3',
+        )
+        resp = self.client.get(url, {'month': '2026-12'})
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['counterparty'], 'Xmas')
+
+        # Filters combine.
+        resp = self.client.get(url, {'month': '2026-08', 'uncategorized': '1'})
+        self.assertEqual(resp.data['count'], 1)
+
+    def test_bad_month_is_rejected(self):
+        resp = self.client.get(reverse('transaction_list_all'), {'month': 'August'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('YYYY-MM', str(resp.data['month']))
+
     def test_category_filter_does_not_leak_other_users_categories(self):
         from portfolio.models import TransactionCategory
         other, _, _ = make_kek_user(username='mallory')

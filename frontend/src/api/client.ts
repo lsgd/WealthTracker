@@ -1020,12 +1020,15 @@ export async function getTransactions(
   accountId?: number,
   // Category id, 'transfer' for transfers only, or 'none' for uncategorized.
   category?: number | 'transfer' | 'none',
+  // Calendar month as 'YYYY-MM'.
+  month?: string,
 ): Promise<{ count: number; results: Transaction[] }> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
   if (accountId) params.set('account', String(accountId));
   if (category === 'none') params.set('uncategorized', '1');
   else if (category) params.set('category', String(category));
+  if (month) params.set('month', month);
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');

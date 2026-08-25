@@ -53,7 +53,12 @@ class SpendingSelectedMonthNotifier extends Notifier<String?> {
   @override
   String? build() => null;
 
-  void set(String? value) => state = value;
+  /// Also narrows the transaction list to that month: both tabs are looking at
+  /// the same month, and re-picking it by hand was pure friction.
+  void set(String? value) {
+    state = value;
+    ref.read(transactionsFilterProvider.notifier).setMonth(value);
+  }
 }
 
 final spendingReportProvider = FutureProvider<SpendingReport>((ref) async {
@@ -75,8 +80,13 @@ final categoryRulesProvider = FutureProvider<List<CategoryRule>>((ref) async {
   return ref.watch(spendingRepositoryProvider).getRules();
 });
 
-/// Filter for the transaction list. Default: every account, chronological.
-typedef TransactionsFilter = ({int? accountId, bool uncategorizedOnly});
+/// Filter for the transaction list. Default: every account, every month,
+/// chronological. [month] is a ``YYYY-MM`` label, null for all months.
+typedef TransactionsFilter = ({
+  int? accountId,
+  bool uncategorizedOnly,
+  String? month,
+});
 
 final transactionsFilterProvider =
     NotifierProvider<TransactionsFilterNotifier, TransactionsFilter>(
@@ -84,13 +94,26 @@ final transactionsFilterProvider =
 
 class TransactionsFilterNotifier extends Notifier<TransactionsFilter> {
   @override
-  TransactionsFilter build() => (accountId: null, uncategorizedOnly: false);
+  TransactionsFilter build() =>
+      (accountId: null, uncategorizedOnly: false, month: null);
 
-  void setAccount(int? accountId) =>
-      state = (accountId: accountId, uncategorizedOnly: state.uncategorizedOnly);
+  void setAccount(int? accountId) => state = (
+        accountId: accountId,
+        uncategorizedOnly: state.uncategorizedOnly,
+        month: state.month,
+      );
 
-  void setUncategorizedOnly(bool value) =>
-      state = (accountId: state.accountId, uncategorizedOnly: value);
+  void setUncategorizedOnly(bool value) => state = (
+        accountId: state.accountId,
+        uncategorizedOnly: value,
+        month: state.month,
+      );
+
+  void setMonth(String? month) => state = (
+        accountId: state.accountId,
+        uncategorizedOnly: state.uncategorizedOnly,
+        month: month,
+      );
 }
 
 /// Loaded transactions for the current filter, accumulated across pages.
@@ -122,6 +145,7 @@ class TransactionsNotifier extends AsyncNotifier<TransactionsState> {
     final page = await ref.read(spendingRepositoryProvider).getTransactions(
           accountId: filter.accountId,
           uncategorizedOnly: filter.uncategorizedOnly,
+          month: filter.month,
         );
     return TransactionsState(
         results: page.results, totalCount: page.count, page: 1);
@@ -141,6 +165,7 @@ class TransactionsNotifier extends AsyncNotifier<TransactionsState> {
       final next = await ref.read(spendingRepositoryProvider).getTransactions(
             accountId: filter.accountId,
             uncategorizedOnly: filter.uncategorizedOnly,
+            month: filter.month,
             page: current.page + 1,
           );
       state = AsyncData(TransactionsState(

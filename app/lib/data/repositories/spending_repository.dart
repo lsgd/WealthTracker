@@ -36,16 +36,20 @@ class SpendingRepository {
   }
 
   /// All transactions across accounts, newest first. [accountId] restricts to
-  /// one account, [uncategorizedOnly] to transactions without a category.
+  /// one account, [uncategorizedOnly] to transactions still needing a label
+  /// (transfers are excluded — they are assigned, not undecided), [month] to
+  /// one calendar month as ``YYYY-MM``.
   Future<TransactionPage> getTransactions({
     int? accountId,
     bool uncategorizedOnly = false,
+    String? month,
     int page = 1,
   }) async {
     final response = await _apiClient.get(
       ApiConfig.transactionsPath,
       queryParameters: {
         'account': ?accountId,
+        'month': ?month,
         if (uncategorizedOnly) 'uncategorized': 1,
         if (page > 1) 'page': page,
       },

@@ -1252,8 +1252,9 @@ class TransactionListView(generics.ListAPIView):
     """All of the user's transactions, newest first, across accounts.
 
     Optional query params: ``account`` (id, restrict to one account),
-    ``uncategorized`` (truthy, only transactions without a category),
-    ``category`` (id, or ``transfer`` for transfers only).
+    ``uncategorized`` (truthy, only transactions still needing a decision),
+    ``category`` (id, or ``transfer`` for transfers only), ``month``
+    (``YYYY-MM``, booking date within that calendar month).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
@@ -1267,13 +1268,25 @@ class TransactionListView(generics.ListAPIView):
         if account:
             qs = qs.filter(account_id=account)
         if self.request.query_params.get('uncategorized') in ('1', 'true'):
-            qs = qs.filter(category__isnull=True)
+            # A transfer has no category by design — it is excluded from
+            # spending, not awaiting a label. Listing it under "uncategorized"
+            # buries the entries that actually still need a decision.
+            qs = qs.filter(category__isnull=True, is_transfer=False)
         category = self.request.query_params.get('category')
         if category == 'transfer':
             qs = qs.filter(is_transfer=True)
         elif category:
             # Own categories only — an id from another user must not leak rows.
             qs = qs.filter(category_id=category, category__user=self.request.user)
+        month = self.request.query_params.get('month')
+        if month:
+            from rest_framework.exceptions import ValidationError
+
+            from .spending import month_bounds
+            bounds = month_bounds(month)
+            if bounds is None:
+                raise ValidationError({'month': 'Expected YYYY-MM, e.g. 2026-08'})
+            qs = qs.filter(booking_date__gte=bounds[0], booking_date__lt=bounds[1])
         return qs
 
 

@@ -107,6 +107,9 @@ export default function SpendingPage() {
   // Transaction list filter: '' = all, 'none' = uncategorized, 'transfer', or
   // a category id.
   const [txCategory, setTxCategory] = useState<'' | 'none' | 'transfer' | number>('');
+  // '' = every month. Picking a month in the overview sets this too, so the
+  // list answers the question the chart just raised.
+  const [txMonth, setTxMonth] = useState('');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txCount, setTxCount] = useState(0);
   const [txPage, setTxPage] = useState(1);
@@ -185,17 +188,19 @@ export default function SpendingPage() {
     id: number | null,
     page: number,
     category: '' | 'none' | 'transfer' | number = txCategory,
+    month: string = txMonth,
   ) => {
     try {
       const data = await getTransactions(
-        page, id ?? undefined, category === '' ? undefined : category);
+        page, id ?? undefined, category === '' ? undefined : category,
+        month || undefined);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transactions');
     }
-  }, [txCategory]);
+  }, [txCategory, txMonth]);
 
   useEffect(() => {
     loadReport();
@@ -266,10 +271,27 @@ export default function SpendingPage() {
     return report.months.findIndex((m) => m.month === monthDetail.month);
   }, [report, monthDetail]);
 
+  /// Months offered by the list filter: the report's window, newest first,
+  /// plus whatever is selected (a month picked before the range was shortened
+  /// must still be representable).
+  const monthFilterOptions = useMemo(() => {
+    const labels = [...(report?.months ?? [])].map((m) => m.month).reverse();
+    if (txMonth && !labels.includes(txMonth)) labels.unshift(txMonth);
+    return labels;
+  }, [report, txMonth]);
+
+  /// Picking a month anywhere in the overview (bar, dropdown, arrows) also
+  /// narrows the transaction list to it — the two views answer the same
+  /// question, and re-picking the month by hand was pure friction.
+  const selectMonth = (month: string) => {
+    setSelectedMonth(month);
+    setTxMonth(month);
+  };
+
   const stepMonth = (delta: number) => {
     if (!report || monthIndex < 0) return;
     const next = report.months[monthIndex + delta];
-    if (next) setSelectedMonth(next.month);
+    if (next) selectMonth(next.month);
   };
 
   const pieData = useMemo(() => {
@@ -815,7 +837,7 @@ export default function SpendingPage() {
                     fill={COLORS[(report?.categories.indexOf(name) ?? 0) % COLORS.length]}
                     onClick={(data: { month?: string; payload?: { month?: string } }) => {
                       const m = data?.month ?? data?.payload?.month;
-                      if (m) setSelectedMonth(m);
+                      if (m) selectMonth(m);
                     }}
                     style={{ cursor: 'pointer' }}
                   />
@@ -854,7 +876,7 @@ export default function SpendingPage() {
               <select
                 className="spending-month-select"
                 value={monthDetail?.month ?? ''}
-                onChange={(e) => setSelectedMonth(e.target.value)}
+                onChange={(e) => selectMonth(e.target.value)}
               >
                 {report?.months.map((m) => (
                   <option key={m.month} value={m.month}>{m.month}</option>
@@ -971,10 +993,24 @@ export default function SpendingPage() {
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
+              <select
+                aria-label="Filter by month"
+                value={txMonth}
+                onChange={(e) => setTxMonth(e.target.value)}
+              >
+                <option value="">All months</option>
+                {monthFilterOptions.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             </div>
           </div>
           {transactions.length === 0 ? (
-            <p className="table-empty">No transactions yet.</p>
+            <p className="table-empty">
+              {txCategory !== '' || txMonth || accountId !== null
+                ? 'No transactions match this filter.'
+                : 'No transactions yet.'}
+            </p>
           ) : (
             <div className="table-wrapper">
               <table className="data-table">

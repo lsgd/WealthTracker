@@ -32,9 +32,13 @@ class TransactionsTab extends ConsumerWidget {
             data: (data) {
               if (data.results.isEmpty) {
                 return _Message(
-                  text: filter.uncategorizedOnly
-                      ? 'Nothing uncategorized — all done.'
-                      : 'No transactions yet.',
+                  text: switch (filter) {
+                    (uncategorizedOnly: true, accountId: _, month: _) =>
+                      'Nothing uncategorized — all done.',
+                    (month: final String m, accountId: _, uncategorizedOnly: _) =>
+                      'No transactions in $m.',
+                    _ => 'No transactions yet.',
+                  },
                 );
               }
               return NotificationListener<ScrollNotification>(
@@ -104,8 +108,16 @@ class _FilterBar extends ConsumerWidget {
       filter.accountId == null
           ? 'All accounts'
           : (accountNames[filter.accountId] ?? 'One account'),
+      if (filter.month != null) filter.month!,
       if (filter.uncategorizedOnly) 'only uncategorized',
     ].join(' · ');
+    // Months the report covers, newest first, plus the selected one (the range
+    // can be shortened after a month was picked in Insights).
+    final report = ref.watch(spendingReportProvider).value;
+    final months = <String>{
+      if (filter.month != null) filter.month!,
+      ...?report?.months.reversed.map((m) => m.month),
+    }.toList();
 
     return ExpansionTile(
       leading: const Icon(Icons.filter_list),
@@ -130,6 +142,22 @@ class _FilterBar extends ConsumerWidget {
                   value: entry.key, child: Text(entry.value)),
           ],
           onChanged: notifier.setAccount,
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String?>(
+          initialValue: filter.month,
+          decoration: const InputDecoration(
+            labelText: 'Month',
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+                value: null, child: Text('All months')),
+            for (final month in months)
+              DropdownMenuItem<String?>(value: month, child: Text(month)),
+          ],
+          onChanged: notifier.setMonth,
         ),
         SwitchListTile(
           title: const Text('Only uncategorized'),

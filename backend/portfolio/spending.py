@@ -29,6 +29,21 @@ def _month_label(index: int) -> str:
     return f'{index // 12:04d}-{index % 12 + 1:02d}'
 
 
+def month_bounds(label: str):
+    """``'2026-08'`` -> ``(date(2026, 8, 1), date(2026, 9, 1))``, else None.
+
+    Half-open on purpose: the end is the first day of the next month, so no
+    caller has to know how long a month is.
+    """
+    try:
+        year, month = (int(part) for part in label.split('-', 1))
+        start = date(year, month, 1)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    index = _month_index(start) + 1
+    return start, date(index // 12, index % 12 + 1, 1)
+
+
 def monthly_spending(user, months: int = 12, mode: str = 'normalized') -> dict:
     base_currency = user.profile.base_currency
     today = date.today()
