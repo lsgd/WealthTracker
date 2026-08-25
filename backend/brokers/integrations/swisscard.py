@@ -21,9 +21,10 @@ which survives redesigns of the login screen.
 import json
 import logging
 import os
+import time
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import (
     AccountInfo,
@@ -50,6 +51,39 @@ ACCOUNTS_PATH = '/api/v1/accounts'
 FETCH_DAYS = 400
 
 DEFAULT_TIMEOUT_MS = 60_000
+
+# A finished login is kept for a few minutes so a second action (syncing again,
+# or backfilling history right after) does not cost another SMS. In memory
+# only: session cookies are as good as a login, and writing them to the
+# database would leave them at rest long after the session itself is dead.
+# The web container runs a single worker, so one process sees them all.
+SESSION_TTL_SECONDS = int(os.environ.get('SWISSCARD_SESSION_TTL', '300'))
+
+# account_id -> (expires_at monotonic, {'state': storage_state, 'transport': ...})
+_SESSIONS: Dict[Any, Tuple[float, Dict[str, Any]]] = {}
+
+
+def _remember(account_id, session: Dict[str, Any]) -> None:
+    if account_id is None:
+        return
+    _SESSIONS[account_id] = (time.monotonic() + SESSION_TTL_SECONDS, session)
+
+
+def _recall(account_id) -> Optional[Dict[str, Any]]:
+    if account_id is None:
+        return None
+    entry = _SESSIONS.get(account_id)
+    if not entry:
+        return None
+    expires_at, session = entry
+    if time.monotonic() >= expires_at:
+        _SESSIONS.pop(account_id, None)
+        return None
+    return session
+
+
+def _forget(account_id) -> None:
+    _SESSIONS.pop(account_id, None)
 
 
 class SwisscardLoginError(RuntimeError):
@@ -180,6 +214,12 @@ class SwisscardIntegration(BrokerIntegrationBase):
     # -- authentication ---------------------------------------------------
 
     def authenticate(self) -> AuthResult:
+        # A login from the last few minutes is still good: reuse it instead of
+        # asking the bank to text another code.
+        resumed = self._resume()
+        if resumed is not None:
+            return resumed
+
         username = (self.credentials.get('username') or '').strip()
         password = self.credentials.get('password') or ''
         if not username or not password:
@@ -231,6 +271,41 @@ class SwisscardIntegration(BrokerIntegrationBase):
                 context.close()
                 browser.close()
 
+    def _resume(self) -> Optional[AuthResult]:
+        """Reuse a recent login, or None when there is nothing usable.
+
+        Airlock expires sessions server-side on its own schedule, so a cached
+        session is only trusted after it answers a real request.
+        """
+        session = _recall(self.account_id)
+        if not session:
+            return None
+        try:
+            with self._playwright() as playwright:
+                browser, context, page = self._open(
+                    playwright, storage_state=session['state'], url=APP_PAGE)
+                try:
+                    transport = session.get('transport', 'fetch')
+                    status, payload, _ = self._call(
+                        page, transport, 'GET', ACCOUNTS_PATH)
+                    if status != 200 or not isinstance(payload, list):
+                        _forget(self.account_id)
+                        logger.info('Swisscard: cached session no longer valid')
+                        return None
+                    self._session = session
+                    self._accounts = payload
+                    self._load_transactions(page, transport)
+                    # Sliding window: a session in use stays warm.
+                    _remember(self.account_id, session)
+                    return AuthResult(success=True)
+                finally:
+                    context.close()
+                    browser.close()
+        except Exception as exc:  # a broken cache must never block a fresh login
+            logger.info('Swisscard: could not resume the session (%s)', exc)
+            _forget(self.account_id)
+            return None
+
     def complete_2fa(self, auth_code: Optional[str],
                      session_data: Dict[str, Any]) -> AuthResult:
         code = (auth_code or '').strip()
@@ -261,9 +336,16 @@ class SwisscardIntegration(BrokerIntegrationBase):
                         error_message=self._message(
                             payload, 'That SMS code was not accepted.'),
                     )
-                # The session is live but short — pull everything now.
+                # The session is live but short — pull everything now, and
+                # keep it for a few minutes so syncing again or backfilling
+                # right after does not cost another SMS.
                 page.goto(APP_PAGE, wait_until='networkidle')
                 self._load_data(page, transport)
+                self._session = {
+                    'state': context.storage_state(),
+                    'transport': transport,
+                }
+                _remember(self.account_id, self._session)
                 return AuthResult(success=True)
             finally:
                 context.close()
@@ -276,11 +358,14 @@ class SwisscardIntegration(BrokerIntegrationBase):
         if status != 200 or not isinstance(payload, list):
             raise SwisscardLoginError('Could not read the Swisscard accounts.')
         self._accounts = payload
+        self._load_transactions(page, transport)
 
+    def _load_transactions(self, page, transport,
+                           start: Optional[date] = None) -> None:
         end = date.today()
-        start = end - timedelta(days=FETCH_DAYS)
+        start = start or end - timedelta(days=FETCH_DAYS)
         self._transactions = []
-        for account in payload:
+        for account in self._accounts or []:
             identifier = str(account.get('id') or '')
             if not identifier:
                 continue
@@ -289,30 +374,64 @@ class SwisscardIntegration(BrokerIntegrationBase):
         self._fetched_from = start
 
     def _fetch_transactions(self, page, transport, identifier, start, end):
-        from portfolio.csv_import import CsvImportError, parse_transactions_csv
+        """Read the SPA's own transaction feed for one account.
 
-        status, _, text = self._call(
+        The JSON feed is preferred over the CSV export: every entry carries a
+        stable id, which makes dedup exact instead of text-based.
+        """
+        status, payload, _ = self._call(
             page, transport, 'POST',
-            f'{ACCOUNTS_PATH}/{identifier}/transactions/csv',
+            f'{ACCOUNTS_PATH}/{identifier}/transactions',
             {'dateMin': start.isoformat(), 'dateMax': end.isoformat()},
         )
-        if status != 200 or not text:
+        if status != 200 or not isinstance(payload, dict):
             logger.warning(
-                'Swisscard: transaction export failed for %s (status %s)',
+                'Swisscard: transaction fetch failed for %s (status %s)',
                 identifier, status)
             return []
-        try:
-            _, _, infos, skipped, _ = parse_transactions_csv(
-                text.encode('utf-8'), self._currency_of(identifier))
-        except CsvImportError as exc:
-            logger.warning('Swisscard: export not parseable: %s', exc)
-            return []
-        if skipped:
-            logger.info('Swisscard: %d export rows skipped for %s',
-                        skipped, identifier)
-        for info in infos:
-            info.raw_data = {'account': identifier}
+
+        rows = payload.get('transactions') or []
+        reported = (payload.get('summary') or {}).get('count')
+        if reported is not None and reported != len(rows):
+            logger.warning(
+                'Swisscard: %s reports %s transactions but returned %d',
+                identifier, reported, len(rows))
+
+        infos = []
+        for row in rows:
+            if (row.get('state') or 'POSTED').upper() != 'POSTED':
+                continue  # pending entries change on posting
+            amount = (row.get('amount') or {})
+            value = amount.get('value')
+            booking = self._as_date(row.get('effectiveDate'))
+            if value is None or booking is None:
+                continue
+            merchant = row.get('merchant') or {}
+            # Purchases are reported positive and credits negative — the
+            # opposite of the sign convention everywhere else in the app.
+            infos.append(TransactionInfo(
+                booking_date=booking,
+                amount=-Decimal(str(value)),
+                currency=amount.get('currency') or self._currency_of(identifier),
+                value_date=self._as_date(row.get('postingDate')),
+                counterparty=merchant.get('name') or row.get('description') or '',
+                description=row.get('description') or '',
+                external_id=row.get('id') or None,
+                raw_data={
+                    'account': identifier,
+                    'category': merchant.get('category') or '',
+                },
+            ))
         return infos
+
+    @staticmethod
+    def _as_date(value) -> Optional[date]:
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return None
 
     def _account(self, identifier: str) -> Dict[str, Any]:
         for account in self._accounts or []:
@@ -363,6 +482,31 @@ class SwisscardIntegration(BrokerIntegrationBase):
             if (info.raw_data or {}).get('account') == str(account_identifier)
             and start_date <= info.booking_date <= end_date
         ]
+
+    def get_transactions_for_range(self, account_identifier: str,
+                                   start_date: date,
+                                   end_date: date) -> List[TransactionInfo]:
+        """Backfill: ask the portal for the window instead of the cache.
+
+        Only possible while the login is still warm — the session cannot be
+        re-established without another SMS.
+        """
+        if self._fetched_from and start_date >= self._fetched_from:
+            return self.get_transactions(account_identifier, start_date, end_date)
+        session = self._session or _recall(self.account_id)
+        if not session:
+            return self.get_transactions(account_identifier, start_date, end_date)
+        with self._playwright() as playwright:
+            browser, context, page = self._open(
+                playwright, storage_state=session['state'], url=APP_PAGE)
+            try:
+                rows = self._fetch_transactions(
+                    page, session.get('transport', 'fetch'),
+                    str(account_identifier), start_date, end_date)
+            finally:
+                context.close()
+                browser.close()
+        return [r for r in rows if start_date <= r.booking_date <= end_date]
 
     # -- helpers ----------------------------------------------------------
 

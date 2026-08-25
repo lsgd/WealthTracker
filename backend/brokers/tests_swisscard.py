@@ -28,15 +28,24 @@ _ACCOUNTS = [{
     },
 }]
 
-_CSV = (
-    'Transaction date,Description,Merchant,Card number,Currency,Amount,'
-    'Foreign Currency,Amount in foreign currency,Debit/Credit,Status,'
-    'Merchant Category,Registered Category\n'
-    '23.08.2026,TEST SHOP,TEST SHOP,3776 60**** *0001,CHF,42.50,,,'
-    'Debit,Posted,Groceries,\n'
-    '20.08.2026,IHRE ZAHLUNG,,3776 60**** *0001,CHF,-1200.00,,,'
-    'Credit,Posted,Payment,\n'
-)
+# The SPA's transaction feed: purchases positive, credits negative, each row
+# carrying the portal's own id.
+_TRANSACTIONS = {
+    'summary': {'count': 3},
+    'transactions': [
+        {'id': 'tx-1', 'description': 'TEST SHOP GENEVA', 'state': 'POSTED',
+         'amount': {'value': 42.50, 'currency': 'CHF'},
+         'effectiveDate': '2026-08-23', 'postingDate': '2026-08-25',
+         'merchant': {'name': 'TEST SHOP', 'category': 'Groceries'}},
+        {'id': 'tx-2', 'description': 'IHRE ZAHLUNG – BESTEN DANK',
+         'state': 'POSTED', 'amount': {'value': -1200.00, 'currency': 'CHF'},
+         'effectiveDate': '2026-08-20', 'postingDate': '2026-08-20',
+         'merchant': {}},
+        {'id': 'tx-3', 'description': 'NOT YET POSTED', 'state': 'PENDING',
+         'amount': {'value': 5.00, 'currency': 'CHF'},
+         'effectiveDate': '2026-08-24', 'postingDate': None, 'merchant': {}},
+    ],
+}
 
 
 class FakePage:
@@ -77,8 +86,9 @@ class FakePage:
         if path == ACCOUNTS_PATH:
             import json as jsonlib
             return {'status': 200, 'text': jsonlib.dumps(_ACCOUNTS)}
-        if path.endswith('/transactions/csv'):
-            return {'status': 200, 'text': _CSV}
+        if path.endswith('/transactions'):
+            import json as jsonlib
+            return {'status': 200, 'text': jsonlib.dumps(_TRANSACTIONS)}
         return {'status': 404, 'text': ''}
 
 
@@ -154,7 +164,7 @@ class SwisscardFlowTests(TestCase):
         # Accounts and the CSV export were fetched inside the same session.
         paths = [c[1] for c in page.calls]
         self.assertIn(ACCOUNTS_PATH, paths)
-        self.assertTrue(any(p.endswith('/transactions/csv') for p in paths))
+        self.assertTrue(any(p.endswith('/transactions') for p in paths))
         # The password step was NOT repeated (that would send a second SMS).
         self.assertNotIn(PASSWORD_PATH, paths)
 
@@ -186,15 +196,81 @@ class SwisscardFlowTests(TestCase):
         integration.complete_2fa('123456', {'storage_state': {'cookies': []}})
         rows = integration.get_transactions(
             '40007155878', date(2026, 1, 1), date(2026, 12, 31))
+        # The pending row is left out; it changes when it posts.
         self.assertEqual(len(rows), 2)
         by_date = {r.booking_date: r for r in rows}
         self.assertEqual(by_date[date(2026, 8, 23)].amount, Decimal('-42.50'))
         self.assertEqual(by_date[date(2026, 8, 20)].amount, Decimal('1200.00'))
+        # The portal's own id gives exact dedup instead of a content hash.
+        self.assertEqual(by_date[date(2026, 8, 23)].external_id, 'tx-1')
         # Outside the fetched range nothing is invented.
         self.assertEqual(
             integration.get_transactions(
                 '40007155878', date(2025, 1, 1), date(2025, 2, 1)),
             [])
+
+    def test_a_recent_login_is_reused_instead_of_texting_again(self):
+        from brokers.integrations import swisscard as mod
+        mod._SESSIONS.clear()
+        self.addCleanup(mod._SESSIONS.clear)
+
+        page = FakePage()
+        first = self._integration(page)
+        first.account_id = 42
+        first.complete_2fa('123456', {'storage_state': {'cookies': []}})
+
+        # A second sync of the same account, minutes later.
+        page2 = FakePage()
+        second = self._integration(page2)
+        second.account_id = 42
+        result = second.authenticate()
+
+        self.assertTrue(result.success, result.error_message)
+        self.assertFalse(result.requires_2fa)
+        # No password, no SMS — the warm session answered.
+        paths = [c[1] for c in page2.calls]
+        self.assertNotIn(PASSWORD_PATH, paths)
+        self.assertNotIn(OTP_PATH, paths)
+        self.assertIn(ACCOUNTS_PATH, paths)
+        # And the data is there for the sync that follows.
+        self.assertEqual(second.get_balance('40007155878').balance,
+                         Decimal('-2560.85'))
+
+    def test_an_expired_session_falls_back_to_a_fresh_login(self):
+        from brokers.integrations import swisscard as mod
+        mod._SESSIONS.clear()
+        self.addCleanup(mod._SESSIONS.clear)
+        # Stored, but already past its time-to-live.
+        mod._SESSIONS[7] = (0.0, {'state': {}, 'transport': 'fetch'})
+
+        page = FakePage()
+        integration = self._integration(page)
+        integration.account_id = 7
+        result = integration.authenticate()
+
+        self.assertTrue(result.requires_2fa)
+        self.assertIn(PASSWORD_PATH, [c[1] for c in page.calls])
+
+    def test_a_dead_session_is_dropped_and_not_reused(self):
+        from brokers.integrations import swisscard as mod
+        mod._SESSIONS.clear()
+        self.addCleanup(mod._SESSIONS.clear)
+        mod._remember(9, {'state': {}, 'transport': 'fetch'})
+
+        # The portal rejects the cookies (Airlock expired them server-side).
+        class Rejecting(FakePage):
+            def evaluate(self, script, args):
+                if args[1] == ACCOUNTS_PATH:
+                    self.calls.append((args[0], args[1], None))
+                    return {'status': 401, 'text': ''}
+                return super().evaluate(script, args)
+
+        integration = self._integration(Rejecting())
+        integration.account_id = 9
+        result = integration.authenticate()
+
+        self.assertTrue(result.requires_2fa)  # asks for a code again
+        self.assertIsNone(mod._recall(9))     # and the dead session is gone
 
     def test_does_not_reauthenticate_before_the_code_step(self):
         self.assertFalse(

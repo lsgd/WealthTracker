@@ -59,7 +59,10 @@ _ZKB_DETAILS = ('details',)
 
 _DKB_HEADER_FIRST = 'buchungsdatum'
 _COMMERZBANK_HEADER_FIRST = 'buchungstag'
-_SWISSCARD_HEADER_START = ['transaction date', 'description']
+# Columns every Swisscard export carries, whatever the separator or column
+# order. "debit/credit" is the giveaway: no other supported format states the
+# direction in its own column.
+_SWISSCARD_REQUIRED = {'transaction date', 'amount', 'debit/credit'}
 
 
 def _decode(content: bytes) -> str:
@@ -110,12 +113,17 @@ def parse_transactions_csv(content: bytes, fallback_currency: str):
     """
     text = _decode(content)
 
-    # Swisscard is the only comma-separated format; sniff it before the
-    # semicolon parse, which would read the whole line as one cell.
-    comma_header = next(iter(csv.reader(io.StringIO(text))), [])
-    if [c.strip().lower() for c in comma_header[:2]] == _SWISSCARD_HEADER_START:
-        return _parse_swisscard(
-            list(csv.reader(io.StringIO(text))), fallback_currency) + (None,)
+    # Swisscard: recognised by its columns rather than by the delimiter, since
+    # the portal's download and its API hand out the same export with
+    # different separators.
+    for delimiter in (',', ';'):
+        header = [c.strip().lower().strip('"')
+                  for c in next(iter(csv.reader(io.StringIO(text),
+                                                delimiter=delimiter)), [])]
+        if _SWISSCARD_REQUIRED.issubset(set(header)):
+            return _parse_swisscard(
+                list(csv.reader(io.StringIO(text), delimiter=delimiter)),
+                fallback_currency) + (None,)
 
     rows = list(csv.reader(io.StringIO(text), delimiter=';'))
     if not rows:

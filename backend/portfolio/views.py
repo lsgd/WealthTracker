@@ -134,111 +134,119 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 account.save()
                 return {'status': 'error', 'error': auth_result.error_message}
 
-        # Auth successful — fetch balance
-        from brokers.integrations.base import NoNewDataError
-        try:
-            balance_info = integration.get_balance(account.account_identifier)
-        except NoNewDataError as e:
-            # Nothing new to record (e.g. EBICS 090005 on a quiet day). Not an error:
-            # keep the account active and its last snapshot, advance last_sync_at.
-            account.status = 'active'
-            account.last_sync_at = timezone.now()
-            account.last_sync_error = ''
-            account.pending_auth_state = None
-            account.save()
-            logger.info("Sync: no new data for account %s (%s)", account.id, e)
-            return {'status': 'success', 'message': 'No new data', 'snapshot': None}
+        return _sync_authenticated_account(account, integration, base_currency)
+    finally:
+        integration.close()
 
-        existing = AccountSnapshot.objects.filter(
-            account=account,
-            balance=balance_info.balance,
-            currency=balance_info.currency,
-            snapshot_date=balance_info.balance_date,
-        ).first()
 
-        if existing:
-            snapshot = existing
-            created = False
-        else:
-            snapshot = AccountSnapshot.objects.create(
-                account=account,
-                balance=balance_info.balance,
-                currency=balance_info.currency,
-                snapshot_date=balance_info.balance_date,
-                snapshot_source='auto',
-                raw_data=balance_info.raw_data,
-            )
-            created = True
+def _sync_authenticated_account(account, integration, base_currency):
+    """Everything a sync does once the broker accepted the credentials.
 
-        # Convert to base currency
-        if balance_info.currency != base_currency:
-            from exchange_rates.services import ExchangeRateService
-            rate = ExchangeRateService.get_rate(
-                balance_info.currency, base_currency, balance_info.balance_date,
-            )
-            if rate and rate != Decimal('1.0'):
-                snapshot.balance_base_currency = balance_info.balance * rate
-                snapshot.base_currency = base_currency
-                snapshot.exchange_rate_used = rate
-                snapshot.save()
-
-        # Backfill historical data if supported
-        backfilled_count = 0
-        if integration.supports_historical_data():
-            backfilled_count = _backfill_historical(
-                account, integration, base_currency,
-            )
-
-        # Record the per-asset holdings behind this balance, where the broker reports
-        # them. Same rule as the transaction import: never fail a balance sync that
-        # already succeeded over a secondary fetch.
-        position_count = 0
-        if integration.supports_positions():
-            try:
-                from .snapshot_writer import store_positions
-                position_count = store_positions(
-                    snapshot, integration.get_positions(account.account_identifier),
-                )
-            except Exception:
-                logger.exception("Position import failed for account %s", account.id)
-
-        # Import booked transactions if supported. A transaction-import failure must
-        # never fail the balance sync that already succeeded — log and move on.
-        imported_tx_count = 0
-        try:
-            from .transaction_importer import import_account_transactions
-            imported_tx_count = import_account_transactions(account, integration)
-        except Exception:
-            logger.exception("Transaction import failed for account %s", account.id)
-
+    Split out so a sync that stopped for a 2FA challenge can be finished with
+    the same authenticated integration instead of starting over.
+    """
+    from brokers.integrations.base import NoNewDataError
+    try:
+        balance_info = integration.get_balance(account.account_identifier)
+    except NoNewDataError as e:
+        # Nothing new to record (e.g. EBICS 090005 on a quiet day). Not an error:
+        # keep the account active and its last snapshot, advance last_sync_at.
         account.status = 'active'
         account.last_sync_at = timezone.now()
         account.last_sync_error = ''
         account.pending_auth_state = None
         account.save()
+        logger.info("Sync: no new data for account %s (%s)", account.id, e)
+        return {'status': 'success', 'message': 'No new data', 'snapshot': None}
 
-        message = 'Sync completed' if created else 'No change (snapshot already exists)'
-        if backfilled_count > 0:
-            message += f' + {backfilled_count} historical snapshots backfilled'
-        if imported_tx_count > 0:
-            message += f' + {imported_tx_count} transactions imported'
-        if position_count > 0:
-            message += f' + {position_count} positions recorded'
+    existing = AccountSnapshot.objects.filter(
+        account=account,
+        balance=balance_info.balance,
+        currency=balance_info.currency,
+        snapshot_date=balance_info.balance_date,
+    ).first()
 
-        return {
-            'status': 'success',
-            'message': message,
-            'snapshot': {
-                'id': snapshot.id,
-                'balance': float(snapshot.balance),
-                'currency': snapshot.currency,
-                'date': snapshot.snapshot_date.isoformat(),
-                'created': created,
-            },
-            'backfilled': backfilled_count,
-        }
-    finally:
-        integration.close()
+    if existing:
+        snapshot = existing
+        created = False
+    else:
+        snapshot = AccountSnapshot.objects.create(
+            account=account,
+            balance=balance_info.balance,
+            currency=balance_info.currency,
+            snapshot_date=balance_info.balance_date,
+            snapshot_source='auto',
+            raw_data=balance_info.raw_data,
+        )
+        created = True
+
+    # Convert to base currency
+    if balance_info.currency != base_currency:
+        from exchange_rates.services import ExchangeRateService
+        rate = ExchangeRateService.get_rate(
+            balance_info.currency, base_currency, balance_info.balance_date,
+        )
+        if rate and rate != Decimal('1.0'):
+            snapshot.balance_base_currency = balance_info.balance * rate
+            snapshot.base_currency = base_currency
+            snapshot.exchange_rate_used = rate
+            snapshot.save()
+
+    # Backfill historical data if supported
+    backfilled_count = 0
+    if integration.supports_historical_data():
+        backfilled_count = _backfill_historical(
+            account, integration, base_currency,
+        )
+
+    # Record the per-asset holdings behind this balance, where the broker reports
+    # them. Same rule as the transaction import: never fail a balance sync that
+    # already succeeded over a secondary fetch.
+    position_count = 0
+    if integration.supports_positions():
+        try:
+            from .snapshot_writer import store_positions
+            position_count = store_positions(
+                snapshot, integration.get_positions(account.account_identifier),
+            )
+        except Exception:
+            logger.exception("Position import failed for account %s", account.id)
+
+    # Import booked transactions if supported. A transaction-import failure must
+    # never fail the balance sync that already succeeded — log and move on.
+    imported_tx_count = 0
+    try:
+        from .transaction_importer import import_account_transactions
+        imported_tx_count = import_account_transactions(account, integration)
+    except Exception:
+        logger.exception("Transaction import failed for account %s", account.id)
+
+    account.status = 'active'
+    account.last_sync_at = timezone.now()
+    account.last_sync_error = ''
+    account.pending_auth_state = None
+    account.save()
+
+    message = 'Sync completed' if created else 'No change (snapshot already exists)'
+    if backfilled_count > 0:
+        message += f' + {backfilled_count} historical snapshots backfilled'
+    if imported_tx_count > 0:
+        message += f' + {imported_tx_count} transactions imported'
+    if position_count > 0:
+        message += f' + {position_count} positions recorded'
+
+    return {
+        'status': 'success',
+        'message': message,
+        'snapshot': {
+            'id': snapshot.id,
+            'balance': float(snapshot.balance),
+            'currency': snapshot.currency,
+            'date': snapshot.snapshot_date.isoformat(),
+            'created': created,
+        },
+        'backfilled': backfilled_count,
+    }
 
 
 def _sync_all_accounts(*, account_creds, base_currency):
@@ -792,9 +800,15 @@ class AccountAuthView(KEKAuthenticationMixin, APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # 2FA successful, complete the sync
-            sync_view = AccountSyncView()
-            return sync_view._complete_sync(account, integration, request)
+            # 2FA accepted — finish the sync with this same authenticated
+            # integration rather than logging in a second time.
+            try:
+                result = _sync_authenticated_account(
+                    account, integration, request.user.profile.base_currency,
+                )
+            finally:
+                integration.close()
+            return Response(result)
 
         except Exception as e:
             account.status = 'error'
