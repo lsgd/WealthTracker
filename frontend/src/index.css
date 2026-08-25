@@ -1376,9 +1376,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     padding: 8px;
   }
 
-  /* Hide broker column on tablets */
-  .data-table th:nth-child(2),
-  .data-table td:nth-child(2) {
+  /* Hide broker column on tablets. Not in the transaction list, where the
+     second column is the transaction text itself. */
+  .data-table:not(.spending-tx-table) th:nth-child(2),
+  .data-table:not(.spending-tx-table) td:nth-child(2) {
     display: none;
   }
 
@@ -1540,10 +1541,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     font-size: 0.85rem;
   }
 
-  .data-table th:nth-child(4),
-  .data-table td:nth-child(4),
-  .data-table th:nth-child(5),
-  .data-table td:nth-child(5) {
+  /* The transaction list keeps all five: its 4th and 5th columns are the
+     rule action and the amount. */
+  .data-table:not(.spending-tx-table) th:nth-child(4),
+  .data-table:not(.spending-tx-table) td:nth-child(4),
+  .data-table:not(.spending-tx-table) th:nth-child(5),
+  .data-table:not(.spending-tx-table) td:nth-child(5) {
     display: none;
   }
 
@@ -2515,6 +2518,59 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .spending-transfer-row td { opacity: 0.55; }
 
 .spending-muted { color: var(--text-secondary, #8b93a7); }
+
+/* Transaction list. Fixed layout with narrow, explicit columns everywhere
+   except the transaction text, which absorbs the slack — long bank wording
+   wraps instead of pushing the amount off the right edge. */
+.spending-tx-table { table-layout: fixed; }
+
+.spending-tx-table .spending-tx-when { width: 120px; }
+
+/* Date on one line; a long account name is cut with an ellipsis instead of
+   spilling over the transaction text next to it (the cell has a fixed width). */
+.spending-tx-when > div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spending-tx-table .spending-tx-controls-col { width: 250px; }
+.spending-tx-table .spending-tx-action-col { width: 92px; }
+.spending-tx-table .spending-amount-col { width: 130px; }
+
+.spending-tx-details {
+  /* Reference numbers and IBANs have no spaces to break at. */
+  overflow-wrap: anywhere;
+}
+
+.spending-tx-party { font-weight: 500; }
+
+.spending-tx-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.spending-tx-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.spending-tx-controls select { min-width: 0; }
+.spending-tx-controls .spending-tx-spread { flex: 0 0 72px; }
+
+@media (max-width: 900px) {
+  /* Controls stack under each other, and the rule button drops to its icon,
+     before the transaction text gets squeezed. */
+  .spending-tx-table .spending-tx-controls-col { width: 150px; }
+  .spending-tx-table .spending-tx-action-col { width: 52px; }
+  .spending-tx-controls { flex-wrap: wrap; }
+  .spending-tx-controls .spending-tx-spread { flex: 0 0 auto; }
+  .spending-tx-rule-label { display: none; }
+}
 
 .spending-transfer-badge,
 .spending-spread-badge {

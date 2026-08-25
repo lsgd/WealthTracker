@@ -1012,80 +1012,93 @@ export default function SpendingPage() {
                 : 'No transactions yet.'}
             </p>
           ) : (
+            // Five columns, no horizontal scrolling: date and account share a
+            // cell, counterparty and description share the one column that
+            // absorbs the slack, and the controls stay narrow.
             <div className="table-wrapper">
-              <table className="data-table">
+              <table className="data-table spending-tx-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Account</th>
-                    <th>Counterparty</th>
-                    <th>Description</th>
+                    <th className="spending-tx-when">Date</th>
+                    <th>Transaction</th>
                     {/* One dropdown for category OR transfer: mutually
                         exclusive, and transfers never carry a category.
                         Manual transfer marking stays possible here because
                         auto-detection only pairs entries between two
-                        accounts that both have a feed. */}
-                    <th>Category</th>
-                    {/* Per-transaction amortization: a rule spreads every match,
+                        accounts that both have a feed. Next to it the
+                        per-transaction spread: a rule amortizes every match,
                         but a one-off yearly bill has no rule to hang it on. */}
-                    <th>Spread</th>
-                    <th aria-label="Actions" />
+                    <th className="spending-tx-controls-col">Category · spread</th>
+                    <th className="spending-tx-action-col" aria-label="Actions" />
                     <th className="spending-amount-col">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((tx) => (
+                  {transactions.map((tx) => {
+                    const party = stripLeadingIban(tx.counterparty);
+                    return (
                     <tr key={tx.id} className={tx.is_transfer ? 'spending-transfer-row' : ''}>
-                      <td>{tx.booking_date}</td>
-                      <td>{accountNames[tx.account] ?? ''}</td>
-                      <td>{stripLeadingIban(tx.counterparty)}</td>
-                      <td>{tx.description}</td>
-                      <td>
-                        <select
-                          value={tx.is_transfer ? '__transfer__' : (tx.category ?? '')}
-                          onChange={(e) => handleCategoryChoice(tx, e.target.value)}
-                        >
-                          <option value="">—</option>
-                          <option value="__transfer__">Transfer (excluded)</option>
-                          {categories.map((c) => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                          <option value="__new__">+ New category…</option>
-                        </select>
+                      <td className="spending-tx-when">
+                        <div>{tx.booking_date}</div>
+                        <div className="spending-muted" title={accountNames[tx.account] ?? ''}>
+                          {accountNames[tx.account] ?? ''}
+                        </div>
+                      </td>
+                      <td className="spending-tx-details">
+                        {party && <div className="spending-tx-party">{party}</div>}
+                        {tx.description && (
+                          <div className="spending-muted spending-tx-desc">{tx.description}</div>
+                        )}
                       </td>
                       <td>
-                        {/* A transfer is excluded from spending entirely, so
-                            there is nothing to amortize. */}
-                        {tx.is_transfer ? (
-                          <span className="spending-muted">—</span>
-                        ) : (
+                        <div className="spending-tx-controls">
                           <select
-                            aria-label="Spread over months"
-                            value={tx.spread_months}
-                            onChange={(e) =>
-                              handleClassify(tx, { spread_months: Number(e.target.value) })}
+                            aria-label="Category"
+                            value={tx.is_transfer ? '__transfer__' : (tx.category ?? '')}
+                            onChange={(e) => handleCategoryChoice(tx, e.target.value)}
                           >
-                            <option value={1}>—</option>
-                            <option value={3}>/3m</option>
-                            <option value={6}>/6m</option>
-                            <option value={12}>/12m</option>
+                            <option value="">—</option>
+                            <option value="__transfer__">Transfer (excluded)</option>
+                            {categories.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                            <option value="__new__">+ New category…</option>
                           </select>
-                        )}
+                          {/* A transfer is excluded from spending entirely, so
+                              there is nothing to amortize. */}
+                          {!tx.is_transfer && (
+                            <select
+                              className="spending-tx-spread"
+                              aria-label="Spread over months"
+                              value={tx.spread_months}
+                              onChange={(e) =>
+                                handleClassify(tx, { spread_months: Number(e.target.value) })}
+                            >
+                              <option value={1}>—</option>
+                              <option value={3}>/3m</option>
+                              <option value={6}>/6m</option>
+                              <option value={12}>/12m</option>
+                            </select>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <button
                           className="btn btn-sm btn-ghost"
                           title="Create a rule from this transaction"
+                          aria-label="Create a rule from this transaction"
                           onClick={() => craftRuleFrom(tx)}
                         >
-                          <Plus size={14} /> Rule
+                          <Plus size={14} />
+                          <span className="spending-tx-rule-label">Rule</span>
                         </button>
                       </td>
                       <td className={`spending-amount-col ${Number(tx.amount) < 0 ? 'spending-neg' : 'spending-pos'}`}>
                         {formatAmount(Number(tx.amount), tx.currency)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               {transactions.length < txCount && (

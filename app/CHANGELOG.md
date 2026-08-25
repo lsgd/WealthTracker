@@ -50,6 +50,7 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Web transaction list no longer scrolls sideways: date and account share a column, counterparty and description share the one column that takes the leftover width, and long bank wording wraps instead of pushing the amount out of sight
 - Transactions can now be filtered by month (web and app), and picking a month in the insights — a bar in the chart or the breakdown arrows — filters the transaction list to it automatically
 - "Only uncategorized" no longer lists transfers: they have no category by design, and they buried the entries that still need a label
 - A single transaction can now be spread over 3, 6 or 12 months (column in the web transaction list, segmented control in the app's category sheet) — for one-off yearly bills that have no rule to carry the spread; marking a transaction as a transfer drops its spread
