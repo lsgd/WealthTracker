@@ -2424,6 +2424,150 @@ class BackfillImporterTests(TestCase):
         self.assertIn('No transactions were returned', result.describe())
 
 
+class InteractiveBackfillTests(APITestCase):
+    """A backfill of a broker that texts a code must be able to ask for it.
+
+    Swisscard cannot log in without an SMS code. Without this handshake the
+    backfill could only ever run in the few minutes after an unrelated sync had
+    warmed a session — the history of a card account would be unreachable.
+    """
+
+    def setUp(self):
+        from brokers.integrations.base import AuthResult, TransactionInfo
+        self.AuthResult = AuthResult
+        self.TransactionInfo = TransactionInfo
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(
+            code='swisscard', name='Swisscard', integration_type='rest')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Cashback', currency='CHF',
+            account_identifier='4000', encrypted_credentials=b'x', status='active',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def _integration(self, *, requires_2fa=True, infos=(), code_ok=True):
+        outer = self
+
+        class Fake:
+            closed = False
+            completed_with = None
+
+            def authenticate(self):
+                if requires_2fa:
+                    return outer.AuthResult(
+                        success=False, requires_2fa=True, two_fa_type='sms',
+                        session_data={'storage_state': {'cookies': []}},
+                        challenge_data={'message': 'Code sent to +41 79 ***'},
+                    )
+                return outer.AuthResult(success=True)
+
+            def complete_2fa(self, code, session_data):
+                self.completed_with = (code, session_data)
+                if not code_ok:
+                    return outer.AuthResult(success=False, error_message='Wrong code')
+                return outer.AuthResult(success=True)
+
+            def requires_reauth_before_2fa(self):
+                return False
+
+            def supports_transactions(self):
+                return True
+
+            def get_transactions_for_range(self, identifier, start, end):
+                self.range = (start, end)
+                return list(infos)
+
+            def close(self):
+                self.closed = True
+
+        return Fake()
+
+    def test_backfill_parks_the_challenge_instead_of_failing(self):
+        from portfolio.views import _backfill_transactions_worker
+        integration = self._integration()
+        with patch('brokers.integrations.get_broker_integration', return_value=integration):
+            result = _backfill_transactions_worker(
+                account_id=self.account.id, credentials={},
+                start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+            )
+
+        self.assertEqual(result['status'], 'pending_auth')
+        self.assertEqual(result['two_fa_type'], 'sms')
+        self.assertIn('+41 79 ***', result['challenge']['message'])
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.status, 'pending_auth')
+        action = self.account.pending_auth_state['pending_action']
+        self.assertEqual(action['type'], 'backfill')
+        self.assertEqual(action['start'], '2025-01-01')
+        self.assertEqual(action['end'], '2025-12-31')
+        self.assertEqual(action['previous_status'], 'active')
+        self.assertTrue(integration.closed)
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_account_credentials')
+    def test_the_code_resumes_the_backfill_not_a_sync(self, m_creds):
+        from portfolio.models import Transaction
+        m_creds.return_value = {}
+        self.account.pending_auth_state = {
+            'two_fa_type': 'sms',
+            'session_data': {'storage_state': {'cookies': []}},
+            'pending_action': {
+                'type': 'backfill', 'start': '2025-01-01', 'end': '2025-12-31',
+                'previous_status': 'active',
+            },
+        }
+        self.account.status = 'pending_auth'
+        self.account.save()
+
+        integration = self._integration(infos=[self.TransactionInfo(
+            booking_date=date(2025, 3, 5), amount=Decimal('-42.50'), currency='CHF',
+            counterparty='Test Shop', external_id='tx-1',
+        )])
+        with patch('brokers.integrations.get_broker_integration', return_value=integration):
+            resp = self.client.post(
+                reverse('account_auth', kwargs={'pk': self.account.pk}),
+                {'auth_code': '123456'}, format='json',
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['status'], 'success')
+        self.assertEqual(resp.data['imported'], 1)
+        # The requested window travelled through the challenge unchanged.
+        self.assertEqual(integration.range, (date(2025, 1, 1), date(2025, 12, 31)))
+        self.assertEqual(integration.completed_with[0], '123456')
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+        # No snapshot: a backfill is not a sync.
+        self.assertFalse(AccountSnapshot.objects.filter(account=self.account).exists())
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.status, 'active')
+        self.assertIsNone(self.account.pending_auth_state)
+
+    @patch('portfolio.views.KEKAuthenticationMixin.decrypt_account_credentials')
+    def test_a_rejected_code_keeps_the_backfill_pending(self, m_creds):
+        m_creds.return_value = {}
+        self.account.pending_auth_state = {
+            'two_fa_type': 'sms', 'session_data': {},
+            'pending_action': {'type': 'backfill', 'start': '2025-01-01',
+                               'end': '2025-12-31', 'previous_status': 'active'},
+        }
+        self.account.status = 'pending_auth'
+        self.account.save()
+
+        with patch('brokers.integrations.get_broker_integration',
+                   return_value=self._integration(code_ok=False)):
+            resp = self.client.post(
+                reverse('account_auth', kwargs={'pk': self.account.pk}),
+                {'auth_code': '000000'}, format='json',
+            )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Wrong code', resp.data['error'])
+        # Still parked, so the user can retype the code without starting over.
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.status, 'pending_auth')
+        self.assertIn('pending_action', self.account.pending_auth_state)
+
+
 class StorePositionsTests(TestCase):
     def setUp(self):
         from brokers.integrations.base import PositionInfo

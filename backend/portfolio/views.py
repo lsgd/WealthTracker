@@ -485,6 +485,29 @@ def _backfill_transactions_worker(*, account_id, credentials, start_date, end_da
     try:
         auth_result = integration.authenticate()
         if not auth_result.success:
+            if auth_result.requires_2fa:
+                # Same handshake as a sync: park the half-finished login and let
+                # the user answer the challenge, then resume *this* backfill.
+                # Without it, an SMS broker could only ever be backfilled in the
+                # few minutes after an unrelated sync had warmed a session.
+                account.pending_auth_state = {
+                    'two_fa_type': auth_result.two_fa_type,
+                    'session_data': auth_result.session_data,
+                    'pending_action': {
+                        'type': 'backfill',
+                        'start': start_date.isoformat(),
+                        'end': end_date.isoformat(),
+                        'previous_status': account.status,
+                    },
+                }
+                account.status = 'pending_auth'
+                account.save()
+                return {
+                    'status': 'pending_auth',
+                    'message': 'Two-factor authentication required',
+                    'two_fa_type': auth_result.two_fa_type,
+                    'challenge': auth_result.challenge_data,
+                }
             return {
                 'status': 'error',
                 'error': auth_result.error_message or 'Authentication failed',
@@ -494,20 +517,24 @@ def _backfill_transactions_worker(*, account_id, credentials, start_date, end_da
                 'status': 'error',
                 'error': f'{account.broker.name} does not support transaction download.',
             }
-        result = backfill_account_transactions(
-            account, integration, start_date, end_date,
+        return _backfill_result_payload(
+            backfill_account_transactions(account, integration, start_date, end_date)
         )
-        return {
-            'status': 'success',
-            'imported': result.imported,
-            'fetched': result.fetched,
-            'covered_start': result.covered_start.isoformat() if result.covered_start else None,
-            'covered_end': result.covered_end.isoformat() if result.covered_end else None,
-            'truncated': result.is_truncated,
-            'message': result.describe(),
-        }
     finally:
         integration.close()
+
+
+def _backfill_result_payload(result) -> dict:
+    """Serialize a BackfillResult for the API (shared by the queued and 2FA paths)."""
+    return {
+        'status': 'success',
+        'imported': result.imported,
+        'fetched': result.fetched,
+        'covered_start': result.covered_start.isoformat() if result.covered_start else None,
+        'covered_end': result.covered_end.isoformat() if result.covered_end else None,
+        'truncated': result.is_truncated,
+        'message': result.describe(),
+    }
 
 
 class AccountTransactionBackfillView(KEKAuthenticationMixin, APIView):
@@ -520,7 +547,10 @@ class AccountTransactionBackfillView(KEKAuthenticationMixin, APIView):
     ~90 days).
 
     Body: ``start`` and ``end`` as ISO dates (``end`` defaults to today).
-    Returns a queued task id — poll it via the existing sync-task endpoint.
+    Returns a queued task id — poll it via the existing sync-task endpoint. A
+    broker that challenges for a one-time code finishes the task as
+    ``pending_auth``; posting the code to the account's auth endpoint resumes
+    this backfill and returns its result.
     """
     permission_classes = [IsAuthenticated]
 
@@ -800,12 +830,16 @@ class AccountAuthView(KEKAuthenticationMixin, APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # 2FA accepted — finish the sync with this same authenticated
-            # integration rather than logging in a second time.
+            # 2FA accepted — finish whatever asked for it with this same
+            # authenticated integration rather than logging in a second time.
+            pending_action = account.pending_auth_state.get('pending_action') or {}
             try:
-                result = _sync_authenticated_account(
-                    account, integration, request.user.profile.base_currency,
-                )
+                if pending_action.get('type') == 'backfill':
+                    result = self._finish_backfill(account, integration, pending_action)
+                else:
+                    result = _sync_authenticated_account(
+                        account, integration, request.user.profile.base_currency,
+                    )
             finally:
                 integration.close()
             return Response(result)
@@ -818,6 +852,27 @@ class AccountAuthView(KEKAuthenticationMixin, APIView):
                 {'error': f'Authentication failed: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @staticmethod
+    def _finish_backfill(account, integration, pending_action):
+        """Resume a dated backfill that stopped for a 2FA challenge."""
+        from .transaction_importer import backfill_account_transactions
+
+        if not integration.supports_transactions():
+            return {'status': 'error',
+                    'error': f'{account.broker.name} does not support transaction download.'}
+
+        result = backfill_account_transactions(
+            account, integration,
+            date.fromisoformat(pending_action['start']),
+            date.fromisoformat(pending_action['end']),
+        )
+        # A backfill is not a sync: it records no snapshot, so last_sync_at stays
+        # untouched. Only the parked-login flag is cleared.
+        account.status = pending_action.get('previous_status') or 'active'
+        account.pending_auth_state = None
+        account.save()
+        return _backfill_result_payload(result)
 
 
 class AccountCredentialsView(KEKAuthenticationMixin, APIView):

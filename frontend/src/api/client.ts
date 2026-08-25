@@ -1056,11 +1056,9 @@ export async function detectTransfers(): Promise<{ marked: number }> {
 
 // Fetch historical transactions for an explicit date range. Returns once the
 // background task finishes (same queue as sync), so the caller sees the result.
-export async function backfillTransactions(
-  accountId: number,
-  start: string,
-  end?: string,
-): Promise<{
+// A broker that challenges for a one-time code answers 'pending_auth': ask for
+// the code and pass it to completeAccountAuth, which resumes this same backfill.
+export interface BackfillOutcome {
   status: string;
   imported?: number;
   fetched?: number;
@@ -1069,7 +1067,15 @@ export async function backfillTransactions(
   truncated?: boolean;
   message?: string;
   error?: string;
-}> {
+  two_fa_type?: string;
+  challenge?: { message?: string };
+}
+
+export async function backfillTransactions(
+  accountId: number,
+  start: string,
+  end?: string,
+): Promise<BackfillOutcome> {
   const res = await fetchWithAuth(`/api/accounts/${accountId}/transactions/backfill/`, {
     method: 'POST',
     body: JSON.stringify({ start, ...(end ? { end } : {}) }),

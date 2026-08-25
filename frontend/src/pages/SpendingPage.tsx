@@ -16,8 +16,10 @@ import {
 } from 'recharts';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
+import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
 import type {
+  BackfillOutcome,
   CategoryRule,
   SpendingReport,
   Transaction,
@@ -25,6 +27,7 @@ import type {
 } from '../api/client';
 import {
   backfillTransactions,
+  completeAccountAuth,
   importTransactionsCsv,
   classifyTransaction,
   createCategory,
@@ -157,6 +160,9 @@ export default function SpendingPage() {
   // A short-served range is not an error, but it must not read like a success either:
   // the chart's earlier months stay empty and only this notice explains why.
   const [backfillTruncated, setBackfillTruncated] = useState(false);
+  // A broker that texts a code (Swisscard) stops the backfill mid-way; this holds
+  // the challenge until the user types the code, which resumes the same fetch.
+  const [authPrompt, setAuthPrompt] = useState<AuthPrompt | null>(null);
   // CSV import (web only): the file resolves its own account (DKB names its
   // IBAN; ZKB is matched by currency) — only an ambiguous match needs a pick.
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -555,19 +561,47 @@ export default function SpendingPage() {
     setBackfillTruncated(false);
     setBackfillBusy(true);
     try {
-      const outcome = await backfillTransactions(backfillAccount, start, end);
-      if (outcome.status === 'error') {
-        setError(outcome.error || 'Backfill failed');
-      } else {
-        setBackfillNotice(
-          outcome.message || `${outcome.imported ?? 0} new transactions imported`,
-        );
-        setBackfillTruncated(Boolean(outcome.truncated));
-        loadReport();
-        loadTransactions(accountId, 1);
-      }
+      applyBackfillOutcome(await backfillTransactions(backfillAccount, start, end));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Backfill failed');
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
+
+  // Shared by the direct fetch and the one resumed after a one-time code.
+  const applyBackfillOutcome = (outcome: BackfillOutcome) => {
+    if (outcome.status === 'pending_auth') {
+      const account = accounts.find((a) => a.id === backfillAccount);
+      setAuthPrompt({
+        accountId: backfillAccount as number,
+        accountName: account?.name || 'this account',
+        twoFaType: outcome.two_fa_type || 'totp',
+        challenge: outcome.challenge?.message,
+      });
+      return;
+    }
+    if (outcome.status === 'error') {
+      setError(outcome.error || 'Backfill failed');
+      return;
+    }
+    setBackfillNotice(
+      outcome.message || `${outcome.imported ?? 0} new transactions imported`,
+    );
+    setBackfillTruncated(Boolean(outcome.truncated));
+    loadReport();
+    loadTransactions(accountId, 1);
+  };
+
+  // The code the bank just sent resumes the parked fetch — the same endpoint the
+  // account list uses, which returns this backfill's result instead of a sync's.
+  const handleAuthSubmit = async (code: string) => {
+    if (!authPrompt) return;
+    setBackfillBusy(true);
+    try {
+      const outcome = await completeAccountAuth(authPrompt.accountId, code);
+      setAuthPrompt(null);
+      applyBackfillOutcome(outcome);
     } finally {
       setBackfillBusy(false);
     }
@@ -1166,6 +1200,7 @@ export default function SpendingPage() {
                 this pulls an older period once. The default asks for the last{' '}
                 {DEFAULT_BACKFILL_MONTHS} months — banks that keep less return what
                 they have (EBICS often serves years, FinTS/DKB about 90 days).
+                Banks that need a one-time code (Swisscard) will ask for one.
               </p>
               <div className="spending-rule-row spending-rule-new">
                 <select
@@ -1365,6 +1400,16 @@ export default function SpendingPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {authPrompt && (
+          <TwoFactorModal
+            prompt={authPrompt}
+            purpose="fetch transactions for"
+            submitLabel="Verify & Fetch"
+            onSubmit={handleAuthSubmit}
+            onClose={() => setAuthPrompt(null)}
+          />
         )}
 
         {regexConfirmOpen && (

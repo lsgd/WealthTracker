@@ -50,6 +50,7 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Fetching transaction history from a bank that sends a one-time code (Swisscard) now asks for that code instead of failing, and resumes the same fetch once it is entered
 - Web rules: a group's plus chip moves the rule form directly below that group with the category prefilled (changing the dropdown by hand never moves it); the regex switch turns itself on while typing pattern syntax like brackets or pipes (manual toggles stay put), and saving a "regex" without any regex syntax asks whether to save it as plain text instead
 
 - Start screen now refreshes automatically after an automatic sync or after adding a snapshot from the account detail screen (no more pull-to-refresh needed)

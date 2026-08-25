@@ -488,8 +488,8 @@ class SwisscardIntegration(BrokerIntegrationBase):
                                    end_date: date) -> List[TransactionInfo]:
         """Backfill: ask the portal for the window instead of the cache.
 
-        Only possible while the login is still warm — the session cannot be
-        re-established without another SMS.
+        Needs a live session, which is either still warm from a recent sync or
+        was just established by answering the SMS challenge the backfill raised.
         """
         if self._fetched_from and start_date >= self._fetched_from:
             return self.get_transactions(account_identifier, start_date, end_date)

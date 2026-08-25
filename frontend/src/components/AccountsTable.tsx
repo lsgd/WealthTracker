@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Key, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat, FileUp } from 'lucide-react';
+import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat, FileUp } from 'lucide-react';
 import { syncAccount, completeAccountAuth, deleteAccount, updateAccount, updateAccountCredentials, getAccountCredentials, getBroker } from '../api/client';
 import AddSnapshotModal from './AddSnapshotModal';
 import AddAccountModal from './AddAccountModal';
@@ -10,6 +10,7 @@ import TransactionCsvImportModal from './TransactionCsvImportModal';
 import Tooltip from './Tooltip';
 import ExportModal from './ExportModal';
 import Toast from './Toast';
+import TwoFactorModal, { type AuthPrompt } from './TwoFactorModal';
 
 interface ToastData {
   id: string;
@@ -41,15 +42,6 @@ interface Props {
   accounts: Account[];
   baseCurrency: string;
   onRefresh: () => void;
-}
-
-interface AuthPrompt {
-  accountId: number;
-  accountName: string;
-  twoFaType: string;
-  // What the broker said about the challenge, e.g. the masked phone number
-  // an SMS code was sent to.
-  challenge?: string;
 }
 
 interface CredentialField {
@@ -164,9 +156,6 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<AuthPrompt | null>(null);
-  const [authCode, setAuthCode] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [submittingAuth, setSubmittingAuth] = useState(false);
 
 
   // Error details modal
@@ -294,8 +283,6 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               twoFaType: result.two_fa_type || 'totp',
               challenge: result.challenge?.message,
             });
-            setAuthCode('');
-            setAuthError('');
           } else if (result.status === 'error') {
             // If it's still an auth error, open credentials modal again
             const isAuthError = isAuthenticationError(result.error);
@@ -355,8 +342,6 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
           twoFaType: result.two_fa_type || 'totp',
           challenge: result.challenge?.message,
         });
-        setAuthCode('');
-        setAuthError('');
       } else if (result.status === 'error') {
         // Check if it's an authentication error
         if (account && isAuthenticationError(result.error)) {
@@ -383,23 +368,13 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
     }
   };
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authPrompt || !authCode.trim()) return;
-
-    setSubmittingAuth(true);
-    setAuthError('');
-    try {
-      await completeAccountAuth(authPrompt.accountId, authCode.trim());
-      addToast('success', `${authPrompt.accountName} synced successfully`);
-      setAuthPrompt(null);
-      setAuthCode('');
-      onRefresh();
-    } catch (err) {
-      setAuthError(err instanceof Error && err.message ? err.message : 'Authentication failed');
-    } finally {
-      setSubmittingAuth(false);
-    }
+  const handleAuthSubmit = async (code: string) => {
+    if (!authPrompt) return;
+    // A rejection here is shown inside the modal, so the code can be retyped.
+    await completeAccountAuth(authPrompt.accountId, code);
+    addToast('success', `${authPrompt.accountName} synced successfully`);
+    setAuthPrompt(null);
+    onRefresh();
   };
 
   const handleDelete = async () => {
@@ -602,69 +577,11 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
 
       {/* 2FA Authentication Modal */}
       {authPrompt && (
-        <div className="modal-overlay" onClick={() => setAuthPrompt(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>
-                <Key size={18} style={{ marginRight: 8 }} />
-                Authentication Required
-              </h3>
-              <button className="btn btn-ghost" onClick={() => setAuthPrompt(null)}>
-                <X size={18} />
-              </button>
-            </div>
-
-            {authError && <div className="form-error">{authError}</div>}
-
-            <form onSubmit={handleAuthSubmit}>
-              <p className="form-hint" style={{ marginBottom: 16 }}>
-                {authPrompt.challenge
-                  || (authPrompt.twoFaType === 'sms'
-                    ? 'Enter the code the bank just sent you by SMS'
-                    : 'Enter the one-time code from your authenticator app')}
-                {' to sync '}
-                <strong>{authPrompt.accountName}</strong>.
-              </p>
-
-              <div className="form-group">
-                <label htmlFor="auth-code">
-                  {authPrompt.twoFaType === 'totp' ? 'TOTP Code'
-                    : authPrompt.twoFaType === 'sms' ? 'SMS Code'
-                    : 'Authentication Code'}
-                </label>
-                <input
-                  id="auth-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  autoFocus
-                  required
-                  value={authCode}
-                  onChange={(e) => setAuthCode(e.target.value)}
-                  placeholder="Enter 6-digit code"
-                  maxLength={6}
-                />
-              </div>
-
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setAuthPrompt(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={submittingAuth || authCode.length < 6}
-                >
-                  {submittingAuth ? 'Verifying...' : 'Verify & Sync'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <TwoFactorModal
+          prompt={authPrompt}
+          onSubmit={handleAuthSubmit}
+          onClose={() => setAuthPrompt(null)}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
