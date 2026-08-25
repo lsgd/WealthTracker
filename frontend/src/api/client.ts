@@ -928,10 +928,18 @@ export async function getSpendingMonthly(
   return res.json();
 }
 
+// Sorted here rather than trusting the server's ORDER BY: only the browser
+// knows where "Ärzte" belongs (with A, not after Z, which is where every
+// byte-wise collation puts it). Sorting at the single fetch point keeps every
+// dropdown, sheet and list in the same order.
+export const compareCategoryNames = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
 export async function getCategories(): Promise<TransactionCategory[]> {
   const res = await fetchWithAuth('/api/spending/categories/');
   if (!res.ok) throw new Error('Failed to fetch categories');
-  return unwrapResults<TransactionCategory>(await res.json());
+  return unwrapResults<TransactionCategory>(await res.json())
+    .sort((a, b) => compareCategoryNames(a.name, b.name));
 }
 
 export async function createCategory(name: string): Promise<TransactionCategory> {

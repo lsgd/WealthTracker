@@ -50,6 +50,7 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Category dropdowns and lists are now sorted the way a reader expects: case-insensitively and with umlauts filed under their base letter ("Ärzte" with A, "eBay" with E) instead of after Z, where the database collation put them
 - Spending categories past the fourteenth are now hatched (diagonal stripes, then dots, then crosshatch) in the web charts and legends instead of repeating a color, and get a lighter or darker shade in both web and app — the first fourteen stay solid
 - Spending chart colors: every category now gets a distinct color (with eight in the palette, a ninth category became a twin of the first — "Restaurants" was indistinguishable from "Housing", "Subscriptions" from "Uncategorized"), and Uncategorized is always the same grey instead of taking a category color
 - Web spending chart tooltip is no longer painted over by the legend below it, which made its background look see-through

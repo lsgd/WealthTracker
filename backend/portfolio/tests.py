@@ -2507,6 +2507,43 @@ class BackfillImporterTests(TestCase):
         self.assertIn('No transactions were returned', result.describe())
 
 
+class CategoryOrderingTests(APITestCase):
+    """Categories come back in the order the dropdowns show them."""
+
+    def setUp(self):
+        self.user, _, _ = make_kek_user()
+        self.client.force_authenticate(user=self.user)
+
+    def test_list_is_alphabetical_regardless_of_case(self):
+        """A plain ORDER BY name sorts by collation, which strands lowercase.
+
+        On a C-collated Postgres every lowercase initial sorts after every
+        uppercase one, so "eBay" showed up behind "Transport" — halfway down a
+        dropdown nobody scrolls that far into.
+        """
+        from portfolio.models import TransactionCategory
+        for name in ('Transport', 'eBay', 'Groceries', 'zoo', 'Insurance'):
+            TransactionCategory.objects.create(user=self.user, name=name)
+
+        resp = self.client.get(reverse('category_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            [c['name'] for c in resp.data],
+            ['eBay', 'Groceries', 'Insurance', 'Transport', 'zoo'],
+        )
+
+    def test_a_new_category_lands_in_order_not_at_the_end(self):
+        from portfolio.models import TransactionCategory
+        for name in ('Alpha', 'Zulu'):
+            TransactionCategory.objects.create(user=self.user, name=name)
+        created = self.client.post(
+            reverse('category_list'), {'name': 'Mike'}, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+
+        resp = self.client.get(reverse('category_list'))
+        self.assertEqual([c['name'] for c in resp.data], ['Alpha', 'Mike', 'Zulu'])
+
+
 class InteractiveBackfillTests(APITestCase):
     """A backfill of a broker that texts a code must be able to ask for it.
 

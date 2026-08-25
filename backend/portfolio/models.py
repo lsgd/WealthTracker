@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import models
+from django.db.models.functions import Lower
 
 from brokers.models import Broker
 
@@ -194,7 +195,11 @@ class TransactionCategory(models.Model):
 
     class Meta:
         db_table = 'transaction_categories'
-        ordering = ['name']
+        # Lower(): a plain ORDER BY name uses the database collation, which on a
+        # C-collated Postgres sorts every lowercase initial after every
+        # uppercase one ("eBay" landing behind "Transport"). Diacritics still
+        # sort past z here — the clients apply a locale-aware sort on top.
+        ordering = [Lower('name')]
         constraints = [
             models.UniqueConstraint(
                 fields=['user', 'name'],

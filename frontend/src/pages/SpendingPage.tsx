@@ -34,6 +34,7 @@ import type {
 } from '../api/client';
 import {
   backfillTransactions,
+  compareCategoryNames,
   completeAccountAuth,
   importTransactionsCsv,
   classifyTransaction,
@@ -415,7 +416,8 @@ export default function SpendingPage() {
     if (!name) return;
     try {
       const category = await createCategory(name);
-      setCategories((prev) => [...prev, category].sort((a, b) => a.name.localeCompare(b.name)));
+      setCategories((prev) => [...prev, category]
+        .sort((a, b) => compareCategoryNames(a.name, b.name)));
       setNewCategoryName('');
       setCategoryDialogOpen(false);
       if (categoryDialogTx) {

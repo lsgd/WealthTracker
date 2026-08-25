@@ -4,6 +4,29 @@ import '../models/ai_categorization.dart';
 import '../models/spending.dart';
 import '../models/transactions.dart';
 
+/// Comparable form of a category name: lowercased, with the diacritics folded
+/// onto their base letters.
+///
+/// Dart has no locale-aware collator, and a plain compareTo works on code
+/// units — "Ärzte" would sort after "Zoo" and "eBay" after "Transport", which
+/// is not where anyone looks for them.
+String categorySortKey(String name) {
+  const folds = {
+    'ä': 'a', 'à': 'a', 'á': 'a', 'â': 'a', 'å': 'a',
+    'ö': 'o', 'ò': 'o', 'ó': 'o', 'ô': 'o', 'ø': 'o',
+    'ü': 'u', 'ù': 'u', 'ú': 'u', 'û': 'u',
+    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+    'ç': 'c', 'ñ': 'n', 'ß': 'ss',
+  };
+  final lower = name.toLowerCase();
+  final buffer = StringBuffer();
+  for (final char in lower.split('')) {
+    buffer.write(folds[char] ?? char);
+  }
+  return buffer.toString();
+}
+
 class SpendingRepository {
   final ApiClient _apiClient;
 
@@ -111,7 +134,11 @@ class SpendingRepository {
     final response = await _apiClient.get(ApiConfig.spendingCategoriesPath);
     return _asList(response.data)
         .map((e) => TransactionCategory.fromJson(e))
-        .toList();
+        .toList()
+      // Sorted here rather than trusting the server's ORDER BY: a byte-wise
+      // collation puts "Ärzte" after "Zoo" and "eBay" after "Transport".
+      // Sorting at the single fetch point keeps every sheet and list agreeing.
+      ..sort((a, b) => categorySortKey(a.name).compareTo(categorySortKey(b.name)));
   }
 
   Future<TransactionCategory> createCategory(String name) async {
