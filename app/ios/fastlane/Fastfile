@@ -223,14 +223,21 @@ end
 # Copyright — current year + holder from METADATA.md. Precheck rejects a
 # copyright whose year isn't the current year, so this must run before EVERY
 # deliver/precheck (not just in `beta` via write_release_notes) — otherwise
-# `submit`/`metadata` ship the stale committed file and fail at year rollover.
+# `metadata` ships the stale committed file and fails at year rollover.
+# (`submit` skips metadata upload, so it relies on the value a previous
+# `beta`/`metadata` run pushed.)
+#
+# `copyright` is a NON-localised deliver field: it must live at
+# metadata/copyright.txt, not metadata/<locale>/copyright.txt. A copy inside a
+# locale folder is silently ignored, App Store Connect keeps an empty copyright
+# and precheck reports "missing copyright year".
 def write_copyright
   metadata_md = File.expand_path("../../METADATA.md", __dir__)
   return unless File.exist?(metadata_md)
   match = File.read(metadata_md).match(/\*\*Copyright\*\*.*?\n```\n(.+?)\n```/m)
   return unless match
   copyright = "#{Time.now.year} #{match[1].strip}"
-  File.write(File.expand_path("metadata/en-US/copyright.txt", __dir__), copyright)
+  File.write(File.expand_path("metadata/copyright.txt", __dir__), copyright)
   UI.message("Copyright set to: #{copyright}")
 end
 

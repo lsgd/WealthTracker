@@ -122,7 +122,10 @@ def main():
                 if field in google_data:
                     write_file(os.path.join(android_dir, filename), google_data[field])
 
-    # Copyright (iOS only) — year is prepended dynamically
+    # Copyright (iOS only) — year is prepended dynamically.
+    # This is a non-localised deliver field, so it goes in the metadata root;
+    # a copy inside a locale folder is ignored and App Store Connect would end
+    # up with an empty copyright (precheck: "missing copyright year").
     copyright_match = re.search(
         r"\*\*Copyright\*\*.*?\n```\n(.+?)\n```", content, re.DOTALL
     )
@@ -130,12 +133,17 @@ def main():
         from datetime import datetime
 
         holder = copyright_match.group(1).strip()
+        ios_metadata_dir = os.path.join(SCRIPT_DIR, "ios", "fastlane", "metadata")
+        write_file(
+            os.path.join(ios_metadata_dir, "copyright.txt"),
+            f"{datetime.now().year} {holder}",
+        )
+        # Remove stale per-locale copies written by earlier versions.
         for _, (ios_locale, _) in LANGUAGES.items():
-            ios_dir = os.path.join(SCRIPT_DIR, "ios", "fastlane", "metadata", ios_locale)
-            write_file(
-                os.path.join(ios_dir, "copyright.txt"),
-                f"{datetime.now().year} {holder}",
-            )
+            stale = os.path.join(ios_metadata_dir, ios_locale, "copyright.txt")
+            if os.path.exists(stale):
+                os.remove(stale)
+                print(f"  Removed stale: {os.path.relpath(stale, SCRIPT_DIR)}")
 
     print("Done!")
 
