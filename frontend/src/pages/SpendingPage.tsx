@@ -990,6 +990,9 @@ export default function SpendingPage() {
                         auto-detection only pairs entries between two
                         accounts that both have a feed. */}
                     <th>Category</th>
+                    {/* Per-transaction amortization: a rule spreads every match,
+                        but a one-off yearly bill has no rule to hang it on. */}
+                    <th>Spread</th>
                     <th aria-label="Actions" />
                     <th className="spending-amount-col">Amount</th>
                   </tr>
@@ -1000,12 +1003,7 @@ export default function SpendingPage() {
                       <td>{tx.booking_date}</td>
                       <td>{accountNames[tx.account] ?? ''}</td>
                       <td>{stripLeadingIban(tx.counterparty)}</td>
-                      <td>
-                        {tx.description}
-                        {tx.spread_months > 1 && (
-                          <span className="spending-spread-badge">/{tx.spread_months}m</span>
-                        )}
-                      </td>
+                      <td>{tx.description}</td>
                       <td>
                         <select
                           value={tx.is_transfer ? '__transfer__' : (tx.category ?? '')}
@@ -1018,6 +1016,25 @@ export default function SpendingPage() {
                           ))}
                           <option value="__new__">+ New category…</option>
                         </select>
+                      </td>
+                      <td>
+                        {/* A transfer is excluded from spending entirely, so
+                            there is nothing to amortize. */}
+                        {tx.is_transfer ? (
+                          <span className="spending-muted">—</span>
+                        ) : (
+                          <select
+                            aria-label="Spread over months"
+                            value={tx.spread_months}
+                            onChange={(e) =>
+                              handleClassify(tx, { spread_months: Number(e.target.value) })}
+                          >
+                            <option value={1}>—</option>
+                            <option value={3}>/3m</option>
+                            <option value={6}>/6m</option>
+                            <option value={12}>/12m</option>
+                          </select>
+                        )}
                       </td>
                       <td>
                         <button

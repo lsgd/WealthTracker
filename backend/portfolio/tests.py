@@ -1278,6 +1278,31 @@ class ClassificationApiTests(APITestCase):
         resp = self.client.patch(detail, {'category': foreign.id}, format='json')
         self.assertEqual(resp.status_code, 400)
 
+    def test_single_transaction_can_be_spread(self):
+        """A one-off yearly bill has no rule to hang a spread on."""
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'spread_months': 12}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['spread_months'], 12)
+        self.imported.refresh_from_db()
+        self.assertEqual(self.imported.spread_months, 12)
+
+    def test_marking_a_spread_transaction_as_transfer_drops_the_spread(self):
+        """A transfer never reaches the report, so a spread on it is dead data.
+
+        The UI hides the spread control for transfers — a leftover value would
+        sit there invisibly and come back if the transfer flag were removed.
+        """
+        self.imported.spread_months = 12
+        self.imported.save()
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+        resp = self.client.patch(detail, {'is_transfer': True}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['spread_months'], 1)
+        self.imported.refresh_from_db()
+        self.assertTrue(self.imported.is_transfer)
+        self.assertEqual(self.imported.spread_months, 1)
+
     def test_rule_create_applies_retroactively(self):
         resp = self.client.post(reverse('rule_list'), {
             'match_text': 'migros', 'category': self.category.id,

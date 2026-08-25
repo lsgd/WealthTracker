@@ -210,6 +210,11 @@ class _TransactionTile extends ConsumerWidget {
     );
   }
 
+  /// Offered spreads, plus whatever the transaction already carries (a rule or
+  /// Gemini can set any number, and SegmentedButton needs its selection listed).
+  List<int> get _spreadOptions =>
+      (<int>{1, 3, 6, 12, transaction.spreadMonths}.toList()..sort());
+
   Future<void> _pickCategory(BuildContext context, WidgetRef ref) async {
     final categories = await ref.read(categoriesProvider.future);
     if (!context.mounted) return;
@@ -217,6 +222,9 @@ class _TransactionTile extends ConsumerWidget {
     final choice = await showModalBottomSheet<_SheetChoice>(
       context: context,
       showDragHandle: true,
+      // Sizes to the content instead of the default half screen: transfer,
+      // spread and the categories together no longer fit in it.
+      isScrollControlled: true,
       builder: (context) => ListView(
         shrinkWrap: true,
         children: [
@@ -230,6 +238,34 @@ class _TransactionTile extends ConsumerWidget {
             onChanged: (value) =>
                 Navigator.pop(context, _SheetChoice.transfer(value)),
           ),
+          // Above the categories on purpose: the list can be long enough to
+          // push anything below it out of the sheet, where nobody finds it.
+          // A transfer is excluded from spending — nothing to amortize.
+          if (!transaction.isTransfer) ...[
+            const Divider(height: 1),
+            const ListTile(
+              dense: true,
+              title: Text('Spread'),
+              subtitle: Text('A yearly bill counts as one twelfth per month '
+                  'in the normalized view'),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: [
+                  for (final months in _spreadOptions)
+                    ButtonSegment(
+                      value: months,
+                      label: Text(months == 1 ? 'None' : '/${months}m'),
+                    ),
+                ],
+                selected: {transaction.spreadMonths},
+                onSelectionChanged: (values) =>
+                    Navigator.pop(context, _SheetChoice.spread(values.first)),
+              ),
+            ),
+          ],
           const Divider(height: 1),
           const ListTile(
             dense: true,
@@ -265,13 +301,16 @@ class _TransactionTile extends ConsumerWidget {
       if (choice.isTransferChoice) {
         updated = await repo.setTransfer(transaction.id,
             isTransfer: choice.transferValue!);
+      } else if (choice.isSpreadChoice) {
+        updated = await repo.setSpread(transaction.id,
+            spreadMonths: choice.spreadMonths!);
       } else {
         updated = await repo.classifyTransaction(transaction.id,
             categoryId: choice.categoryId);
       }
       // Offer to propagate the correction to similar transactions — only for
       // an actual category assignment, and only when Gemini is configured.
-      var offerAiFix = !choice.isTransferChoice && updated.categoryName != null;
+      var offerAiFix = choice.isCategoryChoice && updated.categoryName != null;
       if (offerAiFix) {
         try {
           offerAiFix = (await ref.read(aiConfigProvider.future)).configured;
@@ -327,15 +366,28 @@ class _TransactionTile extends ConsumerWidget {
   }
 }
 
-/// What the bottom sheet resolved to: a category assignment or a transfer flip.
+/// What the bottom sheet resolved to: a category assignment, a transfer flip,
+/// or a spread.
 class _SheetChoice {
   final int? categoryId;
   final bool? transferValue;
+  final int? spreadMonths;
 
-  const _SheetChoice.category(this.categoryId) : transferValue = null;
-  const _SheetChoice.transfer(this.transferValue) : categoryId = null;
+  const _SheetChoice.category(this.categoryId)
+      : transferValue = null,
+        spreadMonths = null;
+  const _SheetChoice.transfer(this.transferValue)
+      : categoryId = null,
+        spreadMonths = null;
+  const _SheetChoice.spread(this.spreadMonths)
+      : categoryId = null,
+        transferValue = null;
 
   bool get isTransferChoice => transferValue != null;
+  bool get isSpreadChoice => spreadMonths != null;
+
+  /// Note a category choice can carry a null id — that clears the category.
+  bool get isCategoryChoice => !isTransferChoice && !isSpreadChoice;
 }
 
 class _Chip extends StatelessWidget {

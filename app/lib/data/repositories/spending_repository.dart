@@ -85,6 +85,22 @@ class SpendingRepository {
     return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
   }
 
+  /// Amortize one transaction over [spreadMonths] months (1 = no spread).
+  ///
+  /// The rule-level spread only helps recurring merchants; a one-off yearly
+  /// bill (an insurance premium paid once) has no rule to hang it on, and
+  /// without this it dwarfs its month in the normalized view.
+  Future<TransactionRecord> setSpread(
+    int transactionId, {
+    required int spreadMonths,
+  }) async {
+    final response = await _apiClient.patch(
+      '${ApiConfig.transactionsPath}$transactionId/',
+      data: {'spread_months': spreadMonths},
+    );
+    return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
+  }
+
   // ---- categories and rules ------------------------------------------------
 
   Future<List<TransactionCategory>> getCategories() async {

@@ -2514,6 +2514,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .spending-transfer-row td { opacity: 0.55; }
 
+.spending-muted { color: var(--text-secondary, #8b93a7); }
+
 .spending-transfer-badge,
 .spending-spread-badge {
   display: inline-block;

@@ -152,6 +152,17 @@ class TransactionClassificationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Category not found')
         return category
 
+    def validate(self, attrs):
+        # A transfer is excluded from spending entirely, so there is nothing to
+        # amortize. Marking one drops any spread instead of erroring: the intent
+        # ("this is a transfer") is unambiguous, and a spread the UI then hides
+        # would linger unseen.
+        is_transfer = attrs.get(
+            'is_transfer', getattr(self.instance, 'is_transfer', False))
+        if is_transfer:
+            attrs['spread_months'] = 1
+        return attrs
+
     def update(self, instance, validated_data):
         if 'category' in validated_data:
             instance.category_manual = True

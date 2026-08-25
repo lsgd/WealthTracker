@@ -164,6 +164,48 @@ void main() {
       expect(find.text('Transfer between own accounts'), findsOneWidget);
     });
 
+    testWidgets('the picker offers a spread, but not for a transfer',
+        (tester) async {
+      await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Migros'));
+      await tester.pumpAndSettle();
+      expect(find.text('Spread'), findsOneWidget);
+      expect(find.text('/12m'), findsOneWidget);
+      // The category list stays reachable next to it.
+      expect(find.text('Rent'), findsOneWidget);
+
+      await tester.tapAt(const Offset(10, 10));  // dismiss the sheet
+      await tester.pumpAndSettle();
+
+      // A transfer is excluded from spending — there is nothing to amortize.
+      await tester.tap(find.text('Eigenübertrag'));
+      await tester.pumpAndSettle();
+      expect(find.text('Spread'), findsNothing);
+    });
+
+    testWidgets('a non-standard spread stays selectable in the picker',
+        (tester) async {
+      // A rule (or Gemini) can set any number; the segmented control must
+      // still be able to show it as the current selection.
+      await tester.pumpWidget(_harness(
+        records: [_records.first.copyWith(spreadMonths: 4)],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Migros'));
+      await tester.pumpAndSettle();
+      // Not the row's badge — the segment that shows it as the current choice.
+      expect(
+        find.descendant(
+          of: find.byType(SegmentedButton<int>),
+          matching: find.text('/4m'),
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('empty list shows a hint', (tester) async {
       await tester.pumpWidget(_harness(records: const []));
       await tester.pumpAndSettle();
