@@ -10,7 +10,9 @@ Format notes (structure learned from real exports; test fixtures are synthetic):
   separate columns whose headers carry the account currency ("Debit CHF" /
   "Credit CHF"). The "ZKB reference" is the bank-side unique reference (the
   same value camt.053 reports as ``AcctSvcrRef``), so imported rows dedup
-  exactly against EBICS-synced entries via the ``ref:`` key.
+  exactly against EBICS-synced entries via the ``ref:`` key. Rows with an empty
+  balance are still pending and are skipped — they carry no reference and
+  return under one once booked.
 - **DKB**: preamble lines (account, period, balance) before the header row.
   German number format ("-1.234,56"), dates as DD.MM.YY, currency taken from
   the "Betrag (€)" header. Only "Gebucht" rows are imported — pending entries
@@ -56,6 +58,7 @@ _ZKB_CREDIT = ('credit', 'gutschrift')
 _ZKB_VALUE_DATE = ('value date', 'valuta')
 _ZKB_PURPOSE = ('payment purpose', 'zahlungszweck')
 _ZKB_DETAILS = ('details',)
+_ZKB_BALANCE = ('balance', 'saldo')
 
 _DKB_HEADER_FIRST = 'buchungsdatum'
 _COMMERZBANK_HEADER_FIRST = 'buchungstag'
@@ -164,6 +167,7 @@ def _parse_zkb(rows, fallback_currency):
     value_col = _find_column(header, _ZKB_VALUE_DATE)
     purpose_col = _find_column(header, _ZKB_PURPOSE)
     details_col = _find_column(header, _ZKB_DETAILS)
+    balance_col = _find_column(header, _ZKB_BALANCE, prefix=True)
     if None in (date_col, text_col, debit_col, credit_col):
         raise CsvImportError('ZKB export is missing expected columns.')
 
@@ -180,6 +184,14 @@ def _parse_zkb(rows, fallback_currency):
         debit, credit = cell(row, debit_col), cell(row, credit_col)
         if booking_date is None or (not debit and not credit):
             skipped += 1  # detail continuation rows carry no date/amount
+            continue
+        # A booked row always carries the resulting account balance. A row
+        # without one is still pending ("Debit TWINT:CHF 7.95" — no merchant,
+        # no reference, no value date): it is not in the bank's ledger yet, and
+        # importing it books an expense the balance never shows and that comes
+        # back under its own reference once it settles.
+        if balance_col is not None and not cell(row, balance_col):
+            skipped += 1
             continue
         try:
             amount = -_parse_amount(debit, german=False) if debit \

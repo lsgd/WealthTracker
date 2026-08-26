@@ -2339,6 +2339,9 @@ _ZKB_CSV = (
     '"20.08.2026";"Credit originator: ACME CORP";"";"";"REF-BBB-2";"";"";"80.00";'
     '"20.08.2026";"1010.00";"PURPOSE TEXT";"ACME CORP, Somestreet 1, CH"\n'
     '"";"";"";"";"";"";"";"";"";"";"";"a detail continuation row"\n'
+    # Still pending: no reference, no value date, and — the giveaway — no
+    # resulting balance, because the bank has not booked it yet.
+    '"22.08.2026";"Debit TWINT:CHF 7.95";"";"";"";"";"7.95";"";"";"";"";""\n'
 )
 
 _DKB_CSV = (
@@ -2546,7 +2549,8 @@ class CsvImportTests(APITestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data['format'], 'zkb')
         self.assertEqual(resp.data['imported'], 2)
-        self.assertEqual(resp.data['skipped'], 1)  # the detail continuation row
+        # The detail continuation row and the pending, balance-less TWINT row.
+        self.assertEqual(resp.data['skipped'], 2)
         debit = Transaction.objects.get(account=self.chf, external_id='REF-AAA-1')
         self.assertEqual(debit.amount, Decimal('-10.00'))
         self.assertEqual(debit.currency, 'CHF')
@@ -2557,6 +2561,15 @@ class CsvImportTests(APITestCase):
         self.assertEqual(credit.counterparty, 'ACME CORP, Somestreet 1, CH')
         self.assertIn('PURPOSE TEXT', credit.description)
         self.assertEqual(str(credit.value_date), '2026-08-20')
+
+    def test_zkb_pending_row_is_not_imported(self):
+        from portfolio.models import Transaction
+        self._upload(self.chf, _ZKB_CSV)
+        # A pending row has no reference, so it would land under a content
+        # hash and come back as a second row once the bank books it under one.
+        self.assertFalse(
+            Transaction.objects.filter(
+                account=self.chf, amount=Decimal('-7.95')).exists())
 
     def test_zkb_import_dedups_against_ebics_synced_rows(self):
         from portfolio.models import Transaction

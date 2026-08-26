@@ -78,6 +78,7 @@
 - New Spending screen (chart icon on the start screen): month-to-month spending by category, with a normalized view that spreads yearly bills across their months, and a per-month breakdown you can step through
 - Spending screen now has a Transactions tab: pick an account and assign a category to any transaction by tapping it
 - Spending settings (tune icon): manage categorization rules including drag-to-reorder, and request Gemini category suggestions to review and confirm (the Gemini key and model are still configured in the web app)
+- ZKB CSV import now skips pending entries (rows the bank has not booked yet), which were being counted as spending and would return a second time once booked
 - Bug fixes and improvements.
 
 ## 1.3.8
