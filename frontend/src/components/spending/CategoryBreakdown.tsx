@@ -8,6 +8,8 @@ export interface CategoryRow {
   previous: number | null;
   /** Average over the trailing completed periods. */
   average: number | null;
+  /** Target for this period, already scaled from the monthly budget. */
+  budget: number | null;
   style: CategoryStyle;
 }
 
@@ -51,7 +53,10 @@ function Delta({ amount, reference }: { amount: number; reference: number | null
 export default function CategoryBreakdown({
   rows, total, currency, selected, onToggle, onClear, onOpenDetail, periodNoun,
 }: Props) {
-  const largest = rows.reduce((max, r) => Math.max(max, r.amount), 0);
+  // Bars are scaled against the largest of spend and budget, so a category
+  // that is under its target shows visibly short of the marker.
+  const largest = rows.reduce(
+    (max, r) => Math.max(max, r.amount, r.budget ?? 0), 0);
   const selectedRows = rows.filter((r) => selected.includes(r.name));
   const selectedTotal = selectedRows.reduce((sum, r) => sum + r.amount, 0);
 
@@ -96,6 +101,7 @@ export default function CategoryBreakdown({
             <th className="category-ranking-delta" title={
               `Against the average of the previous ${periodNoun}s`
             }>vs avg</th>
+            <th className="category-ranking-budget">Budget</th>
           </tr>
         </thead>
         <tbody>
@@ -110,13 +116,23 @@ export default function CategoryBreakdown({
                 </button>
               </td>
               <td className="category-ranking-bar">
-                <span
-                  className="category-ranking-fill"
-                  style={{
-                    width: `${largest ? (row.amount / largest) * 100 : 0}%`,
-                    background: row.style.background,
-                  }}
-                />
+                <span className="category-ranking-track">
+                  <span
+                    className={`category-ranking-fill ${
+                      row.budget !== null && row.amount > row.budget ? 'over' : ''}`}
+                    style={{
+                      width: `${largest ? (row.amount / largest) * 100 : 0}%`,
+                      background: row.style.background,
+                    }}
+                  />
+                  {row.budget !== null && row.budget > 0 && (
+                    <span
+                      className="category-ranking-target"
+                      title={`Budget ${formatAmount(row.budget, currency)}`}
+                      style={{ left: `${largest ? (row.budget / largest) * 100 : 0}%` }}
+                    />
+                  )}
+                </span>
               </td>
               <td className="category-ranking-amount">
                 {formatAmount(row.amount, currency)}
@@ -126,6 +142,17 @@ export default function CategoryBreakdown({
               </td>
               <td className="category-ranking-delta">
                 <Delta amount={row.amount} reference={row.average ?? row.previous} />
+              </td>
+              <td className="category-ranking-budget">
+                {row.budget === null ? (
+                  <span className="cat-delta muted">—</span>
+                ) : (
+                  <span className={row.amount > row.budget ? 'cat-delta bad' : 'cat-delta good'}>
+                    {row.amount > row.budget
+                      ? `${formatAmount(row.amount - row.budget, currency)} over`
+                      : `${formatAmount(row.budget - row.amount, currency)} left`}
+                  </span>
+                )}
               </td>
             </tr>
           ))}

@@ -214,10 +214,21 @@ def monthly_spending(user, months: int = 12, mode: str = 'normalized',
             period['by_category'][name] = \
                 period['by_category'].get(name, Decimal('0')) + value
 
+    # Budgets are stored per month; scale them to whatever period is on screen
+    # here rather than in each client, since the granularity lives here.
+    budgets = {
+        name: to_float(budget * step)
+        for name, budget in user.transaction_categories
+        .exclude(monthly_budget__isnull=True)
+        .values_list('name', 'monthly_budget')
+    }
+
     return {
         'mode': mode,
         'granularity': granularity,
         'base_currency': base_currency,
+        # Per category, already scaled to one period of this granularity.
+        'budgets': budgets,
         'categories': [
             name for name, _total
             in sorted(category_totals.items(), key=lambda kv: kv[1], reverse=True)

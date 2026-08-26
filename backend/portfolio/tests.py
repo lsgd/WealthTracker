@@ -1412,6 +1412,23 @@ class SpendingReportTests(TestCase):
         for granularity in ('month', 'quarter', 'year'):
             self.assertIsNotNone(period_bounds(period_label(index, granularity)))
 
+    def test_budgets_scale_with_the_period(self):
+        """A budget is a monthly number; a year of it is twelve."""
+        from portfolio.spending import monthly_spending
+        self.groceries.monthly_budget = Decimal('400')
+        self.groceries.save()
+
+        monthly = monthly_spending(self.user, months=1, granularity='month')
+        self.assertEqual(monthly['budgets'], {'Groceries': 400.0})
+        quarterly = monthly_spending(self.user, months=1, granularity='quarter')
+        self.assertEqual(quarterly['budgets'], {'Groceries': 1200.0})
+        yearly = monthly_spending(self.user, months=1, granularity='year')
+        self.assertEqual(yearly['budgets'], {'Groceries': 4800.0})
+
+    def test_categories_without_a_budget_are_absent(self):
+        from portfolio.spending import monthly_spending
+        self.assertEqual(monthly_spending(self.user, months=1)['budgets'], {})
+
     def test_transfers_are_excluded(self):
         from portfolio.spending import monthly_spending
         self._tx(amount=Decimal('-500'), is_transfer=True)
@@ -1461,9 +1478,15 @@ class SpendingReportTests(TestCase):
         )
         for i in range(8):
             self._tx(amount=Decimal('-10'), currency='CHF', booking_date=booking)
-        # transactions + distinct currencies + one rate-series fetch. Per-date
-        # lookups would scale with the transaction count.
-        with self.assertNumQueries(3):
+        # transactions + distinct currencies + one rate-series fetch + budgets.
+        # A fixed count whatever the data: per-date rate lookups would scale
+        # with the transaction count, which is what this guards against.
+        with self.assertNumQueries(4):
+            monthly_spending(self.user, months=1, mode='actual')
+
+        for i in range(8, 24):
+            self._tx(amount=Decimal('-10'), currency='CHF', booking_date=booking)
+        with self.assertNumQueries(4):
             monthly_spending(self.user, months=1, mode='actual')
 
 
@@ -2756,6 +2779,29 @@ class CategoryOrderingTests(APITestCase):
             [c['name'] for c in resp.data],
             ['eBay', 'Groceries', 'Insurance', 'Transport', 'zoo'],
         )
+
+    def test_budget_can_be_set_and_cleared(self):
+        from portfolio.models import TransactionCategory
+        category = TransactionCategory.objects.create(user=self.user, name='Food')
+        url = reverse('category_detail', kwargs={'pk': category.pk})
+
+        resp = self.client.patch(url, {'monthly_budget': '250.00'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['monthly_budget'], '250.00')
+
+        # Empty means "no target", which is different from a target of zero.
+        resp = self.client.patch(url, {'monthly_budget': None}, format='json')
+        self.assertIsNone(resp.data['monthly_budget'])
+        category.refresh_from_db()
+        self.assertIsNone(category.monthly_budget)
+
+    def test_a_negative_budget_is_rejected(self):
+        from portfolio.models import TransactionCategory
+        category = TransactionCategory.objects.create(user=self.user, name='Food')
+        resp = self.client.patch(
+            reverse('category_detail', kwargs={'pk': category.pk}),
+            {'monthly_budget': '-10'}, format='json')
+        self.assertEqual(resp.status_code, 400)
 
     def test_a_new_category_lands_in_order_not_at_the_end(self):
         from portfolio.models import TransactionCategory

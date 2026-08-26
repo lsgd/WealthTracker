@@ -50,6 +50,7 @@ import {
   classifyTransaction,
   createCategory,
   createCategoryRule,
+  setCategoryBudget,
   deleteCategoryRule,
   updateCategoryRule,
   getAccounts,
@@ -385,6 +386,25 @@ export default function SpendingPage() {
     return monthDetail.expenses - (monthDetail.by_category[UNCATEGORIZED] ?? 0);
   }, [monthDetail, showUncategorized]);
 
+  /// Sum of the budgets of the categories on screen, for the roll-up tile.
+  const budgetTotal = useMemo(() => {
+    const budgets = report?.budgets ?? {};
+    const relevant = Object.entries(budgets).filter(
+      ([name]) => showUncategorized || name !== UNCATEGORIZED);
+    return relevant.length
+      ? relevant.reduce((sum, [, value]) => sum + value, 0)
+      : null;
+  }, [report, showUncategorized]);
+
+  /// How much of the period's spending falls in categories that have a budget
+  /// — without it, "CHF 400 left" reads as if it covered everything.
+  const budgetedShare = useMemo(() => {
+    if (!monthDetail || !report?.budgets) return 100;
+    const budgeted = Object.keys(report.budgets)
+      .reduce((sum, name) => sum + (monthDetail.by_category[name] ?? 0), 0);
+    return spentInPeriod > 0 ? (budgeted / spentInPeriod) * 100 : 100;
+  }, [monthDetail, report, spentInPeriod]);
+
   const summaryTiles = useMemo(() => {
     if (!monthDetail) return [];
     const spentOf = (m: SpendingMonth) => (showUncategorized
@@ -424,7 +444,14 @@ export default function SpendingPage() {
   const categoryRows = useMemo(() => {
     if (!monthDetail) return [];
     const previousPeriod = report?.months[monthIndex - 1];
-    return Object.entries(monthDetail.by_category)
+    // Budgeted categories appear even with nothing spent — "EUR 200 left" is
+    // exactly the row a budget is there to show, and dropping it would make a
+    // category look untracked.
+    const spent: Record<string, number> = { ...monthDetail.by_category };
+    for (const name of Object.keys(report?.budgets ?? {})) {
+      if (!(name in spent)) spent[name] = 0;
+    }
+    return Object.entries(spent)
       .filter(([name]) => showUncategorized || name !== UNCATEGORIZED)
       .sort((a, b) => b[1] - a[1])
       .map(([name, amount]) => ({
@@ -434,6 +461,7 @@ export default function SpendingPage() {
         // Same rule as the tiles: average only over the periods that had this
         // category, so a category added last month is not "up 500%".
         average: averageOf(trailing.map((m) => m.by_category[name] ?? 0)),
+        budget: report?.budgets?.[name] ?? null,
         style: styleFor(name),
       }));
   }, [monthDetail, report, monthIndex, trailing, showUncategorized, styleFor]);
@@ -488,6 +516,42 @@ export default function SpendingPage() {
     if (complete.length === 0) return report.months[0].expenses;
     return complete.reduce((sum, m) => sum + m.expenses, 0) / complete.length;
   }, [report]);
+
+  /// Budget inputs are drafts until they lose focus: typing "12" on the way to
+  /// "120" must not save a budget of twelve. A category with no draft shows
+  /// what is stored, so no effect has to copy one into the other.
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<number, string>>({});
+
+  const budgetValue = (category: TransactionCategory) =>
+    budgetDrafts[category.id]
+    ?? (category.monthly_budget !== null ? String(Number(category.monthly_budget)) : '');
+
+  const budgetedCount = categories.filter((c) => c.monthly_budget !== null).length;
+
+  const monthlyBudgetTotal = categories.reduce(
+    (sum, c) => sum + Number(c.monthly_budget ?? 0), 0);
+
+  const saveBudget = async (category: TransactionCategory) => {
+    const draft = budgetValue(category).trim();
+    const value = draft === '' ? null : Number(draft);
+    if (value !== null && (Number.isNaN(value) || value < 0)) return;
+    // Unchanged: nothing to send, and no report reload to pay for.
+    if (Number(category.monthly_budget ?? NaN) === value
+        || (category.monthly_budget === null && value === null)) return;
+    try {
+      const updated = await setCategoryBudget(category.id, value);
+      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      // Drop the draft so the row shows what the server stored.
+      setBudgetDrafts((prev) => {
+        const next = { ...prev };
+        delete next[category.id];
+        return next;
+      });
+      loadReport();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save the budget');
+    }
+  };
 
   const handleClassify = async (
     tx: Transaction,
@@ -1011,6 +1075,20 @@ export default function SpendingPage() {
             />
           )}
 
+          {monthDetail && budgetTotal !== null && (
+            <p className={`budget-summary ${
+              spentInPeriod > budgetTotal ? 'over' : ''}`}>
+              {spentInPeriod > budgetTotal
+                ? <><strong>{formatAmount(spentInPeriod - budgetTotal, currency)}</strong>
+                    {' over budget'}</>
+                : <><strong>{formatAmount(budgetTotal - spentInPeriod, currency)}</strong>
+                    {' left of budget'}</>}
+              {` (${formatAmount(budgetTotal, currency)} for this ${periodNoun}`}
+              {budgetedShare < 100 && `, covering ${budgetedShare.toFixed(0)}% of what you spend`}
+              {')'}
+            </p>
+          )}
+
           {chartData.length === 0 ? (
             <div className="chart-empty"><p>No transactions yet.</p></div>
           ) : (
@@ -1259,6 +1337,47 @@ export default function SpendingPage() {
         </>)}
 
         {tab === 'config' && (<>
+        <div className="card">
+          <div className="chart-header">
+            <h2>
+              Budgets
+              {budgetedCount > 0 && (
+                <span className="spending-month-title"> · {budgetedCount} set</span>
+              )}
+            </h2>
+          </div>
+          <p className="form-hint">
+            A monthly target per category, in {currency}. The insights scale it to
+            whatever period is on screen — a quarter shows three times this, a year
+            twelve — and leaving a field empty means the category has no target.
+          </p>
+          {categories.length === 0 ? (
+            <p className="table-empty">No categories yet.</p>
+          ) : (<>
+            {categories.map((category) => (
+              <div key={category.id} className="budget-row">
+                <span className="budget-row-name">{category.name}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="10"
+                  aria-label={`Monthly budget for ${category.name}`}
+                  placeholder="none"
+                  value={budgetValue(category)}
+                  onChange={(e) => setBudgetDrafts(
+                    (prev) => ({ ...prev, [category.id]: e.target.value }))}
+                  onBlur={() => saveBudget(category)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                />
+              </div>
+            ))}
+            <div className="budget-total">
+              <span>Total per month</span>
+              <span>{formatAmount(monthlyBudgetTotal, currency)}</span>
+            </div>
+          </>)}
+        </div>
+
         <div className="card">
           <div className="chart-header">
             <h2>

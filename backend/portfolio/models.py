@@ -191,6 +191,14 @@ class TransactionCategory(models.Model):
         related_name='transaction_categories'
     )
     name = models.CharField(max_length=64)
+    # Stored per month in the user's base currency, and scaled by the report to
+    # whatever period is on screen (x3 for a quarter, x12 for a year). A month
+    # is the unit people budget in, and the normalized view already turns a
+    # yearly bill into a monthly figure, so one number covers both.
+    monthly_budget = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Monthly spending target in the base currency (empty = none)',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

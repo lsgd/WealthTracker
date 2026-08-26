@@ -871,6 +871,8 @@ export async function importCSV(
 export interface TransactionCategory {
   id: number;
   name: string;
+  // Monthly spending target in the base currency; null when none is set.
+  monthly_budget: string | null;
 }
 
 export interface CategoryRule {
@@ -920,6 +922,8 @@ export interface SpendingReport {
   granularity?: 'month' | 'quarter' | 'year';
   base_currency: string;
   categories: string[];
+  // Per category, already scaled to one period of this granularity.
+  budgets?: Record<string, number>;
   // One entry per period; still called months for older app builds.
   months: SpendingMonth[];
 }
@@ -970,6 +974,22 @@ export async function getCategoryRules(): Promise<CategoryRule[]> {
 }
 
 // Creating a rule also applies it retroactively to uncategorized transactions.
+/** Set a category's monthly budget; null clears it. */
+export async function setCategoryBudget(
+  categoryId: number,
+  monthlyBudget: number | null,
+): Promise<TransactionCategory> {
+  const res = await fetchWithAuth(`/api/spending/categories/${categoryId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify({ monthly_budget: monthlyBudget }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(Object.values(data).flat().join(' ') || 'Failed to save the budget');
+  }
+  return data;
+}
+
 export async function createCategoryRule(fields: {
   match_text: string;
   category?: number;

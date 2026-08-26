@@ -50,7 +50,14 @@ class AccountSnapshotCreateSerializer(serializers.ModelSerializer):
 class TransactionCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = TransactionCategory
-        fields = ['id', 'name']
+        fields = ['id', 'name', 'monthly_budget']
+
+    def validate_monthly_budget(self, value):
+        # None clears the budget; a negative target has no meaning, and 0 is
+        # a real answer ("spend nothing on this").
+        if value is not None and value < 0:
+            raise serializers.ValidationError('A budget cannot be negative')
+        return value
 
 
 class CategoryRuleSerializer(serializers.ModelSerializer):

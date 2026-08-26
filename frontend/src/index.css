@@ -3051,3 +3051,71 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .category-ranking th.category-ranking-amount,
 .category-ranking th.category-ranking-share,
 .category-ranking th.category-ranking-delta { text-align: right; }
+
+/* A budget shows as a marker on the bar rather than a second bar: the
+   question is "how far along am I", which one line answers. */
+.category-ranking-track {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.category-ranking-fill.over {
+  /* Over budget: the bar keeps its category color but gains a warning edge. */
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+}
+
+.category-ranking-target {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--color-text);
+  opacity: 0.75;
+}
+
+.category-ranking-budget {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.category-ranking th.category-ranking-budget { text-align: right; }
+
+/* Budgets card */
+.budget-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.budget-row-name { flex: 1; }
+
+.budget-row input {
+  width: 120px;
+  text-align: right;
+}
+
+.budget-total {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  font-weight: 600;
+}
+
+.budget-summary {
+  margin: -8px 0 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  font-size: 0.9rem;
+}
+
+.budget-summary.over {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.35);
+}
