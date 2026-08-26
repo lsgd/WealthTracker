@@ -902,6 +902,9 @@ export interface Transaction {
   spread_months: number;
   is_transfer: boolean;
   created_at: string;
+  // Only on the response to a classification change: the rule that classifies
+  // this transaction and now disagrees with what was just set.
+  stale_rule?: CategoryRule;
 }
 
 export interface SpendingMonth {

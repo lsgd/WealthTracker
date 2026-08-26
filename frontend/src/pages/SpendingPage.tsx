@@ -115,6 +115,15 @@ export default function SpendingPage() {
   // the column headers became clickable).
   const [txSort, setTxSort] = useState<TransactionSortKey>('date');
   const [txSortDesc, setTxSortDesc] = useState(true);
+  // A manual correction that contradicts the rule which classified the row:
+  // holds the rule and the corrected transaction until the user decides.
+  const [staleRule, setStaleRule] = useState<{
+    rule: CategoryRule;
+    transaction: Transaction;
+    // What the user changed, so only that is carried over to the rule.
+    fields: { category?: number | null; spread_months?: number; is_transfer?: boolean };
+  } | null>(null);
+  const [staleRuleBusy, setStaleRuleBusy] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txCount, setTxCount] = useState(0);
   const [txPage, setTxPage] = useState(1);
@@ -367,8 +376,46 @@ export default function SpendingPage() {
       const updated = await classifyTransaction(tx.id, fields);
       setTransactions((prev) => prev.map((t) => (t.id === tx.id ? updated : t)));
       loadReport();
+      // The rule behind this transaction now disagrees with the correction.
+      // Left alone it keeps sending every future booking of this merchant to
+      // the old category, so offer to fix it while the user is looking.
+      if (updated.stale_rule) {
+        setStaleRule({ rule: updated.stale_rule, transaction: updated, fields });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to update transaction');
+    }
+  };
+
+  /// Applies the correction to the rule itself, then reloads: the rule runs
+  /// retroactively, so other transactions of the same merchant move too.
+  ///
+  /// Only what the user actually changed is carried over — correcting a
+  /// category must not quietly rewrite the rule's spread as well.
+  const handleUpdateStaleRule = async () => {
+    if (!staleRule) return;
+    const { rule, transaction, fields } = staleRule;
+    setStaleRuleBusy(true);
+    try {
+      const updated = await updateCategoryRule(rule.id, {
+        ...(fields.is_transfer === true
+          ? { is_transfer: true, category: null, spread_months: 1 }
+          : {}),
+        ...(fields.category !== undefined && !transaction.is_transfer
+          ? { category: transaction.category, is_transfer: false }
+          : {}),
+        ...(fields.spread_months !== undefined && !transaction.is_transfer
+          ? { spread_months: transaction.spread_months }
+          : {}),
+      });
+      setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setStaleRule(null);
+      loadReport();
+      loadTransactions(accountId, 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update the rule');
+    } finally {
+      setStaleRuleBusy(false);
     }
   };
 
@@ -1535,6 +1582,56 @@ export default function SpendingPage() {
             onSubmit={handleAuthSubmit}
             onClose={() => setAuthPrompt(null)}
           />
+        )}
+
+        {staleRule && (
+          <div className="modal-overlay" onClick={() => setStaleRule(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Update the rule too?</h3>
+                <button className="btn btn-ghost" onClick={() => setStaleRule(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="form-hint" style={{ marginBottom: 16 }}>
+                The rule <code>{staleRule.rule.match_text}</code> classifies this
+                transaction as{' '}
+                <strong>
+                  {staleRule.rule.is_transfer
+                    ? 'Transfer (excluded)'
+                    : staleRule.rule.category_name}
+                  {staleRule.rule.spread_months > 1
+                    && ` /${staleRule.rule.spread_months}m`}
+                </strong>
+                {' '}— so the next booking that matches it lands there again.
+                Point the rule at{' '}
+                <strong>
+                  {staleRule.transaction.is_transfer
+                    ? 'Transfer (excluded)'
+                    : staleRule.transaction.category_name}
+                  {staleRule.transaction.spread_months > 1
+                    && ` /${staleRule.transaction.spread_months}m`}
+                </strong>
+                {' '}instead? Transactions you already categorized by hand keep
+                their category.
+              </p>
+              <div className="form-actions">
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setStaleRule(null)}
+                >
+                  Just this transaction
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleUpdateStaleRule}
+                  disabled={staleRuleBusy}
+                >
+                  {staleRuleBusy ? 'Updating…' : 'Update the rule'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {regexConfirmOpen && (

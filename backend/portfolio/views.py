@@ -1395,9 +1395,49 @@ class TransactionDetailView(generics.RetrieveUpdateDestroyAPIView):
         return Transaction.objects.filter(account__user=self.request.user)
 
     def update(self, request, *args, **kwargs):
-        """Override to return the full transaction after a partial update."""
+        """Override to return the full transaction after a partial update.
+
+        The response also names the rule that classifies this transaction, when
+        that rule now disagrees with what the user just chose. Correcting one
+        row usually means the rule behind it is wrong too — and every future
+        transaction of the same merchant would land in the old category — so
+        the client can offer to fix the rule while the user is looking at it.
+        """
         super().update(request, *args, **kwargs)
-        return Response(TransactionSerializer(self.get_object()).data)
+        transaction = self.get_object()
+        data = TransactionSerializer(transaction).data
+        stale = self._stale_rule(request, transaction)
+        if stale is not None:
+            data['stale_rule'] = CategoryRuleSerializer(stale).data
+        return Response(data)
+
+    @staticmethod
+    def _stale_rule(request, transaction):
+        """The matching rule that would undo what was just set, if any."""
+        from .classification import first_matching_rule
+
+        touched = set(request.data)
+        if not touched & {'category', 'spread_months', 'is_transfer'}:
+            return None
+        # Clearing the category leaves nothing for a rule to point at — a rule
+        # must target a category or the transfer flag. A spread-only change is
+        # fine even on an uncategorized row: the rule keeps its own target.
+        if (touched & {'category', 'is_transfer'}
+                and transaction.category_id is None
+                and not transaction.is_transfer):
+            return None
+        rule = first_matching_rule(request.user, transaction)
+        if rule is None:
+            return None
+        # Only when the rule actually disagrees. Re-picking the category a rule
+        # already assigns is not a reason to interrupt.
+        if 'is_transfer' in touched and rule.is_transfer != transaction.is_transfer:
+            return rule
+        if 'category' in touched and rule.category_id != transaction.category_id:
+            return rule
+        if 'spread_months' in touched and rule.spread_months != transaction.spread_months:
+            return rule
+        return None
 
     def perform_destroy(self, instance):
         if instance.source != 'manual':

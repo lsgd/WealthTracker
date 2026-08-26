@@ -27,6 +27,12 @@ String categorySortKey(String name) {
   return buffer.toString();
 }
 
+/// A classification change, plus the rule it now contradicts (if any).
+///
+/// A rule that mislabels one booking mislabels every future one of the same
+/// merchant, so the server names it and the UI can offer to fix that too.
+typedef Classified = ({TransactionRecord transaction, CategoryRule? staleRule});
+
 class SpendingRepository {
   final ApiClient _apiClient;
 
@@ -85,15 +91,11 @@ class SpendingRepository {
   /// Allowed on imported transactions too: the bank's own fields stay
   /// read-only, but what they mean is the user's call. The backend marks the
   /// change as manual so rules never overwrite it.
-  Future<TransactionRecord> classifyTransaction(
+  Future<Classified> classifyTransaction(
     int transactionId, {
     required int? categoryId,
   }) async {
-    final response = await _apiClient.patch(
-      '${ApiConfig.transactionsPath}$transactionId/',
-      data: {'category': categoryId},
-    );
-    return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
+    return _classify(transactionId, {'category': categoryId});
   }
 
   /// Mark (or unmark) a transaction as a transfer between own accounts,
@@ -101,15 +103,11 @@ class SpendingRepository {
   /// automatic transfer detection never overrides it — needed for transfers
   /// auto-detection cannot pair, e.g. funding a broker that has no
   /// transaction feed.
-  Future<TransactionRecord> setTransfer(
+  Future<Classified> setTransfer(
     int transactionId, {
     required bool isTransfer,
   }) async {
-    final response = await _apiClient.patch(
-      '${ApiConfig.transactionsPath}$transactionId/',
-      data: {'is_transfer': isTransfer},
-    );
-    return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
+    return _classify(transactionId, {'is_transfer': isTransfer});
   }
 
   /// Amortize one transaction over [spreadMonths] months (1 = no spread).
@@ -117,15 +115,26 @@ class SpendingRepository {
   /// The rule-level spread only helps recurring merchants; a one-off yearly
   /// bill (an insurance premium paid once) has no rule to hang it on, and
   /// without this it dwarfs its month in the normalized view.
-  Future<TransactionRecord> setSpread(
+  Future<Classified> setSpread(
     int transactionId, {
     required int spreadMonths,
   }) async {
+    return _classify(transactionId, {'spread_months': spreadMonths});
+  }
+
+  Future<Classified> _classify(int transactionId, Map<String, Object?> data) async {
     final response = await _apiClient.patch(
       '${ApiConfig.transactionsPath}$transactionId/',
-      data: {'spread_months': spreadMonths},
+      data: data,
     );
-    return TransactionRecord.fromJson(response.data as Map<String, dynamic>);
+    final body = response.data as Map<String, dynamic>;
+    final stale = body['stale_rule'];
+    return (
+      transaction: TransactionRecord.fromJson(body),
+      staleRule: stale == null
+          ? null
+          : CategoryRule.fromJson(stale as Map<String, dynamic>),
+    );
   }
 
   // ---- categories and rules ------------------------------------------------
@@ -182,6 +191,31 @@ class SpendingRepository {
         'match_text': matchText,
         'category': categoryId,
         'spread_months': spreadMonths,
+      },
+    );
+    return CategoryRule.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Change a rule's target. Only the given fields are sent, so correcting a
+  /// category never rewrites the rule's spread as a side effect.
+  Future<CategoryRule> updateRule(
+    int ruleId, {
+    int? categoryId,
+    int? spreadMonths,
+    bool? isTransfer,
+  }) async {
+    final response = await _apiClient.patch(
+      '${ApiConfig.spendingRulesPath}$ruleId/',
+      data: {
+        if (isTransfer == true) ...{
+          'is_transfer': true,
+          'category': null,
+          'spread_months': 1,
+        } else ...{
+          'category': ?categoryId,
+          'spread_months': ?spreadMonths,
+          if (isTransfer == false) 'is_transfer': false,
+        },
       },
     );
     return CategoryRule.fromJson(response.data as Map<String, dynamic>);

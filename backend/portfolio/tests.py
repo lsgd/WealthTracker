@@ -1417,6 +1417,61 @@ class ClassificationApiTests(APITestCase):
         self.assertTrue(self.imported.is_transfer)
         self.assertEqual(self.imported.spread_months, 1)
 
+    def test_correcting_a_transaction_names_the_rule_behind_it(self):
+        """A rule that mislabels one booking mislabels every future one.
+
+        The correction is per transaction, so without this the user fixes the
+        same merchant again next month and never learns why.
+        """
+        from portfolio.models import CategoryRule, TransactionCategory
+        wrong = TransactionCategory.objects.create(user=self.user, name='Shopping')
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=wrong, position=0)
+        detail = reverse('transaction_detail', kwargs={'pk': self.imported.id})
+
+        resp = self.client.patch(detail, {'category': self.category.id}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['stale_rule']['match_text'], 'migros')
+        self.assertEqual(resp.data['stale_rule']['category_name'], 'Shopping')
+
+    def test_no_prompt_when_the_rule_already_agrees(self):
+        """Re-picking the category a rule assigns is not worth interrupting."""
+        from portfolio.models import CategoryRule
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.category, position=0)
+        resp = self.client.patch(
+            reverse('transaction_detail', kwargs={'pk': self.imported.id}),
+            {'category': self.category.id}, format='json')
+        self.assertNotIn('stale_rule', resp.data)
+
+    def test_no_prompt_without_a_matching_rule(self):
+        resp = self.client.patch(
+            reverse('transaction_detail', kwargs={'pk': self.imported.id}),
+            {'category': self.category.id}, format='json')
+        self.assertNotIn('stale_rule', resp.data)
+
+    def test_spread_change_names_the_rule_that_sets_a_different_spread(self):
+        from portfolio.models import CategoryRule
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.category,
+            spread_months=1, position=0)
+        resp = self.client.patch(
+            reverse('transaction_detail', kwargs={'pk': self.imported.id}),
+            {'spread_months': 12}, format='json')
+        self.assertEqual(resp.data['stale_rule']['match_text'], 'migros')
+
+    def test_clearing_the_category_prompts_nothing(self):
+        """A rule must target a category or the transfer flag — "none" is
+        neither, so there is nothing to offer."""
+        from portfolio.models import CategoryRule
+        CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.category, position=0)
+        resp = self.client.patch(
+            reverse('transaction_detail', kwargs={'pk': self.imported.id}),
+            {'category': None}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertNotIn('stale_rule', resp.data)
+
     def test_rule_create_applies_retroactively(self):
         resp = self.client.post(reverse('rule_list'), {
             'match_text': 'migros', 'category': self.category.id,

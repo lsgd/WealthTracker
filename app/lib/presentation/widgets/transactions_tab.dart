@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/formatters.dart';
 import '../../data/models/transactions.dart';
+import '../../data/repositories/spending_repository.dart';
 import '../providers/accounts_provider.dart';
 import '../providers/spending_provider.dart';
 import 'ai_relabel_sheet.dart';
@@ -325,17 +326,18 @@ class _TransactionTile extends ConsumerWidget {
     final navigator = Navigator.of(context);
     try {
       final repo = ref.read(spendingRepositoryProvider);
-      final TransactionRecord updated;
+      final Classified result;
       if (choice.isTransferChoice) {
-        updated = await repo.setTransfer(transaction.id,
+        result = await repo.setTransfer(transaction.id,
             isTransfer: choice.transferValue!);
       } else if (choice.isSpreadChoice) {
-        updated = await repo.setSpread(transaction.id,
+        result = await repo.setSpread(transaction.id,
             spreadMonths: choice.spreadMonths!);
       } else {
-        updated = await repo.classifyTransaction(transaction.id,
+        result = await repo.classifyTransaction(transaction.id,
             categoryId: choice.categoryId);
       }
+      final updated = result.transaction;
       // Offer to propagate the correction to similar transactions — only for
       // an actual category assignment, and only when Gemini is configured.
       var offerAiFix = choice.isCategoryChoice && updated.categoryName != null;
@@ -356,9 +358,72 @@ class _TransactionTile extends ConsumerWidget {
         ref.read(transactionsProvider.notifier).replace(updated);
       }
       ref.invalidate(spendingReportProvider);
-      if (offerAiFix) {
+      // The rule behind this transaction now disagrees with the correction —
+      // left alone it keeps sending every future booking of this merchant to
+      // the old category. Ask before the AI offer, which is the weaker one.
+      if (result.staleRule != null && navigator.mounted) {
+        await _offerRuleUpdate(navigator.context, ref, result);
+      } else if (offerAiFix) {
         _offerAiFix(navigator, messenger, updated);
       }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  /// Asks whether the correction should be applied to the matching rule too,
+  /// which fixes every other transaction of the same merchant at once.
+  Future<void> _offerRuleUpdate(
+      BuildContext context, WidgetRef ref, Classified result) async {
+    // Captured before the dialog: the tile can be disposed while it is open.
+    final messenger = ScaffoldMessenger.of(context);
+    final rule = result.staleRule!;
+    final tx = result.transaction;
+    final target = tx.isTransfer
+        ? 'Transfer (excluded)'
+        : (tx.categoryName ?? 'no category');
+    final current = rule.isTransfer
+        ? 'Transfer (excluded)'
+        : (rule.categoryName ?? 'no category');
+
+    final update = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update the rule too?'),
+        content: Text(
+          'The rule "${rule.matchText}" classifies this transaction as '
+          '$current, so the next booking that matches it lands there again. '
+          'Point the rule at $target instead? Transactions you already '
+          'categorized by hand keep their category.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Just this one'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Update the rule'),
+          ),
+        ],
+      ),
+    );
+    if (update != true) return;
+
+    try {
+      await ref.read(spendingRepositoryProvider).updateRule(
+            rule.id,
+            categoryId: tx.isTransfer ? null : tx.category,
+            spreadMonths: tx.isTransfer ? null : tx.spreadMonths,
+            isTransfer: tx.isTransfer,
+          );
+      // The rule applies retroactively, so other transactions moved with it.
+      ref.invalidate(categoryRulesProvider);
+      ref.invalidate(transactionsProvider);
+      ref.invalidate(spendingReportProvider);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Rule "${rule.matchText}" now points at $target')),
+      );
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('$e')));
     }

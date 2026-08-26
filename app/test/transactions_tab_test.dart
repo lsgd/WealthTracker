@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wealth_tracker/data/models/account.dart';
+import 'package:wealth_tracker/data/datasources/api_client.dart';
 import 'package:wealth_tracker/data/models/broker.dart';
 import 'package:wealth_tracker/data/models/transactions.dart';
+import 'package:wealth_tracker/data/repositories/spending_repository.dart';
 import 'package:wealth_tracker/presentation/providers/accounts_provider.dart';
 import 'package:wealth_tracker/presentation/providers/spending_provider.dart';
 import 'package:wealth_tracker/presentation/widgets/transactions_tab.dart';
@@ -91,6 +93,38 @@ Widget _harness({
       ],
       child: const MaterialApp(home: Scaffold(body: TransactionsTab())),
     );
+
+/// Repository whose classification answers with a rule that now disagrees.
+class _StaleRuleRepository extends SpendingRepository {
+  _StaleRuleRepository() : super(_UnusedApiClient());
+
+  int updateRuleCalls = 0;
+  int? updatedCategoryId;
+
+  static const rule = CategoryRule(
+    id: 5, matchText: 'netflix', category: 9, categoryName: 'Subscriptions');
+
+  @override
+  Future<Classified> classifyTransaction(int id, {required int? categoryId}) async =>
+      (
+        transaction: _records.first.copyWith(category: categoryId, categoryName: 'Rent'),
+        staleRule: rule,
+      );
+
+  @override
+  Future<CategoryRule> updateRule(int ruleId,
+      {int? categoryId, int? spreadMonths, bool? isTransfer}) async {
+    updateRuleCalls++;
+    updatedCategoryId = categoryId;
+    return rule;
+  }
+}
+
+class _UnusedApiClient implements ApiClient {
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('the fake answers before reaching the network');
+}
 
 void main() {
   group('TransactionsTab', () {
@@ -220,6 +254,69 @@ void main() {
         ),
         findsOneWidget,
       );
+    });
+
+    testWidgets('correcting a category offers to fix the rule behind it',
+        (tester) async {
+      final repo = _StaleRuleRepository();
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => _accounts),
+          spendingRepositoryProvider.overrideWithValue(repo),
+          transactionsProvider.overrideWith(
+              () => _FakeTransactionsNotifier(const TransactionsState(
+                    results: _records, totalCount: 2, page: 1,
+                  ))),
+          categoriesProvider.overrideWith((ref) async => const [
+                TransactionCategory(id: 1, name: 'Groceries'),
+                TransactionCategory(id: 2, name: 'Rent'),
+              ]),
+        ],
+        child: const MaterialApp(home: Scaffold(body: TransactionsTab())),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Migros'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rent'));
+      await tester.pumpAndSettle();
+
+      // The rule that classified it disagrees now, so it is named.
+      expect(find.text('Update the rule too?'), findsOneWidget);
+      expect(find.textContaining('netflix'), findsOneWidget);
+      expect(repo.updateRuleCalls, 0);
+
+      await tester.tap(find.text('Update the rule'));
+      await tester.pumpAndSettle();
+      expect(repo.updateRuleCalls, 1);
+      expect(repo.updatedCategoryId, 2);
+    });
+
+    testWidgets('declining leaves the rule alone', (tester) async {
+      final repo = _StaleRuleRepository();
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => _accounts),
+          spendingRepositoryProvider.overrideWithValue(repo),
+          transactionsProvider.overrideWith(
+              () => _FakeTransactionsNotifier(const TransactionsState(
+                    results: _records, totalCount: 2, page: 1,
+                  ))),
+          categoriesProvider.overrideWith((ref) async => const [
+                TransactionCategory(id: 2, name: 'Rent'),
+              ]),
+        ],
+        child: const MaterialApp(home: Scaffold(body: TransactionsTab())),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Migros'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rent'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Just this one'));
+      await tester.pumpAndSettle();
+
+      expect(repo.updateRuleCalls, 0);
     });
 
     testWidgets('empty list shows a hint', (tester) async {
