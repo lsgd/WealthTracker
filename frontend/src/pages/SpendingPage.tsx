@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import CategoryPatternDefs from '../components/CategoryPatternDefs';
 import ClampedText from '../components/ClampedText';
@@ -27,6 +27,7 @@ import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
 import type {
   BackfillOutcome,
+  TransactionSortKey,
   CategoryRule,
   SpendingReport,
   Transaction,
@@ -110,6 +111,10 @@ export default function SpendingPage() {
   // '' = every month. Picking a month in the overview sets this too, so the
   // list answers the question the chart just raised.
   const [txMonth, setTxMonth] = useState('');
+  // Sorted column, newest bookings first by default (what the server did before
+  // the column headers became clickable).
+  const [txSort, setTxSort] = useState<TransactionSortKey>('date');
+  const [txSortDesc, setTxSortDesc] = useState(true);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txCount, setTxCount] = useState(0);
   const [txPage, setTxPage] = useState(1);
@@ -193,14 +198,14 @@ export default function SpendingPage() {
     try {
       const data = await getTransactions(
         page, id ?? undefined, category === '' ? undefined : category,
-        month || undefined);
+        month || undefined, `${txSortDesc ? '-' : ''}${txSort}`);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transactions');
     }
-  }, [txCategory, txMonth]);
+  }, [txCategory, txMonth, txSort, txSortDesc]);
 
   useEffect(() => {
     loadReport();
@@ -270,6 +275,29 @@ export default function SpendingPage() {
     if (!report || !monthDetail) return -1;
     return report.months.findIndex((m) => m.month === monthDetail.month);
   }, [report, monthDetail]);
+
+  /// Clicking the sorted column flips the direction; a new column starts in
+  /// the direction that column is usually read — dates and amounts biggest
+  /// first, text A to Z.
+  const toggleSort = (key: TransactionSortKey) => {
+    if (txSort === key) {
+      setTxSortDesc((v) => !v);
+    } else {
+      setTxSort(key);
+      setTxSortDesc(key === 'date' || key === 'amount');
+    }
+  };
+
+  const sortHeader = (key: TransactionSortKey, label: string) => (
+    <button
+      type="button"
+      className={`sort-header ${txSort === key ? 'active' : ''}`}
+      onClick={() => toggleSort(key)}
+    >
+      {label}
+      {txSort === key && (txSortDesc ? <ArrowDown size={13} /> : <ArrowUp size={13} />)}
+    </button>
+  );
 
   /// Months offered by the list filter: the report's window, newest first,
   /// plus whatever is selected (a month picked before the range was shortened
@@ -1034,8 +1062,8 @@ export default function SpendingPage() {
               <table className="data-table spending-tx-table">
                 <thead>
                   <tr>
-                    <th className="spending-tx-when">Date</th>
-                    <th>Transaction</th>
+                    <th className="spending-tx-when">{sortHeader('date', 'Date')}</th>
+                    <th>{sortHeader('text', 'Transaction')}</th>
                     {/* One dropdown for category OR transfer: mutually
                         exclusive, and transfers never carry a category.
                         Manual transfer marking stays possible here because
@@ -1043,14 +1071,24 @@ export default function SpendingPage() {
                         accounts that both have a feed. Next to it the
                         per-transaction spread: a rule amortizes every match,
                         but a one-off yearly bill has no rule to hang it on. */}
-                    <th className="spending-tx-controls-col">Category · spread</th>
+                    <th className="spending-tx-controls-col">
+                      {sortHeader('category', 'Category · spread')}
+                    </th>
                     <th className="spending-tx-action-col" aria-label="Actions" />
-                    <th className="spending-amount-col">Amount</th>
+                    <th className="spending-amount-col">
+                      {sortHeader('amount', 'Amount')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {transactions.map((tx) => {
+                    // Not every feed fills in a counterparty — a ZKB card
+                    // purchase puts the merchant in the booking text instead.
+                    // Whatever names the transaction is the primary line, so a
+                    // row never consists of grey detail text alone.
                     const party = stripLeadingIban(tx.counterparty);
+                    const primary = party || tx.description;
+                    const secondary = party ? tx.description : '';
                     return (
                     <tr key={tx.id} className={tx.is_transfer ? 'spending-transfer-row' : ''}>
                       <td className="spending-tx-when">
@@ -1060,10 +1098,14 @@ export default function SpendingPage() {
                         </div>
                       </td>
                       <td className="spending-tx-details">
-                        {party && <div className="spending-tx-party">{party}</div>}
-                        {tx.description && (
+                        {primary && (
+                          <div className="spending-tx-party">
+                            <ClampedText text={primary} />
+                          </div>
+                        )}
+                        {secondary && (
                           <div className="spending-muted">
-                            <ClampedText text={tx.description} />
+                            <ClampedText text={secondary} />
                           </div>
                         )}
                       </td>

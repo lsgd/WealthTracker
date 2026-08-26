@@ -1023,6 +1023,9 @@ export async function getAccountTransactions(
 }
 
 // All accounts in one chronological list; accountId narrows to one account.
+// Sortable columns of the transaction list; the server rejects anything else.
+export type TransactionSortKey = 'date' | 'amount' | 'text' | 'account' | 'category';
+
 export async function getTransactions(
   page = 1,
   accountId?: number,
@@ -1030,6 +1033,9 @@ export async function getTransactions(
   category?: number | 'transfer' | 'none',
   // Calendar month as 'YYYY-MM'.
   month?: string,
+  // Sort key, '-' prefixed for descending. Server-side: the list is paginated,
+  // so sorting the loaded rows would only sort the page.
+  ordering?: string,
 ): Promise<{ count: number; results: Transaction[] }> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
@@ -1037,6 +1043,7 @@ export async function getTransactions(
   if (category === 'none') params.set('uncategorized', '1');
   else if (category) params.set('category', String(category));
   if (month) params.set('month', month);
+  if (ordering) params.set('ordering', ordering);
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');

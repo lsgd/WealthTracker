@@ -1069,6 +1069,62 @@ class TransactionEndpointTests(APITestCase):
         resp = self.client.get(url, {'month': '2026-08', 'uncategorized': '1'})
         self.assertEqual(resp.data['count'], 1)
 
+    def test_sorting_by_column(self):
+        """Sorting happens in the database — the list is paginated."""
+        from portfolio.models import Transaction, TransactionCategory
+        food = TransactionCategory.objects.create(user=self.user, name='Food')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 7, 1),
+            amount=Decimal('-100'), currency='CHF', counterparty='Aldi',
+            source='camt053', dedup_key='ref:S1', category=food,
+        )
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 9, 1),
+            amount=Decimal('-5'), currency='CHF', counterparty='Zoo',
+            source='camt053', dedup_key='ref:S2',
+        )
+        url = reverse('transaction_list_all')
+
+        def names(**params):
+            return [t['counterparty'] for t in self.client.get(url, params).data['results']]
+
+        # Default is unchanged: newest booking first.
+        self.assertEqual(names(), ['Zoo', 'Migros', 'Aldi'])
+        self.assertEqual(names(ordering='date'), ['Aldi', 'Migros', 'Zoo'])
+        self.assertEqual(names(ordering='-date'), ['Zoo', 'Migros', 'Aldi'])
+        # Amounts are signed: ascending starts at the biggest expense.
+        self.assertEqual(names(ordering='amount'), ['Aldi', 'Migros', 'Zoo'])
+        self.assertEqual(names(ordering='-amount'), ['Zoo', 'Migros', 'Aldi'])
+        self.assertEqual(names(ordering='text'), ['Aldi', 'Migros', 'Zoo'])
+        self.assertEqual(names(ordering='-text'), ['Zoo', 'Migros', 'Aldi'])
+
+    def test_sorting_by_category_puts_uncategorized_last(self):
+        """Ascending or descending, a missing category is not a value to sort."""
+        from portfolio.models import Transaction, TransactionCategory
+        for name, ref in (('Zebra', 'Z1'), ('Alpha', 'A1')):
+            category = TransactionCategory.objects.create(user=self.user, name=name)
+            Transaction.objects.create(
+                account=self.account, booking_date=date(2026, 8, 2),
+                amount=Decimal('-9'), currency='CHF', counterparty=name,
+                source='camt053', dedup_key=f'ref:{ref}', category=category,
+            )
+        url = reverse('transaction_list_all')
+
+        # self.imported has no category and must not lead either direction.
+        asc = [t['counterparty'] for t in
+               self.client.get(url, {'ordering': 'category'}).data['results']]
+        desc = [t['counterparty'] for t in
+                self.client.get(url, {'ordering': '-category'}).data['results']]
+        self.assertEqual(asc, ['Alpha', 'Zebra', 'Migros'])
+        self.assertEqual(desc, ['Zebra', 'Alpha', 'Migros'])
+
+    def test_unknown_sort_key_is_rejected(self):
+        """A pass-through ordering param could walk relations to other users."""
+        resp = self.client.get(
+            reverse('transaction_list_all'), {'ordering': 'account__user__password'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Unknown sort key', str(resp.data['ordering']))
+
     def test_bad_month_is_rejected(self):
         resp = self.client.get(reverse('transaction_list_all'), {'month': 'August'})
         self.assertEqual(resp.status_code, 400)

@@ -46,6 +46,7 @@ def _cleanup_expired_sessions():
                     pass
 
 
+from django.db.models import F
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
@@ -1254,10 +1255,47 @@ class TransactionListView(generics.ListAPIView):
     Optional query params: ``account`` (id, restrict to one account),
     ``uncategorized`` (truthy, only transactions still needing a decision),
     ``category`` (id, or ``transfer`` for transfers only), ``month``
-    (``YYYY-MM``, booking date within that calendar month).
+    (``YYYY-MM``, booking date within that calendar month), ``ordering``
+    (a key from ``ORDER_FIELDS``, ``-`` prefixed for descending).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
+
+    # Sorting has to happen in the database: the list is paginated, so ordering
+    # the rows the client happens to hold would sort a slice of an arbitrary
+    # order. Whitelisted rather than passed through — an ordering param that
+    # reaches the ORM raw can walk relations and leak other users' data.
+    ORDER_FIELDS = {
+        'date': ['booking_date'],
+        'amount': ['amount'],
+        # The list shows counterparty and description in one column, so the
+        # column sorts by both, in the order it renders them.
+        'text': ['counterparty', 'description'],
+        'account': ['account__name'],
+        'category': ['category__name'],
+    }
+
+    def _ordering(self):
+        from rest_framework.exceptions import ValidationError
+
+        raw = self.request.query_params.get('ordering')
+        if not raw:
+            return None
+        descending = raw.startswith('-')
+        key = raw.lstrip('-')
+        if key not in self.ORDER_FIELDS:
+            raise ValidationError({'ordering': (
+                f'Unknown sort key. Expected one of: '
+                f'{", ".join(sorted(self.ORDER_FIELDS))}.')})
+        fields = []
+        for name in self.ORDER_FIELDS[key]:
+            field = F(name).desc(nulls_last=True) if descending \
+                else F(name).asc(nulls_last=True)
+            fields.append(field)
+        # Uncategorized rows sort last either way (nulls_last above), and id
+        # breaks ties so paging never repeats or skips a row.
+        fields.append(F('id').desc() if descending else F('id').asc())
+        return fields
 
     def get_queryset(self):
         # select_related: the serializer reads category.name per row.
@@ -1287,6 +1325,9 @@ class TransactionListView(generics.ListAPIView):
             if bounds is None:
                 raise ValidationError({'month': 'Expected YYYY-MM, e.g. 2026-08'})
             qs = qs.filter(booking_date__gte=bounds[0], booking_date__lt=bounds[1])
+        ordering = self._ordering()
+        if ordering:
+            qs = qs.order_by(*ordering)
         return qs
 
 
