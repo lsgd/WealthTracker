@@ -1254,9 +1254,10 @@ class TransactionListView(generics.ListAPIView):
 
     Optional query params: ``account`` (id, restrict to one account),
     ``uncategorized`` (truthy, only transactions still needing a decision),
-    ``category`` (id, or ``transfer`` for transfers only), ``month``
-    (``YYYY-MM``, booking date within that calendar month), ``ordering``
-    (a key from ``ORDER_FIELDS``, ``-`` prefixed for descending).
+    ``category`` (comma-separated ids, or ``transfer`` for transfers only),
+    ``period`` (``YYYY``, ``YYYY-Qn`` or ``YYYY-MM``; ``month`` is the older
+    name for the same thing), ``ordering`` (a key from ``ORDER_FIELDS``, ``-``
+    prefixed for descending).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
@@ -1314,16 +1315,23 @@ class TransactionListView(generics.ListAPIView):
         if category == 'transfer':
             qs = qs.filter(is_transfer=True)
         elif category:
-            # Own categories only — an id from another user must not leak rows.
-            qs = qs.filter(category_id=category, category__user=self.request.user)
-        month = self.request.query_params.get('month')
-        if month:
+            # A comma-separated list unions the categories, which is how the
+            # breakdown chips ask "groceries plus restaurants".
+            ids = [part for part in category.split(',') if part.strip().isdigit()]
+            if ids:
+                # Own categories only — ids from another user must not leak rows.
+                qs = qs.filter(category_id__in=ids, category__user=self.request.user)
+        # 'month' is the older name and still means the same thing.
+        period = (self.request.query_params.get('period')
+                  or self.request.query_params.get('month'))
+        if period:
             from rest_framework.exceptions import ValidationError
 
-            from .spending import month_bounds
-            bounds = month_bounds(month)
+            from .spending import period_bounds
+            bounds = period_bounds(period)
             if bounds is None:
-                raise ValidationError({'month': 'Expected YYYY-MM, e.g. 2026-08'})
+                raise ValidationError({'period': (
+                    'Expected YYYY, YYYY-Qn or YYYY-MM, e.g. 2026-08')})
             qs = qs.filter(booking_date__gte=bounds[0], booking_date__lt=bounds[1])
         ordering = self._ordering()
         if ordering:
@@ -2241,15 +2249,16 @@ class AiApplyView(APIView):
 
 
 class SpendingMonthlyView(APIView):
-    """Month-to-month spending report.
+    """Period-by-period spending report.
 
-    Query params: ``months`` (default 12, max 60), ``mode`` (``normalized`` |
-    ``actual``, default ``normalized``).
+    Query params: ``months`` (number of periods, default 12, max 60), ``mode``
+    (``normalized`` | ``actual``, default ``normalized``), ``granularity``
+    (``month`` | ``quarter`` | ``year``, default ``month``).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from .spending import monthly_spending
+        from .spending import GRANULARITIES, monthly_spending
 
         try:
             months = min(max(int(request.query_params.get('months', 12)), 1), 60)
@@ -2258,8 +2267,12 @@ class SpendingMonthlyView(APIView):
         mode = request.query_params.get('mode', 'normalized')
         if mode not in ('normalized', 'actual'):
             mode = 'normalized'
+        granularity = request.query_params.get('granularity', 'month')
+        if granularity not in GRANULARITIES:
+            granularity = 'month'
 
-        return Response(monthly_spending(request.user, months=months, mode=mode))
+        return Response(monthly_spending(
+            request.user, months=months, mode=mode, granularity=granularity))
 
 
 class WealthSummaryView(APIView):

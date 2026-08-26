@@ -917,16 +917,22 @@ export interface SpendingMonth {
 
 export interface SpendingReport {
   mode: 'normalized' | 'actual';
+  granularity?: 'month' | 'quarter' | 'year';
   base_currency: string;
   categories: string[];
+  // One entry per period; still called months for older app builds.
   months: SpendingMonth[];
 }
 
+// `months` counts periods of the requested granularity: 12 months, 8 quarters,
+// 5 years. The response keeps calling them months for older app builds.
 export async function getSpendingMonthly(
   months: number,
   mode: 'normalized' | 'actual',
+  granularity: 'month' | 'quarter' | 'year' = 'month',
 ): Promise<SpendingReport> {
-  const res = await fetchWithAuth(`/api/spending/monthly/?months=${months}&mode=${mode}`);
+  const res = await fetchWithAuth(
+    `/api/spending/monthly/?months=${months}&mode=${mode}&granularity=${granularity}`);
   if (!res.ok) throw new Error('Failed to fetch spending report');
   return res.json();
 }
@@ -1032,10 +1038,11 @@ export type TransactionSortKey = 'date' | 'amount' | 'text' | 'account' | 'categ
 export async function getTransactions(
   page = 1,
   accountId?: number,
-  // Category id, 'transfer' for transfers only, or 'none' for uncategorized.
-  category?: number | 'transfer' | 'none',
-  // Calendar month as 'YYYY-MM'.
-  month?: string,
+  // A category id, several comma-separated ids ("groceries plus restaurants"),
+  // 'transfer' for transfers only, or 'none' for uncategorized.
+  category?: number | string,
+  // Period as 'YYYY', 'YYYY-Qn' or 'YYYY-MM'.
+  period?: string,
   // Sort key, '-' prefixed for descending. Server-side: the list is paginated,
   // so sorting the loaded rows would only sort the page.
   ordering?: string,
@@ -1045,7 +1052,7 @@ export async function getTransactions(
   if (accountId) params.set('account', String(accountId));
   if (category === 'none') params.set('uncategorized', '1');
   else if (category) params.set('category', String(category));
-  if (month) params.set('month', month);
+  if (period) params.set('period', period);
   if (ordering) params.set('ordering', ordering);
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);

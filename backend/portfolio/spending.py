@@ -29,27 +29,82 @@ def _month_label(index: int) -> str:
     return f'{index // 12:04d}-{index % 12 + 1:02d}'
 
 
-def month_bounds(label: str):
-    """``'2026-08'`` -> ``(date(2026, 8, 1), date(2026, 9, 1))``, else None.
+GRANULARITIES = ('month', 'quarter', 'year')
 
-    Half-open on purpose: the end is the first day of the next month, so no
-    caller has to know how long a month is.
+# Months per bucket, and the label each bucket carries.
+_MONTHS_PER = {'month': 1, 'quarter': 3, 'year': 12}
+
+
+def _first_month(index: int) -> date:
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def period_label(month_index: int, granularity: str) -> str:
+    """Label of the bucket a month falls into: 2026-08, 2026-Q3 or 2026."""
+    year, month = month_index // 12, month_index % 12 + 1
+    if granularity == 'year':
+        return f'{year:04d}'
+    if granularity == 'quarter':
+        return f'{year:04d}-Q{(month - 1) // 3 + 1}'
+    return f'{year:04d}-{month:02d}'
+
+
+def period_bounds(label: str):
+    """Half-open ``(start, end)`` of a period label, or None if unparseable.
+
+    Accepts what :func:`period_label` produces — ``2026``, ``2026-Q3`` and
+    ``2026-08``. Half-open on purpose: the end is the first day of the next
+    period, so no caller has to know how long a month or quarter is.
     """
-    try:
-        year, month = (int(part) for part in label.split('-', 1))
-        start = date(year, month, 1)
-    except (AttributeError, TypeError, ValueError):
+    if not isinstance(label, str):
         return None
-    index = _month_index(start) + 1
-    return start, date(index // 12, index % 12 + 1, 1)
+    text = label.strip()
+    try:
+        if len(text) == 4:
+            year = int(text)
+            return date(year, 1, 1), date(year + 1, 1, 1)
+        head, _, tail = text.partition('-')
+        year = int(head)
+        if tail[:1].upper() == 'Q':
+            quarter = int(tail[1:])
+            if not 1 <= quarter <= 4:
+                return None
+            start_month = (quarter - 1) * 3 + 1
+            start = date(year, start_month, 1)
+            return start, _first_month(_month_index(start) + 3)
+        start = date(year, int(tail), 1)
+    except (IndexError, TypeError, ValueError):
+        return None
+    return start, _first_month(_month_index(start) + 1)
 
 
-def monthly_spending(user, months: int = 12, mode: str = 'normalized') -> dict:
+def month_bounds(label: str):
+    """Backwards-compatible alias — the month form of :func:`period_bounds`."""
+    return period_bounds(label)
+
+
+def monthly_spending(user, months: int = 12, mode: str = 'normalized',
+                     granularity: str = 'month') -> dict:
+    """Spending per period, newest last.
+
+    ``months`` counts periods of the requested ``granularity`` — 12 quarters,
+    3 years — and the window is aligned to period boundaries so a year bucket
+    always starts in January. Buckets are always accumulated per month and
+    folded afterwards: a spread transaction is defined in months, and folding a
+    finished monthly series is exact.
+    """
     base_currency = user.profile.base_currency
     today = date.today()
+    if granularity not in GRANULARITIES:
+        granularity = 'month'
+    step = _MONTHS_PER[granularity]
+
     end_index = _month_index(today)
-    start_index = end_index - months + 1
-    window_start = date(start_index // 12, start_index % 12 + 1, 1)
+    # First month of the period today falls in: (end_index % 12) is the month
+    # of the year, so its remainder over the step is the offset into the period.
+    period_start = end_index - (end_index % 12) % step
+    start_index = period_start - (months - 1) * step
+    window_start = _first_month(start_index)
 
     fetch_start = window_start
     if mode == 'normalized':
@@ -142,26 +197,45 @@ def monthly_spending(user, months: int = 12, mode: str = 'normalized') -> dict:
     def to_float(value: Decimal) -> float:
         return float(round(value, 2))
 
+    # Fold the monthly buckets into the requested period, in order.
+    periods: list = []
+    by_label: dict = {}
+    for i in range(start_index, end_index + 1):
+        label = period_label(i, granularity)
+        period = by_label.get(label)
+        if period is None:
+            period = {'income': Decimal('0'), 'expenses': Decimal('0'),
+                      'by_category': {}}
+            by_label[label] = period
+            periods.append((label, period))
+        period['income'] += buckets[i]['income']
+        period['expenses'] += buckets[i]['expenses']
+        for name, value in buckets[i]['by_category'].items():
+            period['by_category'][name] = \
+                period['by_category'].get(name, Decimal('0')) + value
+
     return {
         'mode': mode,
+        'granularity': granularity,
         'base_currency': base_currency,
         'categories': [
             name for name, _total
             in sorted(category_totals.items(), key=lambda kv: kv[1], reverse=True)
         ],
+        # Named 'months' for the clients that predate the other granularities.
         'months': [
             {
-                'month': _month_label(i),
-                'income': to_float(buckets[i]['income']),
-                'expenses': to_float(buckets[i]['expenses']),
-                'net': to_float(buckets[i]['income'] - buckets[i]['expenses']),
+                'month': label,
+                'income': to_float(period['income']),
+                'expenses': to_float(period['expenses']),
+                'net': to_float(period['income'] - period['expenses']),
                 'by_category': {
                     name: to_float(value)
                     for name, value in sorted(
-                        buckets[i]['by_category'].items(), key=lambda kv: kv[1], reverse=True,
+                        period['by_category'].items(), key=lambda kv: kv[1], reverse=True,
                     )
                 },
             }
-            for i in range(start_index, end_index + 1)
+            for label, period in periods
         ],
     }

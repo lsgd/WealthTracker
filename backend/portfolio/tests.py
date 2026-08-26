@@ -1128,7 +1128,65 @@ class TransactionEndpointTests(APITestCase):
     def test_bad_month_is_rejected(self):
         resp = self.client.get(reverse('transaction_list_all'), {'month': 'August'})
         self.assertEqual(resp.status_code, 400)
-        self.assertIn('YYYY-MM', str(resp.data['month']))
+        self.assertIn('YYYY-MM', str(resp.data['period']))
+
+    def test_period_filter_by_quarter_and_year(self):
+        from portfolio.models import Transaction
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2025, 2, 3),
+            amount=Decimal('-10'), currency='CHF', counterparty='Old',
+            source='camt053', dedup_key='ref:P1',
+        )
+        url = reverse('transaction_list_all')
+
+        # self.imported is 2026-08-01, so Q3 2026 holds it and Q1 2025 the other.
+        self.assertEqual(
+            [t['counterparty'] for t in
+             self.client.get(url, {'period': '2026-Q3'}).data['results']],
+            ['Migros'])
+        self.assertEqual(
+            [t['counterparty'] for t in
+             self.client.get(url, {'period': '2025-Q1'}).data['results']],
+            ['Old'])
+        self.assertEqual(self.client.get(url, {'period': '2026'}).data['count'], 1)
+        self.assertEqual(self.client.get(url, {'period': '2025'}).data['count'], 1)
+        self.assertEqual(self.client.get(url, {'period': '2024'}).data['count'], 0)
+
+    def test_several_categories_at_once(self):
+        """The breakdown chips ask for "groceries plus restaurants"."""
+        from portfolio.models import Transaction, TransactionCategory
+        food = TransactionCategory.objects.create(user=self.user, name='Food')
+        travel = TransactionCategory.objects.create(user=self.user, name='Travel')
+        other = TransactionCategory.objects.create(user=self.user, name='Other')
+        for cat, ref in ((food, 'C1'), (travel, 'C2'), (other, 'C3')):
+            Transaction.objects.create(
+                account=self.account, booking_date=date(2026, 8, 3),
+                amount=Decimal('-7'), currency='CHF', counterparty=cat.name,
+                source='camt053', dedup_key=f'ref:{ref}', category=cat,
+            )
+        resp = self.client.get(
+            reverse('transaction_list_all'),
+            {'category': f'{food.id},{travel.id}'})
+        self.assertEqual(
+            sorted(t['counterparty'] for t in resp.data['results']),
+            ['Food', 'Travel'])
+
+    def test_foreign_category_id_in_a_list_leaks_nothing(self):
+        """One own id next to a foreign one must not widen the query."""
+        from portfolio.models import Transaction, TransactionCategory
+        mine = TransactionCategory.objects.create(user=self.user, name='Mine')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 4),
+            amount=Decimal('-3'), currency='CHF', counterparty='Mine',
+            source='camt053', dedup_key='ref:F1', category=mine,
+        )
+        other, _, _ = make_kek_user(username='mallory2')
+        foreign = TransactionCategory.objects.create(user=other, name='Theirs')
+        resp = self.client.get(
+            reverse('transaction_list_all'),
+            {'category': f'{foreign.id},{mine.id}'})
+        self.assertEqual(
+            [t['counterparty'] for t in resp.data['results']], ['Mine'])
 
     def test_category_filter_does_not_leak_other_users_categories(self):
         from portfolio.models import TransactionCategory
@@ -1297,6 +1355,62 @@ class SpendingReportTests(TestCase):
         normalized = monthly_spending(self.user, months=1, mode='normalized')
         self.assertEqual(normalized['months'][-1]['expenses'], 100.0)
         self.assertEqual(normalized['months'][-1]['by_category'], {'Groceries': 100.0})
+
+    def test_yearly_granularity_sums_the_months_of_each_year(self):
+        """"What do I pay for this in a year" is one bucket, not twelve rows."""
+        from portfolio.spending import monthly_spending
+        today = date.today()
+        for month in range(1, today.month + 1):
+            self._tx(booking_date=date(today.year, month, 1),
+                     amount=Decimal('-10'), category=self.groceries)
+        # Last year, so the window must reach back a full calendar year.
+        self._tx(booking_date=date(today.year - 1, 6, 15), amount=Decimal('-70'),
+                 category=self.groceries)
+
+        report = monthly_spending(self.user, months=2, mode='actual',
+                                  granularity='year')
+        self.assertEqual(report['granularity'], 'year')
+        self.assertEqual([m['month'] for m in report['months']],
+                         [str(today.year - 1), str(today.year)])
+        self.assertEqual(report['months'][0]['expenses'], 70.0)
+        self.assertEqual(report['months'][-1]['expenses'], today.month * 10.0)
+        self.assertEqual(report['months'][-1]['by_category'],
+                         {'Groceries': today.month * 10.0})
+
+    def test_quarterly_granularity_starts_at_the_quarter_boundary(self):
+        from portfolio.spending import monthly_spending
+        report = monthly_spending(self.user, months=4, mode='actual',
+                                  granularity='quarter')
+        labels = [m['month'] for m in report['months']]
+        self.assertEqual(len(labels), 4)
+        quarter = (date.today().month - 1) // 3 + 1
+        self.assertEqual(labels[-1], f'{date.today().year}-Q{quarter}')
+        for label in labels:
+            self.assertRegex(label, r'^\d{4}-Q[1-4]$')
+
+    def test_an_unknown_granularity_falls_back_to_months(self):
+        from portfolio.spending import monthly_spending
+        report = monthly_spending(self.user, months=2, granularity='decade')
+        self.assertEqual(report['granularity'], 'month')
+        self.assertRegex(report['months'][-1]['month'], r'^\d{4}-\d{2}$')
+
+    def test_period_bounds_parses_every_label_it_produces(self):
+        from portfolio.spending import period_bounds, period_label
+        cases = {
+            '2026-08': (date(2026, 8, 1), date(2026, 9, 1)),
+            '2026-12': (date(2026, 12, 1), date(2027, 1, 1)),
+            '2026-Q1': (date(2026, 1, 1), date(2026, 4, 1)),
+            '2026-Q4': (date(2026, 10, 1), date(2027, 1, 1)),
+            '2026': (date(2026, 1, 1), date(2027, 1, 1)),
+        }
+        for label, expected in cases.items():
+            self.assertEqual(period_bounds(label), expected, label)
+        for bad in ('', 'August', '2026-Q5', '2026-13', 'Q1', None):
+            self.assertIsNone(period_bounds(bad), bad)
+        # Labels round-trip: whatever the report emits, the filter can parse.
+        index = 2026 * 12 + 7
+        for granularity in ('month', 'quarter', 'year'):
+            self.assertIsNotNone(period_bounds(period_label(index, granularity)))
 
     def test_transfers_are_excluded(self):
         from portfolio.spending import monthly_spending

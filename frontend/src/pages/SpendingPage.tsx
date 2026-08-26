@@ -5,19 +5,27 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
-  Legend,
   Line,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import CategoryPatternDefs from '../components/CategoryPatternDefs';
 import ClampedText from '../components/ClampedText';
+import CategoryBreakdown from '../components/spending/CategoryBreakdown';
+import CategoryDetail from '../components/spending/CategoryDetail';
+import PeriodBar from '../components/spending/PeriodBar';
+import SummaryTiles from '../components/spending/SummaryTiles';
+import {
+  AVERAGE_WINDOW,
+  formatPeriod,
+  formatPeriodShort,
+  HISTORY_CHOICES,
+  type Granularity,
+} from '../utils/periods';
 import {
   categoryStyle,
   INCOME_COLOR,
@@ -29,6 +37,7 @@ import type {
   BackfillOutcome,
   TransactionSortKey,
   CategoryRule,
+  SpendingMonth,
   SpendingReport,
   Transaction,
   TransactionCategory,
@@ -52,13 +61,6 @@ import {
 } from '../api/client';
 
 
-const MODES = [
-  { label: 'Normalized', value: 'normalized' as const },
-  { label: 'Actual', value: 'actual' as const },
-];
-
-const RANGES = [6, 12, 24];
-
 // Default history window for a one-off import.
 const DEFAULT_BACKFILL_MONTHS = 15;
 
@@ -73,11 +75,6 @@ const ANY_REGEX_SYNTAX = /[.[\]{}()|\\^$?*+]/;
 interface AccountOption {
   id: number;
   name: string;
-}
-
-function formatMonthLabel(month: string): string {
-  const [year, m] = month.split('-').map(Number);
-  return new Date(year, m - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 }
 
 function formatAmount(value: number, currency: string): string {
@@ -99,6 +96,9 @@ export default function SpendingPage() {
     setSearchParams(next === 'config' ? { tab: 'config' } : {}, { replace: true });
   };
   const [mode, setMode] = useState<'normalized' | 'actual'>('normalized');
+  // One period selection drives the whole page. `months` counts periods of the
+  // current granularity: 12 months, 8 quarters, 5 years.
+  const [granularity, setGranularity] = useState<Granularity>('month');
   const [months, setMonths] = useState(12);
   const [report, setReport] = useState<SpendingReport | null>(null);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
@@ -106,11 +106,19 @@ export default function SpendingPage() {
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
   // Transaction list filter: '' = all, 'none' = uncategorized, 'transfer', or
-  // a category id.
-  const [txCategory, setTxCategory] = useState<'' | 'none' | 'transfer' | number>('');
-  // '' = every month. Picking a month in the overview sets this too, so the
-  // list answers the question the chart just raised.
-  const [txMonth, setTxMonth] = useState('');
+  // comma-separated category ids (the breakdown chips).
+  const [txCategory, setTxCategory] = useState<'' | 'none' | 'transfer' | string>('');
+  // The period everything on the page refers to; defaults to the newest one.
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  // Uncategorized is spending like any other — one switch for the whole page.
+  const [showUncategorized, setShowUncategorized] = useState(true);
+  // The list follows the selected period unless it is widened on purpose —
+  // derived rather than mirrored, so the two can never disagree.
+  const [txAllPeriods, setTxAllPeriods] = useState(false);
+  // Category names picked in the breakdown; they filter the list and sum up.
+  const [pickedCategories, setPickedCategories] = useState<string[]>([]);
+  // Category whose history is open, if any.
+  const [detailCategory, setDetailCategory] = useState<string | null>(null);
   // Sorted column, newest bookings first by default (what the server did before
   // the column headers became clickable).
   const [txSort, setTxSort] = useState<TransactionSortKey>('date');
@@ -190,31 +198,45 @@ export default function SpendingPage() {
   // Import history is a once-in-a-while tool — collapsed unless in use.
   const [importOpen, setImportOpen] = useState(false);
 
+  /// The period in focus: the picked one, or the newest the report covers.
+  const monthDetail = useMemo(() => {
+    if (!report || report.months.length === 0) return null;
+    return report.months.find((m) => m.month === selectedMonth)
+      ?? report.months[report.months.length - 1];
+  }, [report, selectedMonth]);
+
+  const monthIndex = useMemo(() => {
+    if (!report || !monthDetail) return -1;
+    return report.months.findIndex((m) => m.month === monthDetail.month);
+  }, [report, monthDetail]);
+
+  const txPeriod = txAllPeriods ? '' : (monthDetail?.month ?? '');
+
   const loadReport = useCallback(async () => {
     try {
-      setReport(await getSpendingMonthly(months, mode));
+      setReport(await getSpendingMonthly(months, mode, granularity));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load report');
     }
-  }, [months, mode]);
+  }, [months, mode, granularity]);
 
   const loadTransactions = useCallback(async (
     id: number | null,
     page: number,
-    category: '' | 'none' | 'transfer' | number = txCategory,
-    month: string = txMonth,
+    category: '' | 'none' | 'transfer' | number | string = txCategory,
+    period: string = txPeriod,
   ) => {
     try {
       const data = await getTransactions(
         page, id ?? undefined, category === '' ? undefined : category,
-        month || undefined, `${txSortDesc ? '-' : ''}${txSort}`);
+        period || undefined, `${txSortDesc ? '-' : ''}${txSort}`);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transactions');
     }
-  }, [txCategory, txMonth, txSort, txSortDesc]);
+  }, [txCategory, txPeriod, txSort, txSortDesc]);
 
   useEffect(() => {
     loadReport();
@@ -246,14 +268,6 @@ export default function SpendingPage() {
     loadTransactions(accountId, 1);
   }, [accountId, loadTransactions]);
 
-  // Month selected for the pie breakdown (bar click or dropdown); defaults to
-  // the latest month of the report.
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
-  // Two-way hover sync between the donut and its legend rows.
-  const [hoveredSlice, setHoveredSlice] = useState<number | null>(null);
-  // Show/hide the Uncategorized bucket, separately per card.
-  const [showUncatBars, setShowUncatBars] = useState(true);
-  const [showUncatPie, setShowUncatPie] = useState(true);
 
   const chartData = useMemo(() => {
     if (!report) return [];
@@ -268,22 +282,6 @@ export default function SpendingPage() {
     () => Object.fromEntries(accounts.map((a) => [a.id, a.name])),
     [accounts],
   );
-
-  const monthDetail = useMemo(() => {
-    if (!report || report.months.length === 0) return null;
-    return report.months.find((m) => m.month === selectedMonth)
-      ?? report.months[report.months.length - 1];
-  }, [report, selectedMonth]);
-
-  // Slice indices change with the month — drop a stale highlight.
-  useEffect(() => {
-    setHoveredSlice(null);
-  }, [monthDetail]);
-
-  const monthIndex = useMemo(() => {
-    if (!report || !monthDetail) return -1;
-    return report.months.findIndex((m) => m.month === monthDetail.month);
-  }, [report, monthDetail]);
 
   /// Clicking the sorted column flips the direction; a new column starts in
   /// the direction that column is usually read — dates and amounts biggest
@@ -308,27 +306,23 @@ export default function SpendingPage() {
     </button>
   );
 
-  /// Months offered by the list filter: the report's window, newest first,
-  /// plus whatever is selected (a month picked before the range was shortened
-  /// must still be representable).
-  const monthFilterOptions = useMemo(() => {
-    const labels = [...(report?.months ?? [])].map((m) => m.month).reverse();
-    if (txMonth && !labels.includes(txMonth)) labels.unshift(txMonth);
-    return labels;
-  }, [report, txMonth]);
+  /// Every period the report covers, oldest first.
+  const periodLabels = useMemo(
+    () => (report?.months ?? []).map((m) => m.month), [report]);
 
-  /// Picking a month anywhere in the overview (bar, dropdown, arrows) also
-  /// narrows the transaction list to it — the two views answer the same
-  /// question, and re-picking the month by hand was pure friction.
-  const selectMonth = (month: string) => {
-    setSelectedMonth(month);
-    setTxMonth(month);
-  };
+  const periodNoun = granularity;
 
-  const stepMonth = (delta: number) => {
-    if (!report || monthIndex < 0) return;
-    const next = report.months[monthIndex + delta];
-    if (next) selectMonth(next.month);
+  /// Picking a period anywhere (bar click, dropdown, arrows) drives the whole
+  /// page: breakdown, summary and the transaction list all follow it.
+  const selectMonth = (month: string) => setSelectedMonth(month);
+
+  /// Switching granularity keeps the history choice sensible (24 months is a
+  /// reasonable window, 24 years is not) and re-selects the newest period.
+  const changeGranularity = (next: Granularity) => {
+    setGranularity(next);
+    setMonths(HISTORY_CHOICES[next][1]);
+    // The old label means nothing in the new granularity; fall back to newest.
+    setSelectedMonth(null);
   };
 
   /// Categories in report order without the uncategorized bucket, which is not
@@ -339,7 +333,7 @@ export default function SpendingPage() {
   );
 
   /// One look per category — color, and past the palette a pattern too —
-  /// shared by the bars, the donut and both legends.
+  /// shared by the bars, the chips and the ranked list.
   const styleFor = useCallback(
     (name: string) => categoryStyle(
       name === UNCATEGORIZED ? -1 : paletteCategories.indexOf(name),
@@ -347,22 +341,149 @@ export default function SpendingPage() {
     [paletteCategories],
   );
 
-  const pieData = useMemo(() => {
-    if (!monthDetail || !report) return [];
-    return Object.entries(monthDetail.by_category)
-      .filter(([name]) => showUncatPie || name !== UNCATEGORIZED)
-      .map(([name, value]) => ({ name, value, ...styleFor(name) }));
-  }, [monthDetail, report, showUncatPie, styleFor]);
-
-  // Center total and percentages refer to what the donut actually shows.
-  const pieTotal = useMemo(
-    () => pieData.reduce((sum, entry) => sum + entry.value, 0),
-    [pieData],
+  const visibleCategories = useMemo(
+    () => (report?.categories ?? []).filter(
+      (name) => showUncategorized || name !== UNCATEGORIZED),
+    [report, showUncategorized],
   );
+
+  /// Completed periods before the selected one, newest first — the basis for
+  /// "vs average". The running period is excluded: a third of a month
+  /// compared against whole months always looks like a saving.
+  const trailing = useMemo(() => {
+    if (!report || monthIndex < 0) return [];
+    return report.months.slice(Math.max(0, monthIndex - AVERAGE_WINDOW), monthIndex);
+  }, [report, monthIndex]);
+
+  const isCurrentPeriod = useMemo(
+    () => !!report && monthIndex === report.months.length - 1, [report, monthIndex]);
+
+  const compare = useCallback((
+    value: number, pick: (m: SpendingMonth) => number,
+  ) => {
+    const previousPeriod = report?.months[monthIndex - 1];
+    const previous = previousPeriod ? pick(previousPeriod) : null;
+    // Only periods that had something to compare: a year before the data
+    // starts is absence of history, not a year of spending nothing, and
+    // averaging those in turns every delta into a meaningless +400%.
+    const seen = trailing.map(pick).filter((v) => v !== 0);
+    const average = seen.length
+      ? seen.reduce((sum, v) => sum + v, 0) / seen.length
+      : null;
+    return {
+      vsPrevious: previous ? (value - previous) / Math.abs(previous) : null,
+      vsAverage: average ? (value - average) / Math.abs(average) : null,
+    };
+  }, [report, monthIndex, trailing]);
+
+  /// What the summary tiles show for the selected period. Spending excludes
+  /// the uncategorized bucket when it is switched off, so every number on the
+  /// page refers to the same set of transactions.
+  const spentInPeriod = useMemo(() => {
+    if (!monthDetail) return 0;
+    if (showUncategorized) return monthDetail.expenses;
+    return monthDetail.expenses - (monthDetail.by_category[UNCATEGORIZED] ?? 0);
+  }, [monthDetail, showUncategorized]);
+
+  const summaryTiles = useMemo(() => {
+    if (!monthDetail) return [];
+    const spentOf = (m: SpendingMonth) => (showUncategorized
+      ? m.expenses
+      : m.expenses - (m.by_category[UNCATEGORIZED] ?? 0));
+    return [
+      {
+        label: 'Spent',
+        value: spentInPeriod,
+        comparison: compare(spentInPeriod, spentOf),
+        moreIsBetter: false,
+      },
+      {
+        label: 'Income',
+        value: monthDetail.income,
+        comparison: compare(monthDetail.income, (m) => m.income),
+        moreIsBetter: true,
+      },
+      {
+        label: 'Net',
+        value: monthDetail.income - spentInPeriod,
+        comparison: compare(monthDetail.income - spentInPeriod,
+          (m) => m.income - spentOf(m)),
+        moreIsBetter: true,
+      },
+    ];
+  }, [monthDetail, spentInPeriod, showUncategorized, compare]);
+
+  /// Mean of the non-zero values, or null when there is nothing to average.
+  const averageOf = (values: number[]) => {
+    const seen = values.filter((v) => v !== 0);
+    return seen.length ? seen.reduce((sum, v) => sum + v, 0) / seen.length : null;
+  };
+
+  /// The selected period's categories, ranked, each with the period before and
+  /// the trailing average for context.
+  const categoryRows = useMemo(() => {
+    if (!monthDetail) return [];
+    const previousPeriod = report?.months[monthIndex - 1];
+    return Object.entries(monthDetail.by_category)
+      .filter(([name]) => showUncategorized || name !== UNCATEGORIZED)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, amount]) => ({
+        name,
+        amount,
+        previous: previousPeriod ? (previousPeriod.by_category[name] ?? 0) : null,
+        // Same rule as the tiles: average only over the periods that had this
+        // category, so a category added last month is not "up 500%".
+        average: averageOf(trailing.map((m) => m.by_category[name] ?? 0)),
+        style: styleFor(name),
+      }));
+  }, [monthDetail, report, monthIndex, trailing, showUncategorized, styleFor]);
+
+  const categoryTotal = useMemo(
+    () => categoryRows.reduce((sum, r) => sum + r.amount, 0), [categoryRows]);
+
+  /// A category's own history across the loaded window, for the detail view.
+  const detailSeries = useMemo(() => {
+    if (!detailCategory || !report) return [];
+    return report.months.map((m) => ({
+      period: m.month,
+      amount: m.by_category[detailCategory] ?? 0,
+    }));
+  }, [detailCategory, report]);
+
+  /// Chips filter the transaction list; several of them sum up, which is the
+  /// whole reason they are chips and not a dropdown.
+  const togglePickedCategory = (name: string) => {
+    setPickedCategories((prev) => {
+      const next = prev.includes(name)
+        ? prev.filter((n) => n !== name)
+        : [...prev, name];
+      const ids = next
+        .map((n) => categories.find((c) => c.name === n)?.id)
+        .filter((id): id is number => id !== undefined);
+      // Uncategorized has no id — on its own it maps to the dedicated filter.
+      if (next.length && ids.length === 0 && next.includes(UNCATEGORIZED)) {
+        setTxCategory('none');
+      } else {
+        setTxCategory(ids.join(','));
+      }
+      return next;
+    });
+  };
+
+  const filterSummary = useMemo(() => {
+    const parts = [txPeriod ? formatPeriod(txPeriod) : 'all periods'];
+    if (pickedCategories.length) parts.push(pickedCategories.join(', '));
+    else if (txCategory === 'none') parts.push('uncategorized');
+    else if (txCategory === 'transfer') parts.push('transfers');
+    if (accountId !== null) {
+      parts.push(accounts.find((a) => a.id === accountId)?.name ?? 'one account');
+    }
+    return parts.join(' · ');
+  }, [txPeriod, pickedCategories, txCategory, accountId, accounts]);
 
   const avgExpenses = useMemo(() => {
     if (!report || report.months.length === 0) return 0;
-    // The running month is always partial — exclude it from the average.
+    // The running period is always partial — exclude it from the average.
     const complete = report.months.slice(0, -1);
     if (complete.length === 0) return report.months[0].expenses;
     return complete.reduce((sum, m) => sum + m.expenses, 0) / complete.length;
@@ -859,56 +980,50 @@ export default function SpendingPage() {
         {tab === 'insights' && (<>
         <div className="card">
           <div className="chart-header">
-            <h2>Monthly Spending</h2>
-            <div className="range-buttons">
-              {MODES.map((m) => (
-                <button
-                  key={m.value}
-                  className={`btn btn-sm ${mode === m.value ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setMode(m.value)}
-                  title={m.value === 'normalized'
-                    ? 'Yearly bills spread across their months'
-                    : 'Raw cash flow per month'}
-                >
-                  {m.label}
-                </button>
-              ))}
-              <span className="spending-toolbar-gap" />
-              {RANGES.map((r) => (
-                <button
-                  key={r}
-                  className={`btn btn-sm ${months === r ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setMonths(r)}
-                >
-                  {r}m
-                </button>
-              ))}
-              <span className="spending-toolbar-gap" />
-              <button
-                className={`btn btn-sm ${showUncatBars ? 'btn-primary' : 'btn-ghost'}`}
-                title="Show or hide uncategorized spending"
-                onClick={() => setShowUncatBars((v) => !v)}
-              >
-                Uncategorized
-              </button>
-            </div>
+            <h2>Spending</h2>
+            <button
+              className={`btn btn-sm ${showUncategorized ? 'btn-primary' : 'btn-ghost'}`}
+              title="Count spending that has no category yet"
+              onClick={() => setShowUncategorized((v) => !v)}
+            >
+              Uncategorized
+            </button>
           </div>
-          {report && (
-            <p className="spending-average">
-              Average monthly spending ({mode}): <strong>{formatAmount(avgExpenses, currency)}</strong>
-            </p>
+
+          <PeriodBar
+            granularity={granularity}
+            onGranularity={changeGranularity}
+            periods={periodLabels}
+            selected={monthDetail?.month ?? null}
+            onSelect={selectMonth}
+            history={months}
+            onHistory={setMonths}
+            mode={mode}
+            onMode={setMode}
+          />
+
+          {monthDetail && (
+            <SummaryTiles
+              tiles={summaryTiles}
+              currency={currency}
+              periodNoun={periodNoun}
+              partial={isCurrentPeriod}
+            />
           )}
+
           {chartData.length === 0 ? (
             <div className="chart-empty"><p>No transactions yet.</p></div>
           ) : (
-            <ResponsiveContainer width="100%" height={340}>
+            <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="month" stroke="#8b93a7" fontSize={12} />
+                <XAxis dataKey="month" stroke="#8b93a7" fontSize={12}
+                       tickFormatter={formatPeriodShort} />
                 <YAxis stroke="#8b93a7" fontSize={12} />
                 <Tooltip
                   formatter={(value, name) =>
                     [formatAmount(Number(value ?? 0), currency), String(name)]}
+                  labelFormatter={(label) => formatPeriod(String(label))}
                   // Income first, then categories in report order (largest total first).
                   itemSorter={(item) => (item.name === 'Income'
                     ? -1
@@ -918,8 +1033,7 @@ export default function SpendingPage() {
                   // the tooltip, making its background look see-through.
                   wrapperStyle={{ zIndex: 10 }}
                 />
-                <Legend />
-                {report?.categories.filter((name) => showUncatBars || name !== UNCATEGORIZED).map((name) => (
+                {visibleCategories.map((name) => (
                   <Bar
                     key={name}
                     dataKey={name}
@@ -930,12 +1044,26 @@ export default function SpendingPage() {
                       if (m) selectMonth(m);
                     }}
                     style={{ cursor: 'pointer' }}
-                  />
+                  >
+                    {chartData.map((entry) => (
+                      // The selected period stands out; the rest is context.
+                      <Cell
+                        key={entry.month}
+                        opacity={entry.month === monthDetail?.month ? 1 : 0.5}
+                      />
+                    ))}
+                  </Bar>
                 ))}
                 <Line dataKey="Income" stroke={INCOME_COLOR} strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
+          <p className="form-hint spending-chart-hint">
+            Click a bar to inspect that {periodNoun}. Average spending per{' '}
+            {periodNoun} over the completed ones: <strong>
+              {formatAmount(avgExpenses, currency)}
+            </strong>.
+          </p>
         </div>
 
         <div className="card">
@@ -943,122 +1071,33 @@ export default function SpendingPage() {
             <h2>
               Breakdown
               {monthDetail && (
-                <span className="spending-month-title"> · {formatMonthLabel(monthDetail.month)}</span>
+                <span className="spending-month-title">
+                  {' · '}{formatPeriod(monthDetail.month)}
+                </span>
               )}
             </h2>
-            <div className="range-buttons">
-              <button
-                className={`btn btn-sm ${showUncatPie ? 'btn-primary' : 'btn-ghost'}`}
-                title="Show or hide uncategorized spending"
-                onClick={() => setShowUncatPie((v) => !v)}
-              >
-                Uncategorized
-              </button>
-              <span className="spending-toolbar-gap" />
-              <button
-                className="btn btn-sm btn-ghost"
-                title="Previous month"
-                disabled={monthIndex <= 0}
-                onClick={() => stepMonth(-1)}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <select
-                className="spending-month-select"
-                value={monthDetail?.month ?? ''}
-                onChange={(e) => selectMonth(e.target.value)}
-              >
-                {report?.months.map((m) => (
-                  <option key={m.month} value={m.month}>{m.month}</option>
-                ))}
-              </select>
-              <button
-                className="btn btn-sm btn-ghost"
-                title="Next month"
-                disabled={report === null || monthIndex < 0 || monthIndex >= report.months.length - 1}
-                onClick={() => stepMonth(1)}
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
           </div>
-          {!monthDetail || pieData.length === 0 ? (
-            <div className="chart-empty"><p>No spending in this month.</p></div>
-          ) : (
-            <div className="breakdown-content">
-              <div className="breakdown-chart">
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={90}
-                      paddingAngle={2}
-                      onMouseLeave={() => setHoveredSlice(null)}
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell
-                          key={entry.name}
-                          fill={entry.fill}
-                          opacity={hoveredSlice === null || hoveredSlice === index ? 1 : 0.4}
-                          style={{ cursor: 'pointer' }}
-                          onMouseEnter={() => setHoveredSlice(index)}
-                        />
-                      ))}
-                    </Pie>
-                    <text
-                      x="50%" y="47%" textAnchor="middle" dominantBaseline="middle"
-                      className="spending-donut-total"
-                    >
-                      {new Intl.NumberFormat('de-CH', {
-                        style: 'currency', currency, maximumFractionDigits: 0,
-                      }).format(pieTotal)}
-                    </text>
-                    <text
-                      x="50%" y="57%" textAnchor="middle" dominantBaseline="middle"
-                      className="spending-donut-label"
-                    >
-                      {formatMonthLabel(monthDetail.month)}
-                    </text>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="breakdown-legend">
-                {pieData.map((entry, index) => (
-                  <div
-                    key={entry.name}
-                    className={`breakdown-legend-item ${hoveredSlice === index ? 'highlighted' : ''} ${hoveredSlice !== null && hoveredSlice !== index ? 'dimmed' : ''}`}
-                    onMouseEnter={() => setHoveredSlice(index)}
-                    onMouseLeave={() => setHoveredSlice(null)}
-                    onClick={() => setHoveredSlice(index)}
-                  >
-                    <span
-                      className="breakdown-legend-color"
-                      style={{ background: entry.background }}
-                    />
-                    <span className="breakdown-legend-label">{entry.name}</span>
-                    <span className="breakdown-legend-value">
-                      {formatAmount(entry.value, currency)}
-                    </span>
-                    <span className="breakdown-legend-pct">
-                      {pieTotal > 0 ? ((entry.value / pieTotal) * 100).toFixed(1) : '0.0'}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <CategoryBreakdown
+            rows={categoryRows}
+            total={categoryTotal}
+            currency={currency}
+            selected={pickedCategories}
+            onToggle={togglePickedCategory}
+            onClear={() => setPickedCategories([])}
+            onOpenDetail={setDetailCategory}
+            periodNoun={periodNoun}
+          />
         </div>
 
         <div className="card">
           <div className="chart-header">
-            <h2>Transactions</h2>
+            <h2>
+              Transactions
+              <span className="spending-month-title"> · {filterSummary}</span>
+            </h2>
             <div className="range-buttons">
               <select
+                aria-label="Filter by account"
                 value={accountId ?? ''}
                 onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
               >
@@ -1067,37 +1106,34 @@ export default function SpendingPage() {
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
+              {/* The period bar and the breakdown chips above already say
+                  which period and which categories — these only add what
+                  they cannot express. */}
               <select
-                aria-label="Filter by category"
-                value={txCategory}
+                aria-label="Show"
+                value={txCategory === 'none' || txCategory === 'transfer' ? txCategory : ''}
                 onChange={(e) => {
                   const v = e.target.value;
-                  setTxCategory(
-                    v === '' || v === 'none' || v === 'transfer' ? v : Number(v));
+                  setPickedCategories([]);
+                  setTxCategory(v === 'none' || v === 'transfer' ? v : '');
                 }}
               >
-                <option value="">All categories</option>
-                <option value="none">Uncategorized</option>
-                <option value="transfer">Transfer (excluded)</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+                <option value="">Everything</option>
+                <option value="none">Uncategorized only</option>
+                <option value="transfer">Transfers only</option>
               </select>
-              <select
-                aria-label="Filter by month"
-                value={txMonth}
-                onChange={(e) => setTxMonth(e.target.value)}
+              <button
+                className="btn btn-sm btn-ghost"
+                title="Show every period, not just the selected one"
+                onClick={() => setTxAllPeriods((v) => !v)}
               >
-                <option value="">All months</option>
-                {monthFilterOptions.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+                {txPeriod ? 'All periods' : `Back to ${periodNoun}`}
+              </button>
             </div>
           </div>
           {transactions.length === 0 ? (
             <p className="table-empty">
-              {txCategory !== '' || txMonth || accountId !== null
+              {txCategory !== '' || txPeriod || accountId !== null
                 ? 'No transactions match this filter.'
                 : 'No transactions yet.'}
             </p>
@@ -1581,6 +1617,19 @@ export default function SpendingPage() {
             submitLabel="Verify & Fetch"
             onSubmit={handleAuthSubmit}
             onClose={() => setAuthPrompt(null)}
+          />
+        )}
+
+        {detailCategory && (
+          <CategoryDetail
+            name={detailCategory}
+            style={styleFor(detailCategory)}
+            series={detailSeries}
+            selectedPeriod={monthDetail?.month ?? null}
+            currency={currency}
+            periodNoun={periodNoun}
+            onSelectPeriod={(period) => { selectMonth(period); setDetailCategory(null); }}
+            onClose={() => setDetailCategory(null)}
           />
         )}
 
