@@ -50,6 +50,7 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Budgets per category: set a monthly target under Spending settings and the insights show how much of it is left (or how far over), as a marker on each category bar and a line above the chart. Targets scale with the period on screen — a quarter shows three times the monthly target, a year twelve — and the summary says how much of your spending the budgeted categories actually cover
 - Insights page rebuilt around one period control: pick Month, Quarter or Year and step through periods — the chart, the breakdown and the transaction list all follow it, instead of each carrying its own month and uncategorized switch
 - Spending can now be viewed per quarter and per year, so "what do subscriptions cost me in a year" is one number instead of twelve rows added up
 - New summary row: spent, income and net for the selected period, each compared against the previous period and against the average of the previous ones (an average that ignores periods with no data, so a category added last month is not "up 500%")
