@@ -50,6 +50,12 @@
 - Rules with a match text that already exists are rejected instead of silently added (a duplicate rule could never match, since the first rule wins)
 - Transfer rules no longer offer a spread — a transfer is excluded from spending, so there is nothing to amortize
 - Removed the "Detect transfers" button: transfer detection already runs automatically after every import
+- Insights page rebuilt around one period control: pick Month, Quarter or Year and step through periods — the chart, the breakdown and the transaction list all follow it, instead of each carrying its own month and uncategorized switch
+- Spending can now be viewed per quarter and per year, so "what do subscriptions cost me in a year" is one number instead of twelve rows added up
+- New summary row: spent, income and net for the selected period, each compared against the previous period and against the average of the previous ones (an average that ignores periods with no data, so a category added last month is not "up 500%")
+- Breakdown is now category chips over a ranked bar list: several chips can be picked at once and their combined total is shown ("Groceries + Dining Out = EUR 648, 12.6% of this month"), which the old single-select dropdown could not answer
+- Clicking a category name opens its own history: what it costs per period across the whole window, its average, and its highest period
+- Web transaction list follows the selected period and the picked chips, with one button to widen it to all periods; the separate month and category dropdowns are gone
 - Changing a transaction's category or spread by hand now asks whether the rule that classified it should change too (web and app) — otherwise the same rule keeps sending every future booking of that merchant to the old category
 - Web transaction list can be sorted by clicking a column header (date, transaction text, category, amount), ascending or descending; sorting runs on the server so it covers every page, not just the loaded ones
 - Transaction rows whose bank feed leaves the counterparty empty (ZKB card purchases) no longer render entirely in muted grey — whatever names the transaction is now the primary line
