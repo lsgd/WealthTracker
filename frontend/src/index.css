@@ -2835,11 +2835,18 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
-.spending-switch {
+/* The second selector outranks `.form-group label`, which would otherwise win
+   on specificity and force display:block — leaving the switch sitting on the
+   text baseline instead of centred against its own label, and greying the
+   label as if it were a field caption rather than the control's name. */
+.spending-switch,
+.form-group label.spending-switch {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 0;
   font-size: 0.85rem;
+  font-weight: normal;
   color: var(--color-text);
   white-space: nowrap;
   cursor: pointer;
