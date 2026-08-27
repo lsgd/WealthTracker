@@ -46,7 +46,8 @@ def _cleanup_expired_sessions():
                     pass
 
 
-from django.db.models import F
+from django.db.models import ExpressionWrapper, F, IntegerField
+from django.db.models.functions import ExtractMonth, ExtractYear
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
@@ -1256,8 +1257,9 @@ class TransactionListView(generics.ListAPIView):
     ``uncategorized`` (truthy, only transactions still needing a decision),
     ``category`` (comma-separated ids, or ``transfer`` for transfers only),
     ``period`` (``YYYY``, ``YYYY-Qn`` or ``YYYY-MM``; ``month`` is the older
-    name for the same thing), ``ordering`` (a key from ``ORDER_FIELDS``, ``-``
-    prefixed for descending).
+    name for the same thing), ``mode`` (``normalized`` to match the spending
+    report's amortized view — see :meth:`_period`), ``ordering`` (a key from
+    ``ORDER_FIELDS``, ``-`` prefixed for descending).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
@@ -1321,22 +1323,58 @@ class TransactionListView(generics.ListAPIView):
             if ids:
                 # Own categories only — ids from another user must not leak rows.
                 qs = qs.filter(category_id__in=ids, category__user=self.request.user)
-        # 'month' is the older name and still means the same thing.
-        period = (self.request.query_params.get('period')
-                  or self.request.query_params.get('month'))
-        if period:
-            from rest_framework.exceptions import ValidationError
-
-            from .spending import period_bounds
-            bounds = period_bounds(period)
-            if bounds is None:
-                raise ValidationError({'period': (
-                    'Expected YYYY, YYYY-Qn or YYYY-MM, e.g. 2026-08')})
+        bounds, normalized = self._period()
+        if bounds and normalized:
+            # Normalized mode spreads a bill across the months it covers, so a
+            # transaction booked BEFORE this period can still land in it — the
+            # reason a year's insurance total used to exceed everything the
+            # list showed. Include a row when its spread window overlaps the
+            # period: month(booking) + spread_months > first month of period.
+            # Done in SQL because the list is paginated; filtering the page in
+            # Python would drop rows off the end of every page.
+            first_month = bounds[0].year * 12 + bounds[0].month - 1
+            qs = qs.annotate(
+                spread_end=ExpressionWrapper(
+                    ExtractYear('booking_date') * 12
+                    + ExtractMonth('booking_date') - 1 + F('spread_months'),
+                    output_field=IntegerField(),
+                ),
+            ).filter(booking_date__lt=bounds[1], spread_end__gt=first_month)
+        elif bounds:
             qs = qs.filter(booking_date__gte=bounds[0], booking_date__lt=bounds[1])
         ordering = self._ordering()
         if ordering:
             qs = qs.order_by(*ordering)
         return qs
+
+    def _period(self):
+        """(bounds, normalized) for the requested period, or (None, False).
+
+        ``mode`` mirrors the spending report: only the normalized view spreads
+        a transaction beyond its booking month, so only there does the list
+        reach outside the period.
+        """
+        from rest_framework.exceptions import ValidationError
+
+        from .spending import period_bounds
+
+        # 'month' is the older name and still means the same thing.
+        period = (self.request.query_params.get('period')
+                  or self.request.query_params.get('month'))
+        if not period:
+            return None, False
+        bounds = period_bounds(period)
+        if bounds is None:
+            raise ValidationError({'period': (
+                'Expected YYYY, YYYY-Qn or YYYY-MM, e.g. 2026-08')})
+        return bounds, self.request.query_params.get('mode') == 'normalized'
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        bounds, normalized = self._period()
+        # Only then is a row's full amount not what the chart counted.
+        context['period_bounds'] = bounds if normalized else None
+        return context
 
 
 class AccountTransactionListCreateView(generics.ListCreateAPIView):

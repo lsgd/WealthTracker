@@ -1265,6 +1265,90 @@ class TransactionEndpointTests(APITestCase):
         self.assertEqual(self.client.get(url, {'period': '2025'}).data['count'], 1)
         self.assertEqual(self.client.get(url, {'period': '2024'}).data['count'], 0)
 
+    def _yearly_bill(self, booking_date, amount='-1200', spread=12, key='ref:S1'):
+        from portfolio.models import Transaction
+        return Transaction.objects.create(
+            account=self.account, booking_date=booking_date,
+            amount=Decimal(amount), currency='CHF', counterparty='AXA',
+            source='camt053', dedup_key=key, spread_months=spread,
+        )
+
+    def test_normalized_period_lists_bills_spread_into_it(self):
+        """A 2025 bill spread over a year is part of 2026's spending."""
+        self._yearly_bill(date(2025, 7, 1))
+        url = reverse('transaction_list_all')
+
+        # Actual mode counts it entirely in its booking year, so 2026 is
+        # unchanged — only self.imported (2026-08-01).
+        self.assertEqual(
+            [t['counterparty'] for t in
+             self.client.get(url, {'period': '2026'}).data['results']],
+            ['Migros'])
+
+        # Normalized mode spreads July 2025 + 12 months over 2026-01..2026-06.
+        results = self.client.get(
+            url, {'period': '2026', 'mode': 'normalized'}).data['results']
+        self.assertEqual(sorted(t['counterparty'] for t in results),
+                         ['AXA', 'Migros'])
+        axa = next(t for t in results if t['counterparty'] == 'AXA')
+        self.assertEqual(axa['period_slice'],
+                         {'months': 6, 'of': 12, 'amount': '-600.00'})
+        # An unspread row in its own period has nothing to qualify.
+        migros = next(t for t in results if t['counterparty'] == 'Migros')
+        self.assertIsNone(migros['period_slice'])
+
+    def test_spread_slice_is_reported_per_granularity(self):
+        self._yearly_bill(date(2025, 7, 1))
+        url = reverse('transaction_list_all')
+
+        def slice_for(period):
+            rows = self.client.get(
+                url, {'period': period, 'mode': 'normalized'}).data['results']
+            row = next((t for t in rows if t['counterparty'] == 'AXA'), None)
+            return row and row['period_slice']
+
+        self.assertEqual(slice_for('2025'), {'months': 6, 'of': 12, 'amount': '-600.00'})
+        self.assertEqual(slice_for('2026-Q1'), {'months': 3, 'of': 12, 'amount': '-300.00'})
+        self.assertEqual(slice_for('2026-03'), {'months': 1, 'of': 12, 'amount': '-100.00'})
+        # July 2026 is past the end of the spread.
+        self.assertIsNone(slice_for('2026-07'))
+
+    def test_spread_row_only_reaches_forward_never_back(self):
+        """A bill booked after the period never belongs to it."""
+        self._yearly_bill(date(2026, 7, 1))
+        rows = self.client.get(
+            reverse('transaction_list_all'),
+            {'period': '2025', 'mode': 'normalized'}).data['results']
+        self.assertEqual([t['counterparty'] for t in rows], [])
+
+    def test_normalized_without_a_period_changes_nothing(self):
+        self._yearly_bill(date(2025, 7, 1))
+        rows = self.client.get(
+            reverse('transaction_list_all'), {'mode': 'normalized'}).data['results']
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(t['period_slice'] is None for t in rows))
+
+    def test_spread_list_and_report_agree_on_the_period_total(self):
+        """The list is only useful here if it adds up to the chart."""
+        from portfolio.models import TransactionCategory
+        from portfolio.spending import monthly_spending
+        category = TransactionCategory.objects.create(user=self.user, name='Insurance')
+        for i, booking in enumerate(
+                [date(2025, 7, 1), date(2025, 11, 1), date(2026, 2, 1)]):
+            bill = self._yearly_bill(booking, key=f'ref:S{i}')
+            bill.category = category
+            bill.save()
+        report = monthly_spending(self.user, months=3, mode='normalized',
+                                  granularity='year')
+        charted = next(m['by_category']['Insurance'] for m in report['months']
+                       if m['month'] == '2026')
+        rows = self.client.get(
+            reverse('transaction_list_all'),
+            {'period': '2026', 'mode': 'normalized',
+             'category': str(category.id)}).data['results']
+        listed = sum(Decimal(t['period_slice']['amount']) for t in rows)
+        self.assertEqual(charted, float(-listed))
+
     def test_several_categories_at_once(self):
         """The breakdown chips ask for "groceries plus restaurants"."""
         from portfolio.models import Transaction, TransactionCategory

@@ -83,6 +83,7 @@
 - Web: "+ Rule" on a transaction opens a dialog instead of jumping to the Configuration tab
 - Web: creating or editing a rule now shows how many existing transactions it would classify, with examples, and says when an earlier rule would claim them first
 - Web: dropdowns and budget fields no longer render as white boxes on the dark background
+- Web: in the normalized view the transaction list now also shows bills booked earlier whose spread reaches into the selected period, each stating the share counted (e.g. "6/12"), so the list adds up to the category total in the breakdown
 - Bug fixes and improvements.
 
 ## 1.3.8

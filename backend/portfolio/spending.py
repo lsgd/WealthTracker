@@ -83,6 +83,29 @@ def month_bounds(label: str):
     return period_bounds(label)
 
 
+def spread_slice_months(booking_date, spread_months, bounds) -> int:
+    """How many months of a spread transaction land inside ``bounds``.
+
+    A transaction booked in month M with spread N occupies months M..M+N-1 in
+    the normalized view, so a bill paid in July 2025 and spread over a year
+    puts six of its twelve months into 2026. This is the same arithmetic
+    :func:`monthly_spending` uses to fill its buckets — sharing it is what
+    lets the transaction list add up to the figure in the chart.
+    """
+    if booking_date is None:
+        return 0
+    period_start = _month_index(bounds[0])
+    # ``monthly_spending`` only fills buckets up to the current month, so the
+    # unelapsed part of a running period is not in the chart either. Counting
+    # it here would make the list overshoot the figure it has to explain: a
+    # yearly bill paid last February puts eleven months into this calendar
+    # year but only the months up to today into the year's total so far.
+    period_end = min(_month_index(bounds[1]), _month_index(date.today()) + 1)
+    first = _month_index(booking_date)
+    last = first + max(spread_months or 1, 1)  # exclusive
+    return max(0, min(last, period_end) - max(first, period_start))
+
+
 def monthly_spending(user, months: int = 12, mode: str = 'normalized',
                      granularity: str = 'month') -> dict:
     """Spending per period, newest last.

@@ -127,6 +127,7 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
 
 class TransactionSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
+    period_slice = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
@@ -134,12 +135,35 @@ class TransactionSerializer(serializers.ModelSerializer):
             'id', 'account', 'booking_date', 'value_date', 'amount', 'currency',
             'counterparty', 'counterparty_account', 'description', 'source',
             'external_id', 'category', 'category_name', 'spread_months',
-            'is_transfer', 'created_at'
+            'is_transfer', 'period_slice', 'created_at'
         ]
         read_only_fields = [
             'id', 'account', 'source', 'external_id', 'category',
             'category_name', 'spread_months', 'is_transfer', 'created_at'
         ]
+
+    def get_period_slice(self, tx):
+        """How much of a spread transaction belongs to the listed period.
+
+        Only set when the list is filtered to a period AND showing the
+        normalized view — the two conditions under which a row's full amount
+        is not what the chart counted for that period. Null otherwise, so an
+        unspread row carries no noise.
+        """
+        bounds = self.context.get('period_bounds')
+        if bounds is None or tx.spread_months <= 1:
+            return None
+        from .spending import spread_slice_months
+
+        months = spread_slice_months(tx.booking_date, tx.spread_months, bounds)
+        if not months:
+            return None
+        share = tx.amount * months / tx.spread_months
+        return {
+            'months': months,
+            'of': tx.spread_months,
+            'amount': str(round(share, 2)),
+        }
 
 
 class TransactionClassificationSerializer(serializers.ModelSerializer):

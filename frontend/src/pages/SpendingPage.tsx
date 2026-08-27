@@ -233,14 +233,16 @@ export default function SpendingPage() {
     try {
       const data = await getTransactions(
         page, id ?? undefined, category === '' ? undefined : category,
-        period || undefined, `${txSortDesc ? '-' : ''}${txSort}`);
+        period || undefined, `${txSortDesc ? '-' : ''}${txSort}`, mode);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transactions');
     }
-  }, [txCategory, txPeriod, txSort, txSortDesc]);
+    // `mode`: the normalized view puts a bill in every period it covers, so
+    // the list has to follow it or it cannot add up to the chart above.
+  }, [txCategory, txPeriod, txSort, txSortDesc, mode]);
 
   useEffect(() => {
     loadReport();
@@ -1336,6 +1338,20 @@ export default function SpendingPage() {
                       </td>
                       <td className={`spending-amount-col ${Number(tx.amount) < 0 ? 'spending-neg' : 'spending-pos'}`}>
                         {formatAmount(Number(tx.amount), tx.currency)}
+                        {/* A spread bill only counts partly towards this
+                            period — say how much, so the list adds up to the
+                            figure in the breakdown above it. */}
+                        {tx.period_slice && (
+                          <div className="spending-tx-slice" title={
+                            `${tx.period_slice.months} of ${tx.period_slice.of} months `
+                            + `of this bill are counted in `
+                            + `${txPeriod ? formatPeriod(txPeriod) : 'this period'}`}>
+                            {formatAmount(Number(tx.period_slice.amount), tx.currency)}
+                            <span className="spending-muted">
+                              {' '}· {tx.period_slice.months}/{tx.period_slice.of}
+                            </span>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     );

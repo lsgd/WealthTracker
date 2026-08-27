@@ -903,6 +903,10 @@ export interface Transaction {
   category_name: string | null;
   spread_months: number;
   is_transfer: boolean;
+  // How much of a spread transaction the listed period actually counts. Only
+  // set when the list is filtered to a period and showing the normalized
+  // view — the case where the row's own amount is not what the chart used.
+  period_slice: { months: number; of: number; amount: string } | null;
   created_at: string;
   // Only on the response to a classification change: the rule that classifies
   // this transaction and now disagrees with what was just set.
@@ -1094,6 +1098,9 @@ export async function getTransactions(
   // Sort key, '-' prefixed for descending. Server-side: the list is paginated,
   // so sorting the loaded rows would only sort the page.
   ordering?: string,
+  // Matches the spending report: in 'normalized' the period also holds bills
+  // booked earlier whose spread reaches into it, each reporting its share.
+  mode?: 'normalized' | 'actual',
 ): Promise<{ count: number; results: Transaction[] }> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
@@ -1102,6 +1109,7 @@ export async function getTransactions(
   else if (category) params.set('category', String(category));
   if (period) params.set('period', period);
   if (ordering) params.set('ordering', ordering);
+  if (mode === 'normalized') params.set('mode', mode);
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');

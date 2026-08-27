@@ -2599,6 +2599,14 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .spending-neg { color: #f87171; }
 .spending-pos { color: #34d399; }
 
+/* The share of a spread bill that this period counts, under the full amount.
+   Same colour as the amount so the two read as one figure and its part. */
+.spending-tx-slice {
+  font-size: 0.78rem;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
 .spending-transfer-row td { opacity: 0.55; }
 
 .spending-muted { color: var(--text-secondary, #8b93a7); }
