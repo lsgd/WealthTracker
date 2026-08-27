@@ -17,6 +17,7 @@ Dedup strategy (per account):
 import hashlib
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
@@ -100,8 +101,43 @@ def _tokens(*parts) -> set:
     return {t for t in re.split(r'[^a-z0-9äöüàéèç]+', text) if len(t) >= 3}
 
 
+# A bank writes most of a booking text itself. Every ZKB card purchase reads
+# "Purchase ZKB Visa Debit card no. xxxx 7890, <merchant>", so two UNRELATED
+# merchants on the same card already share six words — 0.5 similarity from
+# template alone, above the threshold, with the merchant name outvoted. Tokens
+# that recur across this account's bookings are therefore dropped before
+# comparing: identity lives in what the bank did not write.
+BOILERPLATE_SHARE = 0.2
+# Below this many texts the frequency is noise (three bookings at a bakery
+# would make "bakery" look like template), so nothing is dropped.
+BOILERPLATE_MIN_TEXTS = 8
+
+
+def boilerplate_tokens(texts) -> frozenset:
+    """Tokens common enough in these booking texts to be the bank's template."""
+    texts = list(texts)
+    if len(texts) < BOILERPLATE_MIN_TEXTS:
+        return frozenset()
+    counts = Counter()
+    for text in texts:
+        counts.update(_tokens(text))
+    cutoff = max(2, int(len(texts) * BOILERPLATE_SHARE))
+    return frozenset(t for t, n in counts.items() if n >= cutoff)
+
+
+def _identifying(a: set, b: set, boilerplate) -> tuple:
+    """Both token sets reduced to what identifies the payment.
+
+    Falls back to the full sets when the reduction empties one side — a
+    booking whose text is *only* template still has to be comparable.
+    """
+    a_id, b_id = a - boilerplate, b - boilerplate
+    return (a_id, b_id) if a_id and b_id else (a, b)
+
+
 def looks_like_same_entry(a_counterparty, a_description,
-                          b_counterparty, b_description) -> bool:
+                          b_counterparty, b_description,
+                          boilerplate=frozenset()) -> bool:
     """Do two booking texts describe the same payment in two feeds' wording?"""
     a_text = f'{a_counterparty or ""} {a_description or ""}'
     b_text = f'{b_counterparty or ""} {b_description or ""}'
@@ -116,12 +152,14 @@ def looks_like_same_entry(a_counterparty, a_description,
         return True
     if not a or not b:
         return False
+    a, b = _identifying(a, b, boilerplate)
     return len(a & b) / len(a | b) >= SIMILARITY_THRESHOLD
 
 
-def _similarity(a: set, b: set) -> float:
+def _similarity(a: set, b: set, boilerplate=frozenset()) -> float:
     if not a or not b:
         return 0.0
+    a, b = _identifying(a, b, boilerplate)
     return len(a & b) / len(a | b)
 
 
@@ -168,6 +206,16 @@ def cross_source_duplicate_indices(account, infos, source) -> set:
                      'counterparty', 'description')
     )
 
+    # The bank's own template words, so the merchant decides the match rather
+    # than the boilerplate. Learned from the whole account, not the comparison
+    # window: a handful of bookings around one date cannot tell a template
+    # apart from a coincidence.
+    boilerplate = boilerplate_tokens(
+        [f'{c} {d}' for c, d in Transaction.objects.filter(account=account)
+         .values_list('counterparty', 'description')]
+        + [f'{i.counterparty} {i.description}' for i in infos],
+    )
+
     duplicates = set()
     for booking_date, amount, currency, counterparty, description in existing:
         candidates = incoming.get((amount, currency))
@@ -181,11 +229,12 @@ def cross_source_duplicate_indices(account, infos, source) -> set:
                 continue
             if not looks_like_same_entry(
                     counterparty, description,
-                    info.counterparty, info.description):
+                    info.counterparty, info.description, boilerplate):
                 continue  # same amount, but a different payment
             score = _similarity(
                 _tokens(counterparty or '', description or ''),
-                _tokens(info.counterparty, info.description))
+                _tokens(info.counterparty, info.description),
+                boilerplate)
             # Closest date wins, then the most similar wording — so two
             # same-amount payments on neighbouring days pair with their own
             # counterpart rather than swapping.

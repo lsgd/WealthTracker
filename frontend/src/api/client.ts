@@ -1027,6 +1027,34 @@ export async function updateCategoryRule(ruleId: number, fields: {
 }
 
 // Rules are evaluated first-match-wins, so their order matters.
+export interface RulePreview {
+  /** Rows the rule wins and would classify. */
+  will_classify: number;
+  /** Rows it matches but an earlier rule claims first. */
+  shadowed: number;
+  /** Rows it matches that already have a category or a manual decision. */
+  already_classified: number;
+  matched: number;
+  examples: { booking_date: string; amount: string; currency: string; text: string }[];
+}
+
+export async function previewCategoryRule(fields: {
+  match_text: string;
+  is_regex?: boolean;
+  is_transfer?: boolean;
+  /** Set when editing, so the simulation keeps the rule's own position. */
+  rule_id?: number;
+}, signal?: AbortSignal): Promise<RulePreview> {
+  const res = await fetchWithAuth('/api/spending/rules/preview/', {
+    method: 'POST',
+    body: JSON.stringify(fields),
+    signal,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to preview rule');
+  return data;
+}
+
 export async function reorderCategoryRules(ids: number[]): Promise<CategoryRule[]> {
   const res = await fetchWithAuth('/api/spending/rules/reorder/', {
     method: 'POST',

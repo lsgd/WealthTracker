@@ -1503,6 +1503,41 @@ class CategoryRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
         return CategoryRule.objects.filter(user=self.request.user)
 
 
+class CategoryRulePreviewView(APIView):
+    """Count what a rule would do before it is saved.
+
+    Body: ``match_text``, ``is_regex``, ``is_transfer`` and, when editing an
+    existing rule, its ``rule_id`` so the simulation keeps its position instead
+    of appending. Read-only — nothing is written.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        import re
+
+        from .classification import preview_rule
+
+        match_text = (request.data.get('match_text') or '').strip()
+        if not match_text:
+            return Response({'error': 'Provide "match_text"'}, status=400)
+        is_regex = bool(request.data.get('is_regex'))
+        if is_regex:
+            try:
+                re.compile(match_text)
+            except re.error as e:
+                return Response({'error': f'Invalid regular expression: {e}'},
+                                status=400)
+        rule_id = request.data.get('rule_id')
+        if rule_id is not None and not CategoryRule.objects.filter(
+                pk=rule_id, user=request.user).exists():
+            return Response({'error': 'Rule not found'}, status=404)
+
+        return Response(preview_rule(
+            request.user, match_text, is_regex,
+            bool(request.data.get('is_transfer')), rule_id,
+        ))
+
+
 class CategoryRuleReorderView(APIView):
     """Set the evaluation order of the user's rules.
 

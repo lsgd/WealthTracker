@@ -11,7 +11,12 @@ Candidates share an account, an amount and a currency. A row is only removed
 when a KEPT row from ANOTHER source reads like the same payment (similar
 booking text, no conflicting contract/card numbers) and lies within a few
 days. Everything else is left alone: two Riester contracts debiting 10 EUR on
-the same day are two payments, not a duplicate pair.
+the same day are two payments, not a duplicate pair. Similarity ignores the
+bank's own template wording, so it is the merchant that decides — two
+different 0.50 charges on one card share six words of boilerplate.
+
+Every reported deletion is printed with the row it duplicates, so a dry run
+can be reviewed line by line before anything is removed.
 
 Dry run by default; pass --apply to delete. Hand-entered rows (source
 'manual') are never deleted and never count as a feed. Among imported rows,
@@ -25,6 +30,7 @@ from django.core.management.base import BaseCommand
 from portfolio.models import Transaction
 from portfolio.transaction_importer import (
     DUPLICATE_WINDOW_DAYS,
+    boilerplate_tokens,
     looks_like_same_entry,
 )
 
@@ -42,8 +48,8 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _split(rows):
-        """(survivors, doomed) for one (account, amount, currency) group.
+    def _split(rows, boilerplate):
+        """(survivors, pairs) for one (account, amount, currency) group.
 
         Rows arrive in preference order. A row is dropped only when a kept row
         from another source is the same payment in that feed's wording; of
@@ -51,9 +57,12 @@ class Command(BaseCommand):
         payments on neighbouring days each pair with their own counterpart. A
         kept row absorbs at most one row per other source, so two genuinely
         identical payments reported twice by both feeds keep both.
+
+        ``pairs`` is [(doomed, the row it duplicates)] — a deletion is only
+        reviewable next to the row that justifies it.
         """
         window = timedelta(days=DUPLICATE_WINDOW_DAYS)
-        survivors, doomed = [], []
+        survivors, pairs = [], []
         claims = {}  # id(survivor) -> sources already matched to it
         for row in rows:
             twins = [
@@ -63,15 +72,15 @@ class Command(BaseCommand):
                 and abs(s.booking_date - row.booking_date) <= window
                 and looks_like_same_entry(
                     s.counterparty, s.description,
-                    row.counterparty, row.description)
+                    row.counterparty, row.description, boilerplate)
             ]
             if not twins:
                 survivors.append(row)
                 continue
             twin = min(twins, key=lambda s: abs(s.booking_date - row.booking_date))
             claims.setdefault(id(twin), set()).add(row.source)
-            doomed.append(row)
-        return survivors, doomed
+            pairs.append((row, twin))
+        return survivors, pairs
 
     def handle(self, *args, **options):
         transactions = Transaction.objects.select_related('account')
@@ -79,14 +88,24 @@ class Command(BaseCommand):
             transactions = transactions.filter(account__user__username=options['user'])
 
         groups = {}
+        texts_by_account = {}
         for row in transactions.order_by('booking_date', 'id'):
             if row.source == 'manual':
                 continue  # the user's own record; never a candidate
             groups.setdefault(
                 (row.account_id, row.amount, row.currency), []).append(row)
+            texts_by_account.setdefault(row.account_id, []).append(
+                f'{row.counterparty} {row.description}')
+
+        # Per account, because the template is the bank's: a ZKB card purchase
+        # and a DKB transfer share no wording worth discounting.
+        boilerplate = {
+            account_id: boilerplate_tokens(texts)
+            for account_id, texts in texts_by_account.items()
+        }
 
         removed = kept = 0
-        for rows in groups.values():
+        for (account_id, _amount, _currency), rows in groups.items():
             if len({row.source for row in rows}) < 2:
                 kept += len(rows)
                 continue  # one feed's own repeats are real payments
@@ -97,13 +116,19 @@ class Command(BaseCommand):
                 not t.dedup_key.startswith('ref:'),
                 t.id,
             ))
-            survivors, doomed = self._split(rows)
+            survivors, pairs = self._split(rows, boilerplate[account_id])
             kept += len(survivors)
-            for row in doomed:
+            for row, twin in pairs:
+                verb = 'DELETE' if options['apply'] else 'would delete'
                 self.stdout.write(
-                    f'{"DELETE" if options["apply"] else "would delete"}: '
-                    f'{row.account.name} {row.booking_date} {row.amount} '
-                    f'{row.currency} [{row.source}] {row.description[:60]!r}'
+                    f'{verb}: {row.account.name} {row.booking_date} {row.amount} '
+                    f'{row.currency} [{row.source}] {row.description[:70]!r}'
+                )
+                # The row it duplicates, so the judgement can be checked
+                # before anything is deleted.
+                self.stdout.write(
+                    f'   duplicate of: {twin.booking_date} [{twin.source}] '
+                    f'{twin.description[:70]!r}'
                 )
                 if options['apply']:
                     row.delete()

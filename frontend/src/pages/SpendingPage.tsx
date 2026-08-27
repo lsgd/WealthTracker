@@ -18,6 +18,7 @@ import ClampedText from '../components/ClampedText';
 import CategoryBreakdown from '../components/spending/CategoryBreakdown';
 import CategoryDetail from '../components/spending/CategoryDetail';
 import PeriodBar from '../components/spending/PeriodBar';
+import RuleImpact from '../components/spending/RuleImpact';
 import SummaryTiles from '../components/spending/SummaryTiles';
 import {
   AVERAGE_WINDOW,
@@ -158,10 +159,12 @@ export default function SpendingPage() {
   const [ruleFormAnchor, setRuleFormAnchor] = useState<string | null>(null);
   // "Regex enabled but the text has no regex syntax" confirmation dialog.
   const [regexConfirmOpen, setRegexConfirmOpen] = useState(false);
-  // Rule being edited (chip click) — null when the dialog is closed.
-  const [editRule, setEditRule] = useState<CategoryRule | null>(null);
+  // The rule dialog: an existing rule (chip click), or 'new' when crafting one
+  // from a transaction. Null when closed.
+  const [editRule, setEditRule] = useState<CategoryRule | 'new' | null>(null);
   const [editText, setEditText] = useState('');
-  const [editTarget, setEditTarget] = useState<number | '__transfer__'>('__transfer__');
+  const [editTarget, setEditTarget] =
+    useState<number | '__transfer__' | ''>('__transfer__');
   const [editSpread, setEditSpread] = useState(1);
   const [editIsRegex, setEditIsRegex] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -750,17 +753,18 @@ export default function SpendingPage() {
     setTimeout(() => ruleInputRef.current?.focus(), 0);
   };
 
-  /// Prefill the rule form from one transaction and jump to it.
+  /// "+ Rule" on a transaction row: open the rule dialog prefilled from it.
+  /// Crafting a rule is a decision about that one row, so it stays where the
+  /// row is — sending the user to another tab lost both the context and the
+  /// scroll position they were working through.
   const craftRuleFrom = (tx: Transaction) => {
     const base = stripLeadingIban(tx.counterparty) || tx.description;
-    setRuleText(base.toLowerCase().slice(0, 128).trim());
-    setRuleCategory(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
-    setRuleIsRegex(false);
-    setRuleRegexTouched(false);
-    setRuleFormAnchor(null);
-    setTab('config');
-    setTimeout(() => ruleFormRef.current?.scrollIntoView(
-      { behavior: 'smooth', block: 'center' }), 50);
+    setEditText(base.toLowerCase().slice(0, 128).trim());
+    setEditTarget(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
+    setEditSpread(tx.spread_months > 1 ? tx.spread_months : 1);
+    setEditIsRegex(false);
+    setError('');
+    setEditRule('new');
   };
 
   // Drag-and-drop rule ordering: rules are first-match-wins, so a more specific
@@ -793,7 +797,7 @@ export default function SpendingPage() {
 
   const handleSaveRuleEdit = async () => {
     const rule = editRule;
-    if (!rule || !editText.trim()) return;
+    if (!rule || !editText.trim() || editTarget === '') return;
     if (editIsRegex) {
       try {
         new RegExp(editText.trim());
@@ -803,23 +807,35 @@ export default function SpendingPage() {
       }
     }
     const isTransfer = editTarget === '__transfer__';
+    const match_text = editText.trim();
+    // Transfers are excluded from spending — nothing to amortize.
+    const target = isTransfer
+      ? { is_transfer: true, spread_months: 1 }
+      : { category: editTarget as number, spread_months: editSpread };
     setEditSaving(true);
     try {
-      const updated = await updateCategoryRule(rule.id, {
-        match_text: editText.trim(),
-        is_regex: editIsRegex,
-        is_transfer: isTransfer,
-        category: isTransfer ? null : editTarget,
-        // Transfers are excluded from spending — nothing to amortize.
-        spread_months: isTransfer ? 1 : editSpread,
-      });
-      setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)));
+      if (rule === 'new') {
+        const created = await createCategoryRule({
+          match_text, is_regex: editIsRegex, ...target,
+        });
+        setRules((prev) => [...prev, created]);
+      } else {
+        const updated = await updateCategoryRule(rule.id, {
+          match_text,
+          is_regex: editIsRegex,
+          is_transfer: isTransfer,
+          category: isTransfer ? null : (editTarget as number),
+          spread_months: target.spread_months,
+        });
+        setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)));
+      }
       setEditRule(null);
       // Rules re-run server-side: the report and labels may have changed.
       loadReport();
       loadTransactions(accountId, 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update rule');
+      setError(e instanceof Error ? e.message
+        : `Failed to ${rule === 'new' ? 'create' : 'update'} rule`);
     } finally {
       setEditSaving(false);
     }
@@ -1010,6 +1026,11 @@ export default function SpendingPage() {
       >
         <Plus size={14} /> Rule
       </button>
+      <RuleImpact
+        matchText={ruleText}
+        isRegex={ruleIsRegex}
+        isTransfer={ruleCategory === '__transfer__'}
+      />
     </div>
   );
   // The anchored group can disappear (filter, last rule deleted, Order view)
@@ -1355,20 +1376,26 @@ export default function SpendingPage() {
             <p className="table-empty">No categories yet.</p>
           ) : (<>
             {categories.map((category) => (
-              <div key={category.id} className="budget-row">
+              <div
+                key={category.id}
+                className={`budget-row${budgetValue(category) ? ' has-budget' : ''}`}
+              >
                 <span className="budget-row-name">{category.name}</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="10"
-                  aria-label={`Monthly budget for ${category.name}`}
-                  placeholder="none"
-                  value={budgetValue(category)}
-                  onChange={(e) => setBudgetDrafts(
-                    (prev) => ({ ...prev, [category.id]: e.target.value }))}
-                  onBlur={() => saveBudget(category)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                />
+                <span className="budget-input">
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    aria-label={`Monthly budget for ${category.name}`}
+                    placeholder="none"
+                    value={budgetValue(category)}
+                    onChange={(e) => setBudgetDrafts(
+                      (prev) => ({ ...prev, [category.id]: e.target.value }))}
+                    onBlur={() => saveBudget(category)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                  <span className="budget-input-currency">{currency}</span>
+                </span>
               </div>
             ))}
             <div className="budget-total">
@@ -1654,7 +1681,7 @@ export default function SpendingPage() {
           <div className="modal-overlay" onClick={() => setEditRule(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <h3>Edit rule</h3>
+                <h3>{editRule === 'new' ? 'New rule' : 'Edit rule'}</h3>
                 <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
                   <X size={18} />
                 </button>
@@ -1666,6 +1693,12 @@ export default function SpendingPage() {
                   autoFocus
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
+                />
+                <RuleImpact
+                  matchText={editText}
+                  isRegex={editIsRegex}
+                  isTransfer={editTarget === '__transfer__'}
+                  ruleId={editRule === 'new' ? undefined : editRule.id}
                 />
               </div>
               <div className="form-group">
@@ -1685,9 +1718,13 @@ export default function SpendingPage() {
                   value={editTarget}
                   onChange={(e) => {
                     const v = e.target.value;
-                    setEditTarget(v === '__transfer__' ? v : Number(v));
+                    setEditTarget(
+                      v === '__transfer__' || v === '' ? v : Number(v));
                   }}
                 >
+                  {/* A row with no category yet opens with nothing picked —
+                      better than silently defaulting to Transfer. */}
+                  {editTarget === '' && <option value="">Category…</option>}
                   <option value="__transfer__">Transfer (excluded)</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
@@ -1720,9 +1757,11 @@ export default function SpendingPage() {
                 <button
                   className="btn btn-primary"
                   onClick={handleSaveRuleEdit}
-                  disabled={editSaving || !editText.trim()}
+                  disabled={editSaving || !editText.trim() || editTarget === ''}
                 >
-                  {editSaving ? 'Saving…' : 'Save'}
+                  {editSaving
+                    ? 'Saving…'
+                    : (editRule === 'new' ? 'Create rule' : 'Save')}
                 </button>
               </div>
             </div>

@@ -12,6 +12,10 @@
   --color-stale: #c98a3c;
   --radius: 10px;
   --header-height: 56px;
+  /* Native widgets (select popups, date pickers, scrollbars, autofill) render
+     light unless the page declares its scheme — the cause of white boxes in
+     the middle of dark cards. */
+  color-scheme: dark;
 }
 
 *,
@@ -511,6 +515,18 @@ a:hover {
   resize: vertical;
   min-height: 60px;
   line-height: 1.4;
+}
+
+/* Same chevron as the inline controls, so a select looks like one control
+   throughout the app rather than two depending on where it sits. */
+.form-group select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b8fa3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5 12 6.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 15px;
+  padding-right: 32px;
+  cursor: pointer;
 }
 
 .form-group input:focus,
@@ -2329,6 +2345,37 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   min-width: 200px;
 }
 
+/* What the rule would do, shown before it is saved. Its own line under the
+   form so a growing count never reflows the controls. */
+.rule-impact {
+  flex-basis: 100%;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.rule-impact.good { color: var(--color-success); }
+.rule-impact.bad { color: var(--color-danger); }
+.rule-impact.muted { color: var(--color-text-muted); }
+.rule-impact strong { font-weight: 600; }
+.rule-impact-notes { color: var(--color-text-muted); font-weight: 400; }
+
+.rule-impact-examples {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  color: var(--color-text-muted);
+}
+
+.rule-impact-examples li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inside the rule dialog the form-group already spaces its children. */
+.modal .rule-impact { margin-top: 6px; }
+
 /* Collapsible card headers (Import history, AI model details). */
 .card-toggle {
   cursor: pointer;
@@ -2486,24 +2533,61 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* One control surface for every inline field on the spending pages. Native
+   selects and number inputs paint themselves white otherwise, which reads as
+   a hole punched in the card. */
 .spending-rule-new input,
 .spending-rule-new select,
-.range-buttons select {
-  background: rgba(255, 255, 255, 0.04);
+.range-buttons select,
+.data-table select,
+.spending-month-select,
+.budget-row input {
+  appearance: none;
+  background-color: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border-radius: 8px;
   color: inherit;
-  padding: 6px 10px;
+  font: inherit;
   font-size: 0.85rem;
+  padding: 6px 10px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.data-table select {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: inherit;
-  padding: 4px 8px;
-  font-size: 0.85rem;
+.data-table select { padding: 4px 8px; }
+
+.spending-rule-new input:hover,
+.spending-rule-new select:hover,
+.range-buttons select:hover,
+.data-table select:hover,
+.spending-month-select:hover,
+.budget-row input:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.spending-rule-new input:focus,
+.spending-rule-new select:focus,
+.range-buttons select:focus,
+.data-table select:focus,
+.spending-month-select:focus,
+.budget-row input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background-color: rgba(79, 140, 255, 0.08);
+}
+
+/* appearance:none removes the native arrow — draw one back, inline so no
+   network request can leave the control looking like a plain text field. */
+.spending-rule-new select,
+.range-buttons select,
+.data-table select,
+.spending-month-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b8fa3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5 12 6.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 28px;
+  cursor: pointer;
 }
 
 .spending-amount-col {
@@ -2631,6 +2715,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .spending-month-select {
   width: 110px;
   text-align: center;
+  /* Matches the arrow's gutter on the right so the label stays centred. */
+  padding-left: 28px;
 }
 
 .spending-month-title {
@@ -3088,16 +3174,64 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 0;
+  padding: 4px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .budget-row-name { flex: 1; }
 
-.budget-row input {
-  width: 120px;
-  text-align: right;
+/* The currency sits inside the field's border, so the row reads as one
+   control instead of a label floating next to a box. */
+.budget-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.04);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
+
+.budget-input:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.budget-input:focus-within {
+  border-color: var(--color-primary);
+  background-color: rgba(79, 140, 255, 0.08);
+}
+
+.budget-row input {
+  width: 96px;
+  text-align: right;
+  /* The wrapper carries the frame now. */
+  border: none;
+  background: none;
+  border-radius: 8px 0 0 8px;
+}
+
+.budget-row input:hover,
+.budget-row input:focus {
+  background: none;
+  border: none;
+}
+
+/* Spinners crowd a right-aligned amount and are useless for a budget. */
+.budget-row input::-webkit-outer-spin-button,
+.budget-row input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.budget-input-currency {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-row.has-budget .budget-input { border-color: rgba(79, 140, 255, 0.35); }
 
 .budget-total {
   display: flex;

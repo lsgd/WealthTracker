@@ -56,6 +56,83 @@ def first_matching_rule(user, tx):
     return None
 
 
+class _Draft:
+    """A rule that may not exist yet, shaped like one for :func:`rule_matcher`."""
+
+    id = None
+
+    def __init__(self, match_text, is_regex):
+        self.match_text = match_text
+        self.is_regex = is_regex
+
+
+def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None) -> dict:
+    """What saving this rule would do, without saving it.
+
+    Rules run first-match-wins over transactions that have no category and
+    were not classified by hand, so the honest answer is not "how many rows
+    contain this text" — it is how many rows this rule would actually claim.
+    The counts split that out:
+
+    - ``will_classify``: rows the rule wins and changes.
+    - ``shadowed``: rows it matches but an earlier rule claims first — the
+      reason a new rule can look like it did nothing.
+    - ``already_classified``: rows it matches that already have a category or
+      a manual decision, which rules never overwrite.
+
+    An edit (``rule_id``) is simulated in place, so the rule keeps its
+    position; a new rule is appended, which is where a saved one would land.
+    """
+    from .models import Transaction
+
+    draft = _Draft(match_text, is_regex)
+    existing = list(user.category_rules.order_by('position', 'id'))
+    # Everything ahead of the draft is what can shadow it: for an edit that is
+    # the rules before its own position, for a new rule all of them.
+    cut = len(existing) if rule_id is None else next(
+        (i for i, r in enumerate(existing) if r.id == rule_id), len(existing))
+    shadowers = [rule_matcher(r) for r in existing[:cut]]
+    matches = rule_matcher(draft)
+
+    counts = {'will_classify': 0, 'shadowed': 0, 'already_classified': 0}
+    examples = []
+    for tx in (
+        Transaction.objects
+        .filter(account__user=user)
+        .only('counterparty', 'description', 'booking_date', 'amount',
+              'currency', 'category', 'category_manual', 'is_transfer',
+              'transfer_manual')
+        .order_by('-booking_date', '-id')
+    ):
+        haystack = f'{tx.counterparty} {tx.description}'.lower()
+        if not matches(haystack):
+            continue
+        if tx.category_id is not None or tx.category_manual:
+            counts['already_classified'] += 1
+            continue
+        if any(m(haystack) for m in shadowers):
+            counts['shadowed'] += 1
+            continue
+        if is_transfer and (tx.transfer_manual or tx.is_transfer):
+            # A manual not-a-transfer decision wins, and one already marked
+            # would not change.
+            counts['already_classified'] += 1
+            continue
+        counts['will_classify'] += 1
+        if len(examples) < 3:
+            examples.append({
+                'booking_date': tx.booking_date,
+                'amount': tx.amount,
+                'currency': tx.currency,
+                'text': f'{tx.counterparty} {tx.description}'.strip(),
+            })
+
+    counts['matched'] = (counts['will_classify'] + counts['shadowed']
+                         + counts['already_classified'])
+    counts['examples'] = examples
+    return counts
+
+
 def apply_rules(user, transactions=None) -> int:
     """Apply the user's category rules. Returns the number of transactions updated.
 

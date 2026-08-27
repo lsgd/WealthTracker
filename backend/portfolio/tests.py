@@ -711,6 +711,119 @@ class TransactionImporterTests(TestCase):
         remaining = Transaction.objects.get()
         self.assertEqual(remaining.dedup_key, 'ref:ZKB-1')
 
+    # ZKB writes almost the whole card booking text itself, so two unrelated
+    # merchants charging the same amount to the same card already share six
+    # words. Real case: a 0.50 Mobility charge only EBICS reported was matched
+    # against a 0.50 Miteigentuemergemeinschaft charge two days earlier.
+    _CARD = 'ZKB Visa Debit card no. xxxx 7890, '
+    _CARD_DE = 'ZKB Visa Debit Card Nr. xxxx 7890, '
+
+    def _card_history(self, merchants, source):
+        """Enough card bookings for the template to be recognizable as one."""
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        for i, merchant in enumerate(merchants):
+            Transaction.objects.create(
+                account=self.account, booking_date=date(2026, 1, 1 + i),
+                amount=D('-9.99'), currency='CHF', source=source,
+                description=f'Purchase {self._CARD}{merchant}',
+                dedup_key=f'hist-{source}-{i}',
+            )
+
+    def test_same_card_and_amount_but_a_different_merchant_is_kept(self):
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        self._card_history(
+            ['Aldi Suisse 35 0813', 'Denner Discount 1372', 'Lidl Fil 347',
+             'Coop Adliswil 0813', 'Migros MM 0813', 'Kohler 1089 0813',
+             'Dosenbach 950 0813', 'k kiosk Sood 0813'], 'csv')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 22),
+            amount=D('-0.50'), currency='CHF', source='csv',
+            description=f'Purchase {self._CARD}Miteigentumergemeinschaf',
+            dedup_key='h:miteigentum',
+        )
+        # EBICS reports a DIFFERENT 0.50 charge on the same card two days on.
+        created = store_transactions(self.account, [
+            self._info(
+                booking_date=date(2026, 8, 24), amount=D('-0.50'),
+                counterparty='',
+                description=f'Online-Einkauf {self._CARD_DE}Mobility Hub Parkservice'),
+        ], source='camt053')
+        self.assertEqual(created, 1, 'a payment only one feed reported was dropped')
+
+    def test_same_card_amount_and_merchant_is_still_deduplicated(self):
+        """The template discount must not stop real duplicates being caught."""
+        from decimal import Decimal as D
+        from portfolio.models import Transaction
+        from portfolio.transaction_importer import store_transactions
+        self._card_history(
+            ['Aldi Suisse 35 0813', 'Denner Discount 1372', 'Lidl Fil 347',
+             'Coop Adliswil 0813', 'Migros MM 0813', 'Kohler 1089 0813',
+             'Dosenbach 950 0813', 'k kiosk Sood 0813'], 'csv')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 22),
+            amount=D('-0.50'), currency='CHF', source='csv',
+            description=f'Purchase {self._CARD}Miteigentumergemeinschaf',
+            dedup_key='h:miteigentum',
+        )
+        created = store_transactions(self.account, [
+            self._info(
+                booking_date=date(2026, 8, 24), amount=D('-0.50'),
+                counterparty='',
+                description=f'Einkauf {self._CARD_DE}Miteigentumergemeinschaf'),
+        ], source='camt053')
+        self.assertEqual(created, 0)
+
+    def test_dedupe_command_keeps_a_different_merchant_on_the_same_card(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        self._card_history(
+            ['Aldi Suisse 35 0813', 'Denner Discount 1372', 'Lidl Fil 347',
+             'Coop Adliswil 0813', 'Migros MM 0813', 'Kohler 1089 0813',
+             'Dosenbach 950 0813', 'k kiosk Sood 0813'], 'csv')
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 22),
+            amount=D('-0.50'), currency='CHF', source='csv',
+            description=f'Purchase {self._CARD}Miteigentumergemeinschaf',
+            dedup_key='h:miteigentum',
+        )
+        Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 24),
+            amount=D('-0.50'), currency='CHF', source='camt053',
+            description=f'Online-Einkauf {self._CARD_DE}Mobility Hub Parkservice',
+            dedup_key='ref:MOB-1',
+        )
+        out = StringIO()
+        call_command('dedupe_transactions', '--apply', stdout=out)
+        self.assertNotIn('would delete', out.getvalue())
+        self.assertTrue(Transaction.objects.filter(dedup_key='ref:MOB-1').exists())
+        self.assertTrue(Transaction.objects.filter(dedup_key='h:miteigentum').exists())
+
+    def test_dedupe_dry_run_names_the_row_each_deletion_duplicates(self):
+        from decimal import Decimal as D
+        from io import StringIO
+        from django.core.management import call_command
+        from portfolio.models import Transaction
+        common = dict(
+            account=self.account, booking_date=date(2026, 8, 21),
+            amount=D('-30'), currency='CHF',
+        )
+        Transaction.objects.create(
+            **common, description='Debit TWINT: ALTERMATT',
+            source='camt053', dedup_key='ref:ZKB-1')
+        Transaction.objects.create(
+            **common, description='Belastung TWINT: ALTERMATT',
+            source='csv', dedup_key='h:abc')
+        out = StringIO()
+        call_command('dedupe_transactions', stdout=out)
+        # A destructive list is only reviewable next to its justification.
+        self.assertIn('duplicate of:', out.getvalue())
+        self.assertIn('Debit TWINT: ALTERMATT', out.getvalue())
+
     def test_two_unrelated_same_amount_payments_stay_apart(self):
         """Two Riester contracts debit 10 EUR on the same day — not copies."""
         from decimal import Decimal as D
@@ -3449,6 +3562,105 @@ class RuleOrderingTests(APITestCase):
             [r.id for r in self.CategoryRule.objects.filter(user=self.user)],
             [first.id, second.id],
         )
+
+
+class RulePreviewTests(APITestCase):
+    """Counting what a rule would do, before it is saved."""
+
+    def setUp(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='EUR',
+        )
+        self.fuel = TransactionCategory.objects.create(user=self.user, name='Fuel')
+        self.CategoryRule = CategoryRule
+        self.client.force_authenticate(user=self.user)
+
+    def _tx(self, counterparty, key=None, **kwargs):
+        from portfolio.models import Transaction
+        return Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-60'), currency='EUR', counterparty=counterparty,
+            source='camt053', dedup_key=key or f'k-{counterparty}', **kwargs,
+        )
+
+    def _preview(self, **body):
+        return self.client.post(reverse('rule_preview'), body, format='json')
+
+    def test_counts_only_rows_the_rule_would_claim(self):
+        self._tx('Shell Station A5')
+        self._tx('Shell Station B2', key='k2')
+        self._tx('Migros')
+        # Already categorized: rules never overwrite a category.
+        self._tx('Shell Station C3', key='k3', category=self.fuel)
+        resp = self._preview(match_text='shell')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['will_classify'], 2)
+        self.assertEqual(resp.data['already_classified'], 1)
+        self.assertEqual(resp.data['shadowed'], 0)
+        self.assertEqual(resp.data['matched'], 3)
+
+    def test_earlier_rule_shadows_the_new_one(self):
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='station', category=self.fuel, position=0)
+        self._tx('Shell Station A5')
+        resp = self._preview(match_text='shell')
+        # First-match-wins: a new rule is appended, so 'station' claims it.
+        self.assertEqual(resp.data['will_classify'], 0)
+        self.assertEqual(resp.data['shadowed'], 1)
+
+    def test_editing_a_rule_keeps_its_own_position(self):
+        mine = self.CategoryRule.objects.create(
+            user=self.user, match_text='shell', category=self.fuel, position=0)
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='station', category=self.fuel, position=1)
+        self._tx('Shell Station A5')
+        # As a new rule it would be shadowed by 'station'; in place it is not.
+        self.assertEqual(self._preview(match_text='shell x').data['shadowed'], 0)
+        resp = self._preview(match_text='shell x', rule_id=mine.id)
+        self.assertEqual(resp.data['will_classify'], 0)  # 'shell x' matches nothing
+        resp = self._preview(match_text='a5', rule_id=mine.id)
+        self.assertEqual(resp.data['will_classify'], 1)
+        self.assertEqual(resp.data['shadowed'], 0)
+
+    def test_regex_and_examples(self):
+        self._tx('Shell A5')
+        self._tx('SHELL B2', key='k2')
+        resp = self._preview(match_text=r'^shell\s', is_regex=True)
+        self.assertEqual(resp.data['will_classify'], 2)
+        self.assertEqual(len(resp.data['examples']), 2)
+        self.assertIn(
+            'shell', ' '.join(e['text'] for e in resp.data['examples']).lower())
+
+    def test_invalid_regex_and_empty_text_are_rejected(self):
+        self.assertEqual(self._preview(match_text='').status_code, 400)
+        bad = self._preview(match_text='[unclosed', is_regex=True)
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn('Invalid regular expression', bad.data['error'])
+
+    def test_transfer_rule_skips_rows_already_marked(self):
+        self._tx('Broker top-up', is_transfer=True)
+        self._tx('Broker top-up 2', key='k2')
+        resp = self._preview(match_text='broker top-up', is_transfer=True)
+        self.assertEqual(resp.data['will_classify'], 1)
+        self.assertEqual(resp.data['already_classified'], 1)
+
+    def test_other_users_rows_and_rules_are_invisible(self):
+        other, _, _ = make_kek_user(username='bob')
+        other_account = FinancialAccount.objects.create(
+            user=other, broker=self.broker, name='Theirs', currency='EUR')
+        from portfolio.models import Transaction
+        Transaction.objects.create(
+            account=other_account, booking_date=date(2026, 8, 1),
+            amount=Decimal('-60'), currency='EUR', counterparty='Shell Station',
+            source='camt053', dedup_key='foreign')
+        self.assertEqual(self._preview(match_text='shell').data['matched'], 0)
+        foreign = self.CategoryRule.objects.create(
+            user=other, match_text='x', position=0, is_transfer=True)
+        self.assertEqual(
+            self._preview(match_text='shell', rule_id=foreign.id).status_code, 404)
 
 
 class AiPricingRefreshTests(APITestCase):
