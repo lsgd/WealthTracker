@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat, FileUp } from 'lucide-react';
 import { syncAccount, completeAccountAuth, deleteAccount, updateAccount, updateAccountCredentials, getAccountCredentials, getBroker } from '../api/client';
 import AddSnapshotModal from './AddSnapshotModal';
@@ -11,6 +11,7 @@ import Tooltip from './Tooltip';
 import ExportModal from './ExportModal';
 import Toast from './Toast';
 import TwoFactorModal, { type AuthPrompt } from './TwoFactorModal';
+import ModalOverlay from './ModalOverlay';
 
 interface ToastData {
   id: string;
@@ -193,20 +194,6 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
   const dismissToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
-
-  // Close modals on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (authPrompt) setAuthPrompt(null);
-        if (deleteConfirm) setDeleteConfirm(null);
-        if (errorAccount) setErrorAccount(null);
-        if (credentialsAccount) setCredentialsAccount(null);
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [authPrompt, deleteConfirm, errorAccount, credentialsAccount]);
 
   const openCredentialsModal = async (account: Account, forRetry = false, errorMsg = '') => {
     setCredentialsAccount(account);
@@ -586,7 +573,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
-        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+        <ModalOverlay onClose={() => setDeleteConfirm(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
@@ -621,7 +608,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* Snapshots Modal */}
@@ -640,7 +627,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
 
       {/* Error Details Modal */}
       {errorAccount && (
-        <div className="modal-overlay" onClick={() => setErrorAccount(null)}>
+        <ModalOverlay onClose={() => setErrorAccount(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
@@ -696,12 +683,12 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* Account Settings Modal */}
       {credentialsAccount && (
-        <div className="modal-overlay" onClick={() => { setCredentialsAccount(null); setCredentialsRetrySync(false); setCredentialsError(''); }}>
+        <ModalOverlay onClose={() => { setCredentialsAccount(null); setCredentialsRetrySync(false); setCredentialsError(''); }}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
@@ -934,7 +921,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               <p className="text-muted">Loading credential fields...</p>
             )}
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* Change Account Type (migration) workflow */}

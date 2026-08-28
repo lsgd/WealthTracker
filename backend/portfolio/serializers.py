@@ -68,8 +68,25 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'match_text', 'category', 'category_name', 'spread_months',
             'position', 'is_regex', 'is_transfer',
+            'min_amount', 'min_inclusive', 'max_amount', 'max_inclusive',
         ]
         read_only_fields = ['position']
+
+    def validate_min_amount(self, value):
+        return self._non_negative(value, 'lower')
+
+    def validate_max_amount(self, value):
+        return self._non_negative(value, 'upper')
+
+    @staticmethod
+    def _non_negative(value, which):
+        # Bounds are compared against |amount|, so a negative one can never
+        # hold — rejecting it beats a rule that silently matches nothing.
+        if value is not None and value < 0:
+            raise serializers.ValidationError(
+                f'The {which} bound is compared without a sign, so it cannot '
+                'be negative.')
+        return value
 
     def get_category_name(self, rule):
         return rule.category.name if rule.category else None
@@ -100,18 +117,36 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
         if is_transfer and category is not None:
             raise serializers.ValidationError(
                 'A transfer rule cannot also assign a category')
-        # Rules are first-match-wins, so a second rule with the same match
-        # text can never fire — reject it instead of growing dead entries.
+        def bound(name, default=None):
+            return attrs.get(name, getattr(self.instance, name, default))
+
+        low, high = bound('min_amount'), bound('max_amount')
+        if low is not None and high is not None:
+            inclusive = bound('min_inclusive', True) and bound('max_inclusive', False)
+            if low > high or (low == high and not inclusive):
+                raise serializers.ValidationError(
+                    {'max_amount': 'The range is empty — no amount can satisfy '
+                                   'both bounds.'})
+        # Rules are first-match-wins, so a second rule with the same match text
+        # AND the same amount range can never fire — reject it instead of
+        # growing dead entries. Same text with a DIFFERENT range is the point
+        # of the feature ("migros under 20" before "migros"), so it is allowed.
         request = self.context.get('request')
         if match_text and request:
             clashing = CategoryRule.objects.filter(
                 user=request.user, match_text__iexact=match_text,
+                min_amount=low, max_amount=high,
             )
+            if low is not None:
+                clashing = clashing.filter(min_inclusive=bound('min_inclusive', True))
+            if high is not None:
+                clashing = clashing.filter(max_inclusive=bound('max_inclusive', False))
             if self.instance is not None:
                 clashing = clashing.exclude(pk=self.instance.pk)
             if clashing.exists():
                 raise serializers.ValidationError(
-                    {'match_text': f'A rule for “{match_text}” already exists.'})
+                    {'match_text': f'A rule for “{match_text}” with the same '
+                                   'amount range already exists.'})
         # A transfer is excluded from spending entirely, so amortizing it over
         # several months is meaningless — keep the data honest.
         spread = attrs.get(

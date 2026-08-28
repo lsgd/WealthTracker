@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import type { CategoryStyle } from '../../utils/categoryPalette';
 import { formatPeriod, formatPeriodShort } from '../../utils/periods';
+import ModalOverlay from '../ModalOverlay';
 
 interface Props {
   name: string;
@@ -43,7 +44,7 @@ export default function CategoryDetail({
     (max, s) => (s.amount > max.amount ? s : max), series[0] ?? { period: '', amount: 0 });
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -103,6 +104,6 @@ export default function CategoryDetail({
           </BarChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

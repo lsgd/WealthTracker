@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Pencil, Trash2, Check, XCircle } from 'lucide-react';
 import { getSnapshots, updateSnapshot, deleteSnapshot, addSnapshot } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Snapshot {
   id: number;
@@ -101,17 +102,6 @@ export default function SnapshotsModal({
     (async () => { await fetchSnapshots(); })();
   }, [fetchSnapshots]);
 
-  // Close on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
   const startEdit = (snap: Snapshot) => {
     setEditingId(snap.id);
     setEditBalance(snap.balance);
@@ -177,7 +167,7 @@ export default function SnapshotsModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Snapshots - {accountName}</h3>
@@ -377,6 +367,6 @@ export default function SnapshotsModal({
           </>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

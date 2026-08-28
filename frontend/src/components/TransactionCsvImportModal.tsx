@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { CheckCircle2, Upload, X } from 'lucide-react';
 import { importTransactionsCsv } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Props {
   accountId: number;
@@ -26,17 +27,6 @@ export default function TransactionCsvImportModal({
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Close on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
   const handleImport = async () => {
     if (!file) return;
     setError('');
@@ -56,7 +46,7 @@ export default function TransactionCsvImportModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Import Transactions - {accountName}</h3>
@@ -101,6 +91,6 @@ export default function TransactionCsvImportModal({
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

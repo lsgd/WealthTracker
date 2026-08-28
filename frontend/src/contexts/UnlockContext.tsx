@@ -9,6 +9,7 @@ import {
 import { Lock, X, Loader } from 'lucide-react';
 import { setKekRecoveryHandler, getCurrentUser } from '../api/client';
 import { useAuth } from './AuthContext';
+import ModalOverlay from '../components/ModalOverlay';
 
 /**
  * Bridges the imperative KEK-recovery handler (called from fetchWithAuth when an
@@ -68,7 +69,7 @@ export function UnlockProvider({ children }: { children: ReactNode }) {
     <>
       {children}
       {open && (
-        <div className="modal-overlay" onClick={() => finish(false)}>
+        <ModalOverlay onClose={() => finish(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
             <div className="modal-header">
               <h3>
@@ -113,7 +114,7 @@ export function UnlockProvider({ children }: { children: ReactNode }) {
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

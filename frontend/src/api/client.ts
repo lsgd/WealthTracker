@@ -885,6 +885,11 @@ export interface CategoryRule {
   is_regex: boolean;
   // Transfer rules mark matches as transfers instead of categorizing them.
   is_transfer: boolean;
+  // Optional amount bounds, compared against |amount|. Null means no bound.
+  min_amount: string | null;
+  min_inclusive: boolean;
+  max_amount: string | null;
+  max_inclusive: boolean;
 }
 
 export interface Transaction {
@@ -1000,6 +1005,10 @@ export async function createCategoryRule(fields: {
   spread_months?: number;
   is_regex?: boolean;
   is_transfer?: boolean;
+  min_amount?: string | null;
+  min_inclusive?: boolean;
+  max_amount?: string | null;
+  max_inclusive?: boolean;
 }): Promise<CategoryRule> {
   const res = await fetchWithAuth('/api/spending/rules/', {
     method: 'POST',
@@ -1018,6 +1027,10 @@ export async function updateCategoryRule(ruleId: number, fields: {
   spread_months?: number;
   is_regex?: boolean;
   is_transfer?: boolean;
+  min_amount?: string | null;
+  min_inclusive?: boolean;
+  max_amount?: string | null;
+  max_inclusive?: boolean;
 }): Promise<CategoryRule> {
   const res = await fetchWithAuth(`/api/spending/rules/${ruleId}/`, {
     method: 'PATCH',
@@ -1048,6 +1061,10 @@ export async function previewCategoryRule(fields: {
   is_transfer?: boolean;
   /** Set when editing, so the simulation keeps the rule's own position. */
   rule_id?: number;
+  min_amount?: string | null;
+  min_inclusive?: boolean;
+  max_amount?: string | null;
+  max_inclusive?: boolean;
 }, signal?: AbortSignal): Promise<RulePreview> {
   const res = await fetchWithAuth('/api/spending/rules/preview/', {
     method: 'POST',

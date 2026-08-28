@@ -1544,11 +1544,40 @@ class CategoryRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
 class CategoryRulePreviewView(APIView):
     """Count what a rule would do before it is saved.
 
-    Body: ``match_text``, ``is_regex``, ``is_transfer`` and, when editing an
-    existing rule, its ``rule_id`` so the simulation keeps its position instead
-    of appending. Read-only — nothing is written.
+    Body: ``match_text``, ``is_regex``, ``is_transfer``, the optional amount
+    bounds (``min_amount``/``min_inclusive``/``max_amount``/``max_inclusive``)
+    and, when editing an existing rule, its ``rule_id`` so the simulation keeps
+    its position instead of appending. Read-only — nothing is written.
     """
     permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _bounds(data):
+        """The amount range from the payload, or None when unbounded."""
+        from decimal import Decimal, InvalidOperation
+
+        def amount(key):
+            raw = data.get(key)
+            if raw in (None, ''):
+                return None
+            try:
+                return Decimal(str(raw))
+            except (InvalidOperation, ValueError):
+                raise ValueError(f'"{key}" is not a number')
+
+        low, high = amount('min_amount'), amount('max_amount')
+        if low is None and high is None:
+            return None
+        # Bounds are compared against |amount|; a negative one matches nothing.
+        for name, value in (('min_amount', low), ('max_amount', high)):
+            if value is not None and value < 0:
+                raise ValueError(f'"{name}" cannot be negative')
+        return {
+            'min_amount': low,
+            'min_inclusive': data.get('min_inclusive', True) is not False,
+            'max_amount': high,
+            'max_inclusive': data.get('max_inclusive', False) is True,
+        }
 
     def post(self, request):
         import re
@@ -1569,10 +1598,14 @@ class CategoryRulePreviewView(APIView):
         if rule_id is not None and not CategoryRule.objects.filter(
                 pk=rule_id, user=request.user).exists():
             return Response({'error': 'Rule not found'}, status=404)
+        try:
+            bounds = self._bounds(request.data)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
 
         return Response(preview_rule(
             request.user, match_text, is_regex,
-            bool(request.data.get('is_transfer')), rule_id,
+            bool(request.data.get('is_transfer')), rule_id, bounds,
         ))
 
 

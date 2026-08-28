@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Repeat, AlertTriangle, Loader } from 'lucide-react';
 import { getBrokersList, updateAccount, updateAccountCredentials } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Broker {
   id: number;
@@ -54,14 +55,6 @@ export default function MigrateAccountModal({ account, onClose, onMigrated }: Pr
       .finally(() => setLoadingBrokers(false));
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
   const target = brokers.find((b) => b.code === targetCode) ?? null;
   const targetIsManual = targetCode === 'manual';
   const credentialFields = Object.entries(target?.credential_schema?.properties ?? {});
@@ -109,7 +102,7 @@ export default function MigrateAccountModal({ account, onClose, onMigrated }: Pr
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -226,6 +219,6 @@ export default function MigrateAccountModal({ account, onClose, onMigrated }: Pr
           </form>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

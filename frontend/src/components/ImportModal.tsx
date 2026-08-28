@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { getAccounts, importCSV } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Account {
   id: number;
@@ -89,7 +90,7 @@ export default function ImportModal({ onClose, onImported }: Props) {
     : '';
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -212,6 +213,6 @@ export default function ImportModal({ onClose, onImported }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

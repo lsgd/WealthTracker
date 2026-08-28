@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { addSnapshot } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Props {
   accountId: number;
@@ -23,17 +24,6 @@ export default function AddSnapshotModal({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Close on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -49,7 +39,7 @@ export default function AddSnapshotModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Add Snapshot - {accountName}</h3>
@@ -107,6 +97,6 @@ export default function AddSnapshotModal({
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

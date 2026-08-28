@@ -258,6 +258,25 @@ class CategoryRule(models.Model):
         default=1,
         help_text='Spread matched transactions over this many months (1 = no spread)'
     )
+    # Optional amount range, compared against the transaction's amount WITHOUT
+    # its sign: spending is stored negative, so a user asking for "between 1.57
+    # and 20" would otherwise have to invert and negate the bounds. A lower and
+    # an upper bound are the only two that can both hold at once, which is why
+    # there are exactly two — each independently inclusive or exclusive.
+    min_amount = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        help_text='Lower bound on |amount|; NULL for no lower bound'
+    )
+    min_inclusive = models.BooleanField(
+        default=True, help_text='True for >= min_amount, False for > min_amount'
+    )
+    max_amount = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        help_text='Upper bound on |amount|; NULL for no upper bound'
+    )
+    max_inclusive = models.BooleanField(
+        default=False, help_text='True for <= max_amount, False for < max_amount'
+    )
     position = models.PositiveIntegerField(
         default=0,
         help_text='Evaluation order — the first matching rule wins'

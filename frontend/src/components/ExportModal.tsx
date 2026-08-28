@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Download, X } from 'lucide-react';
 import { getAccounts, getSnapshots } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Account {
   id: number;
@@ -88,7 +89,7 @@ export default function ExportModal({ onClose }: Props) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -142,6 +143,6 @@ export default function ExportModal({ onClose }: Props) {
           </>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

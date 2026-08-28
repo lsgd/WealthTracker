@@ -3747,6 +3747,146 @@ class RulePreviewTests(APITestCase):
             self._preview(match_text='shell', rule_id=foreign.id).status_code, 404)
 
 
+class RuleAmountRangeTests(APITestCase):
+    """Rules can narrow to an amount range as well as matching text."""
+
+    def setUp(self):
+        from portfolio.models import CategoryRule, TransactionCategory
+        self.user, self.kek, _ = make_kek_user()
+        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Giro', currency='CHF',
+        )
+        self.coffee = TransactionCategory.objects.create(user=self.user, name='Coffee')
+        self.groceries = TransactionCategory.objects.create(user=self.user, name='Groceries')
+        self.CategoryRule = CategoryRule
+        self.client.force_authenticate(user=self.user)
+
+    def _tx(self, amount, counterparty='Migros', key=None):
+        from portfolio.models import Transaction
+        return Transaction.objects.create(
+            account=self.account, booking_date=date(2026, 8, 1),
+            amount=Decimal(amount), currency='CHF', counterparty=counterparty,
+            source='camt053', dedup_key=key or f'k-{counterparty}-{amount}',
+        )
+
+    def test_range_selects_which_transactions_a_rule_claims(self):
+        from portfolio.classification import apply_rules
+        small = self._tx('-4.20')
+        mid = self._tx('-19.99')
+        big = self._tx('-42.00')
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.coffee, position=0,
+            min_amount=Decimal('1.57'), min_inclusive=True,
+            max_amount=Decimal('20.00'), max_inclusive=False,
+        )
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.groceries, position=1)
+        apply_rules(self.user)
+        for tx, expected in ((small, self.coffee), (mid, self.coffee),
+                             (big, self.groceries)):
+            tx.refresh_from_db()
+            self.assertEqual(tx.category, expected, f'{tx.amount}')
+
+    def test_bounds_are_compared_without_the_sign(self):
+        """Spending is stored negative; "> 95.99" must still mean a big payment."""
+        from portfolio.classification import apply_rules
+        spent = self._tx('-120.00', key='k1')
+        refunded = self._tx('120.00', key='k2')
+        under = self._tx('-90.00', key='k3')
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.groceries,
+            position=0, min_amount=Decimal('95.99'), min_inclusive=False)
+        apply_rules(self.user)
+        for tx, expected in ((spent, self.groceries), (refunded, self.groceries),
+                             (under, None)):
+            tx.refresh_from_db()
+            self.assertEqual(tx.category, expected, f'{tx.amount}')
+
+    def test_exclusive_and_inclusive_edges(self):
+        from portfolio.classification import amount_in_range
+
+        class R:
+            def __init__(self, **kw):
+                self.min_amount = self.max_amount = None
+                self.min_inclusive, self.max_inclusive = True, False
+                self.__dict__.update(kw)
+
+        gte = R(min_amount=Decimal('20'), min_inclusive=True)
+        gt = R(min_amount=Decimal('20'), min_inclusive=False)
+        self.assertTrue(amount_in_range(gte, Decimal('-20')))
+        self.assertFalse(amount_in_range(gt, Decimal('-20')))
+        lte = R(max_amount=Decimal('20'), max_inclusive=True)
+        lt = R(max_amount=Decimal('20'), max_inclusive=False)
+        self.assertTrue(amount_in_range(lte, Decimal('-20')))
+        self.assertFalse(amount_in_range(lt, Decimal('-20')))
+        # A rule with no bounds is every rule that predates the feature.
+        self.assertTrue(amount_in_range(R(), Decimal('-1')))
+
+    def test_same_text_allowed_with_a_different_range_but_not_the_same(self):
+        url = reverse('rule_list')
+        first = self.client.post(url, {
+            'match_text': 'migros', 'category': self.coffee.id,
+            'max_amount': '20.00',
+        }, format='json')
+        self.assertEqual(first.status_code, 201, first.data)
+        # Same text, no range — reachable for anything over 20.
+        second = self.client.post(url, {
+            'match_text': 'migros', 'category': self.groceries.id,
+        }, format='json')
+        self.assertEqual(second.status_code, 201, second.data)
+        # Same text AND the same range could never fire.
+        third = self.client.post(url, {
+            'match_text': 'migros', 'category': self.groceries.id,
+            'max_amount': '20.00',
+        }, format='json')
+        self.assertEqual(third.status_code, 400, third.data)
+
+    def test_impossible_and_negative_ranges_are_rejected(self):
+        url = reverse('rule_list')
+        empty = self.client.post(url, {
+            'match_text': 'a', 'category': self.coffee.id,
+            'min_amount': '50', 'max_amount': '10',
+        }, format='json')
+        self.assertEqual(empty.status_code, 400, empty.data)
+        negative = self.client.post(url, {
+            'match_text': 'b', 'category': self.coffee.id, 'min_amount': '-5',
+        }, format='json')
+        self.assertEqual(negative.status_code, 400, negative.data)
+        # min == max is fine only when both ends are inclusive.
+        point = self.client.post(url, {
+            'match_text': 'c', 'category': self.coffee.id,
+            'min_amount': '10', 'max_amount': '10', 'max_inclusive': True,
+        }, format='json')
+        self.assertEqual(point.status_code, 201, point.data)
+
+    def test_preview_counts_respect_the_range(self):
+        self._tx('-4.20', key='k1')
+        self._tx('-42.00', key='k2')
+        resp = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros', 'max_amount': '20',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['will_classify'], 1)
+        self.assertEqual(resp.data['matched'], 1)
+        # Without the bound both rows match.
+        wide = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros'}, format='json')
+        self.assertEqual(wide.data['will_classify'], 2)
+
+    def test_a_narrow_rule_is_not_shadowed_by_a_broad_one_it_outranks(self):
+        """The range is what makes two same-text rules both reachable."""
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.groceries,
+            position=0, min_amount=Decimal('20'))
+        self._tx('-4.20', key='k1')
+        resp = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros', 'max_amount': '20',
+        }, format='json')
+        self.assertEqual(resp.data['will_classify'], 1)
+        self.assertEqual(resp.data['shadowed'], 0)
+
+
 class AiPricingRefreshTests(APITestCase):
     def setUp(self):
         self.user, self.kek, _ = make_kek_user()

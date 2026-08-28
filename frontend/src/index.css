@@ -665,6 +665,9 @@ a:hover {
   overflow: hidden;
 }
 
+/* Two-column dialogs (the rule editor) need room for both halves. */
+.modal-wide { max-width: 760px; }
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -2373,8 +2376,122 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   white-space: nowrap;
 }
 
-/* Inside the rule dialog the form-group already spaces its children. */
-.modal .rule-impact { margin-top: 6px; }
+/* Rule dialog: the rule on the left, what it does on the right. The impact
+   count arrives asynchronously — in a single column it appeared between the
+   fields and shoved everything below it down mid-typing. */
+.rule-dialog {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .rule-dialog { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+.rule-dialog-form > .form-group:last-child { margin-bottom: 0; }
+
+.rule-dialog-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.rule-dialog-side .rule-impact { margin-top: 0; }
+
+/* Collapsed "Advanced": amount bounds, hidden until wanted. */
+.rule-advanced {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.rule-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rule-advanced-toggle:hover { color: var(--color-primary); }
+
+.rule-advanced-summary {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-advanced-body {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rule-advanced-body .form-hint { margin: 0; }
+
+.rule-bound {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rule-bound-label {
+  flex: 0 0 62px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+/* The operator is one glyph; sizing it to the content keeps the amount wide. */
+.rule-bound select {
+  flex: 0 0 auto;
+  width: 62px;
+  text-align: center;
+}
+
+.rule-bound input {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
+
+/* Spinners eat half of a narrow right-aligned amount field. */
+.rule-bound input::-webkit-outer-spin-button,
+.rule-bound input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.rule-bound-currency {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.rule-advanced-echo {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.rule-advanced-echo code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.rule-advanced-bad { color: var(--color-danger); }
 
 /* Collapsible card headers (Import history, AI model details). */
 .card-toggle {

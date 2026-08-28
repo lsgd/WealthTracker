@@ -43,6 +43,34 @@ def rule_matcher(rule):
     return lambda haystack: needle in haystack
 
 
+def amount_in_range(rule, amount) -> bool:
+    """Does ``amount`` satisfy the rule's optional amount bounds?
+
+    Compared without the sign: spending is stored negative, so "between 1.57
+    and 20" would otherwise have to be written as an inverted, negated range.
+    A rule with neither bound set accepts everything, which is every rule that
+    predates the feature.
+    """
+    low, high = rule.min_amount, rule.max_amount
+    if low is None and high is None:
+        return True
+    if amount is None:
+        return False
+    value = abs(amount)
+    if low is not None and not (value >= low if rule.min_inclusive else value > low):
+        return False
+    if high is not None and not (value <= high if rule.max_inclusive else value < high):
+        return False
+    return True
+
+
+def rule_predicate(rule):
+    """``(haystack, amount) -> bool`` for one rule: the text AND the range."""
+    matches_text = rule_matcher(rule)
+    return lambda haystack, amount: (
+        matches_text(haystack) and amount_in_range(rule, amount))
+
+
 def first_matching_rule(user, tx):
     """The rule that would classify ``tx`` (first match wins), or None.
 
@@ -51,7 +79,7 @@ def first_matching_rule(user, tx):
     """
     haystack = f'{tx.counterparty} {tx.description}'.lower()
     for rule in user.category_rules.select_related('category').order_by('position', 'id'):
-        if rule_matcher(rule)(haystack):
+        if rule_predicate(rule)(haystack, tx.amount):
             return rule
     return None
 
@@ -61,12 +89,18 @@ class _Draft:
 
     id = None
 
-    def __init__(self, match_text, is_regex):
+    def __init__(self, match_text, is_regex, min_amount=None, min_inclusive=True,
+                 max_amount=None, max_inclusive=False):
         self.match_text = match_text
         self.is_regex = is_regex
+        self.min_amount = min_amount
+        self.min_inclusive = min_inclusive
+        self.max_amount = max_amount
+        self.max_inclusive = max_inclusive
 
 
-def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None) -> dict:
+def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None,
+                 bounds=None) -> dict:
     """What saving this rule would do, without saving it.
 
     Rules run first-match-wins over transactions that have no category and
@@ -82,17 +116,19 @@ def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None) -> dict:
 
     An edit (``rule_id``) is simulated in place, so the rule keeps its
     position; a new rule is appended, which is where a saved one would land.
+    ``bounds`` is the optional amount range, as the same four keys the model
+    stores.
     """
     from .models import Transaction
 
-    draft = _Draft(match_text, is_regex)
+    draft = _Draft(match_text, is_regex, **(bounds or {}))
     existing = list(user.category_rules.order_by('position', 'id'))
     # Everything ahead of the draft is what can shadow it: for an edit that is
     # the rules before its own position, for a new rule all of them.
     cut = len(existing) if rule_id is None else next(
         (i for i, r in enumerate(existing) if r.id == rule_id), len(existing))
-    shadowers = [rule_matcher(r) for r in existing[:cut]]
-    matches = rule_matcher(draft)
+    shadowers = [rule_predicate(r) for r in existing[:cut]]
+    matches = rule_predicate(draft)
 
     counts = {'will_classify': 0, 'shadowed': 0, 'already_classified': 0}
     examples = []
@@ -105,12 +141,12 @@ def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None) -> dict:
         .order_by('-booking_date', '-id')
     ):
         haystack = f'{tx.counterparty} {tx.description}'.lower()
-        if not matches(haystack):
+        if not matches(haystack, tx.amount):
             continue
         if tx.category_id is not None or tx.category_manual:
             counts['already_classified'] += 1
             continue
-        if any(m(haystack) for m in shadowers):
+        if any(m(haystack, tx.amount) for m in shadowers):
             counts['shadowed'] += 1
             continue
         if is_transfer and (tx.transfer_manual or tx.is_transfer):
@@ -156,13 +192,13 @@ def apply_rules(user, transactions=None) -> int:
     qs = qs.filter(category__isnull=True, category_manual=False)
 
     # Compile each rule's predicate once, not once per transaction.
-    matchers = [(rule, rule_matcher(rule)) for rule in rules]
+    matchers = [(rule, rule_predicate(rule)) for rule in rules]
 
     updated = []
     for tx in qs:
         haystack = f'{tx.counterparty} {tx.description}'.lower()
         for rule, matches in matchers:
-            if not matches(haystack):
+            if not matches(haystack, tx.amount):
                 continue
             if rule.is_transfer:
                 if tx.transfer_manual:

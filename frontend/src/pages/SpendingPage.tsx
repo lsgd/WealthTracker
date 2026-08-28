@@ -18,6 +18,7 @@ import ClampedText from '../components/ClampedText';
 import CategoryBreakdown from '../components/spending/CategoryBreakdown';
 import CategoryDetail from '../components/spending/CategoryDetail';
 import PeriodBar from '../components/spending/PeriodBar';
+import RuleAmountRange from '../components/spending/RuleAmountRange';
 import RuleImpact from '../components/spending/RuleImpact';
 import SummaryTiles from '../components/spending/SummaryTiles';
 import {
@@ -34,6 +35,9 @@ import {
 } from '../utils/categoryPalette';
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
+import {
+  EMPTY_RANGE, isImpossible, rangeOf, rangePayload, type AmountRange,
+} from '../utils/ruleRange';
 import type {
   BackfillOutcome,
   TransactionSortKey,
@@ -61,6 +65,7 @@ import {
   getSpendingMonthly,
   reorderCategoryRules,
 } from '../api/client';
+import ModalOverlay from '../components/ModalOverlay';
 
 
 // Default history window for a one-off import.
@@ -167,6 +172,7 @@ export default function SpendingPage() {
     useState<number | '__transfer__' | ''>('__transfer__');
   const [editSpread, setEditSpread] = useState(1);
   const [editIsRegex, setEditIsRegex] = useState(false);
+  const [editRange, setEditRange] = useState<AmountRange>(EMPTY_RANGE);
   const [editSaving, setEditSaving] = useState(false);
   const [ruleFilter, setRuleFilter] = useState('');
   const ruleInputRef = useRef<HTMLInputElement>(null);
@@ -765,6 +771,7 @@ export default function SpendingPage() {
     setEditTarget(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
     setEditSpread(tx.spread_months > 1 ? tx.spread_months : 1);
     setEditIsRegex(false);
+    setEditRange(EMPTY_RANGE);
     setError('');
     setEditRule('new');
   };
@@ -794,6 +801,7 @@ export default function SpendingPage() {
     setEditTarget(rule.is_transfer ? '__transfer__' : (rule.category as number));
     setEditSpread(rule.spread_months);
     setEditIsRegex(rule.is_regex);
+    setEditRange(rangeOf(rule));
     setError('');
   };
 
@@ -808,17 +816,22 @@ export default function SpendingPage() {
         return;
       }
     }
+    if (isImpossible(editRange)) {
+      setError('The amount range is empty — no transaction can satisfy both bounds.');
+      return;
+    }
     const isTransfer = editTarget === '__transfer__';
     const match_text = editText.trim();
     // Transfers are excluded from spending — nothing to amortize.
     const target = isTransfer
       ? { is_transfer: true, spread_months: 1 }
       : { category: editTarget as number, spread_months: editSpread };
+    const bounds = rangePayload(editRange);
     setEditSaving(true);
     try {
       if (rule === 'new') {
         const created = await createCategoryRule({
-          match_text, is_regex: editIsRegex, ...target,
+          match_text, is_regex: editIsRegex, ...target, ...bounds,
         });
         setRules((prev) => [...prev, created]);
       } else {
@@ -828,6 +841,7 @@ export default function SpendingPage() {
           is_transfer: isTransfer,
           category: isTransfer ? null : (editTarget as number),
           spread_months: target.spread_months,
+          ...bounds,
         });
         setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)));
       }
@@ -945,26 +959,6 @@ export default function SpendingPage() {
       setCsvBusy(false);
     }
   };
-
-  // Close the category dialog on Escape.
-  useEffect(() => {
-    if (!categoryDialogOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setCategoryDialogOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [categoryDialogOpen]);
-
-  // Escape on the regex confirmation = cancel, i.e. save nothing.
-  useEffect(() => {
-    if (!regexConfirmOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRegexConfirmOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [regexConfirmOpen]);
 
   const currency = report?.base_currency ?? 'EUR';
 
@@ -1694,78 +1688,98 @@ export default function SpendingPage() {
         </>)}
 
         {editRule && (
-          <div className="modal-overlay" onClick={() => setEditRule(null)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <ModalOverlay onClose={() => setEditRule(null)}>
+            <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editRule === 'new' ? 'New rule' : 'Edit rule'}</h3>
                 <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
                   <X size={18} />
                 </button>
               </div>
-              <div className="form-group">
-                <label htmlFor="edit-rule-text">Match text</label>
-                <input
-                  id="edit-rule-text"
-                  autoFocus
-                  value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
-                />
-                <RuleImpact
-                  matchText={editText}
-                  isRegex={editIsRegex}
-                  isTransfer={editTarget === '__transfer__'}
-                  ruleId={editRule === 'new' ? undefined : editRule.id}
-                />
-              </div>
-              <div className="form-group">
-                <label className="spending-switch">
-                  <input
-                    type="checkbox"
-                    checked={editIsRegex}
-                    onChange={(e) => setEditIsRegex(e.target.checked)}
-                  />
-                  Regular expression
-                </label>
-              </div>
-              <div className="form-group">
-                <label htmlFor="edit-rule-target">Target</label>
-                <select
-                  id="edit-rule-target"
-                  value={editTarget}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setEditTarget(
-                      v === '__transfer__' || v === '' ? v : Number(v));
-                  }}
-                >
-                  {/* A row with no category yet opens with nothing picked —
-                      better than silently defaulting to Transfer. */}
-                  {editTarget === '' && <option value="">Category…</option>}
-                  <option value="__transfer__">Transfer (excluded)</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              {editTarget !== '__transfer__' && (
-                <div className="form-group">
-                  <label htmlFor="edit-rule-spread">Spread</label>
-                  <select
-                    id="edit-rule-spread"
-                    value={editSpread}
-                    onChange={(e) => setEditSpread(Number(e.target.value))}
-                  >
-                    <option value={1}>no spread</option>
-                    <option value={3}>/3 months</option>
-                    <option value={6}>/6 months</option>
-                    <option value={12}>/12 months</option>
-                  </select>
-                  <small className="form-hint">
-                    A yearly bill shows as one twelfth per month in the
-                    normalized view.
-                  </small>
+              {/* Two columns: the rule on the left, what it does on the right.
+                  The match count arrives asynchronously — in one column it
+                  appeared between the fields and pushed everything down as
+                  you typed. */}
+              <div className="rule-dialog">
+                <div className="rule-dialog-form">
+                  <div className="form-group">
+                    <label htmlFor="edit-rule-text">Match text</label>
+                    <input
+                      id="edit-rule-text"
+                      autoFocus
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="spending-switch">
+                      <input
+                        type="checkbox"
+                        checked={editIsRegex}
+                        onChange={(e) => setEditIsRegex(e.target.checked)}
+                      />
+                      Regular expression
+                    </label>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="edit-rule-target">Target</label>
+                    <select
+                      id="edit-rule-target"
+                      value={editTarget}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setEditTarget(
+                          v === '__transfer__' || v === '' ? v : Number(v));
+                      }}
+                    >
+                      {/* A row with no category yet opens with nothing picked —
+                          better than silently defaulting to Transfer. */}
+                      {editTarget === '' && <option value="">Category…</option>}
+                      <option value="__transfer__">Transfer (excluded)</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {editTarget !== '__transfer__' && (
+                    <div className="form-group">
+                      <label htmlFor="edit-rule-spread">Spread</label>
+                      <select
+                        id="edit-rule-spread"
+                        value={editSpread}
+                        onChange={(e) => setEditSpread(Number(e.target.value))}
+                      >
+                        <option value={1}>no spread</option>
+                        <option value={3}>/3 months</option>
+                        <option value={6}>/6 months</option>
+                        <option value={12}>/12 months</option>
+                      </select>
+                      <small className="form-hint">
+                        A yearly bill shows as one twelfth per month in the
+                        normalized view.
+                      </small>
+                    </div>
+                  )}
                 </div>
-              )}
+
+                <div className="rule-dialog-side">
+                  <RuleAmountRange
+                    value={editRange}
+                    onChange={setEditRange}
+                    currency={currency}
+                    // Open when the rule already has a range, so an existing
+                    // condition is never hidden behind a collapsed section.
+                    startOpen={editRange.min !== '' || editRange.max !== ''}
+                  />
+                  <RuleImpact
+                    matchText={editText}
+                    isRegex={editIsRegex}
+                    isTransfer={editTarget === '__transfer__'}
+                    ruleId={editRule === 'new' ? undefined : editRule.id}
+                    range={editRange}
+                  />
+                </div>
+              </div>
               <div className="form-actions">
                 <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
                   Cancel
@@ -1781,7 +1795,7 @@ export default function SpendingPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         )}
 
         {authPrompt && (
@@ -1808,7 +1822,7 @@ export default function SpendingPage() {
         )}
 
         {staleRule && (
-          <div className="modal-overlay" onClick={() => setStaleRule(null)}>
+          <ModalOverlay onClose={() => setStaleRule(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>Update the rule too?</h3>
@@ -1854,11 +1868,11 @@ export default function SpendingPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         )}
 
         {regexConfirmOpen && (
-          <div className="modal-overlay" onClick={() => setRegexConfirmOpen(false)}>
+          <ModalOverlay onClose={() => setRegexConfirmOpen(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>Not a regular expression?</h3>
@@ -1894,11 +1908,11 @@ export default function SpendingPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         )}
 
         {categoryDialogOpen && (
-          <div className="modal-overlay" onClick={() => setCategoryDialogOpen(false)}>
+          <ModalOverlay onClose={() => setCategoryDialogOpen(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>New Category</h3>
@@ -1940,7 +1954,7 @@ export default function SpendingPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </ModalOverlay>
         )}
     </div>
   );

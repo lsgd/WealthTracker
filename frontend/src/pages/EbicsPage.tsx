@@ -19,6 +19,7 @@ import {
   type EbicsCredential,
   type EbicsDiscoveredAccount,
 } from '../api/client';
+import ModalOverlay from '../components/ModalOverlay';
 
 interface Broker {
   code: string;
@@ -301,7 +302,7 @@ export default function EbicsPage() {
       {message && <div className="form-success" style={{ marginTop: 16 }}>{message}</div>}
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal ebics-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>New EBICS credential</h3>
@@ -379,11 +380,11 @@ export default function EbicsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {pendingDelete && (
-        <div className="modal-overlay" onClick={() => setPendingDelete(null)}>
+        <ModalOverlay onClose={() => setPendingDelete(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Delete credential</h3>
@@ -399,7 +400,7 @@ export default function EbicsPage() {
               <button className="btn btn-danger" onClick={confirmDelete}>Delete</button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {pendingAdd && (() => {
@@ -407,7 +408,7 @@ export default function EbicsPage() {
         const target = pendingAdd.linkTargetId != null
           ? accounts.find((a) => a.id === pendingAdd.linkTargetId) : null;
         return (
-          <div className="modal-overlay" onClick={() => setPendingAdd(null)}>
+          <ModalOverlay onClose={() => setPendingAdd(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{target ? 'Convert existing account' : 'Add account'}</h3>
@@ -452,7 +453,7 @@ export default function EbicsPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         );
       })()}
 

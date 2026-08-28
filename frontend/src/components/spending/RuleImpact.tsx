@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { previewCategoryRule, type RulePreview } from '../../api/client';
+import {
+  EMPTY_RANGE, isImpossible, rangePayload, type AmountRange,
+} from '../../utils/ruleRange';
 
 interface Props {
   matchText: string;
@@ -7,6 +10,8 @@ interface Props {
   isTransfer: boolean;
   /** Set when editing an existing rule, so it is simulated in its own place. */
   ruleId?: number;
+  /** Optional amount bounds — the preview must apply them too. */
+  range?: AmountRange;
 }
 
 // Long enough that typing a merchant name is one request, short enough that
@@ -22,16 +27,19 @@ const DEBOUNCE_MS = 350;
  * reports zero is far more often shadowed than wrong — and that is invisible
  * from the match text alone.
  */
-export default function RuleImpact({ matchText, isRegex, isTransfer, ruleId }: Props) {
+export default function RuleImpact({
+  matchText, isRegex, isTransfer, ruleId, range = EMPTY_RANGE,
+}: Props) {
   const text = matchText.trim();
   // Requests are keyed so a stale answer is never shown next to newer input;
   // the previous count simply stays until its replacement lands.
-  const key = JSON.stringify([text, isRegex, isTransfer, ruleId ?? null]);
+  const key = JSON.stringify([text, isRegex, isTransfer, ruleId ?? null, range]);
   const [result, setResult] =
     useState<{ key: string; data?: RulePreview; error?: string } | null>(null);
+  const impossible = isImpossible(range);
 
   useEffect(() => {
-    if (!text) return;
+    if (!text || impossible) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       previewCategoryRule(
@@ -40,6 +48,7 @@ export default function RuleImpact({ matchText, isRegex, isTransfer, ruleId }: P
           is_regex: isRegex,
           is_transfer: isTransfer,
           ...(ruleId ? { rule_id: ruleId } : {}),
+          ...rangePayload(range),
         },
         controller.signal,
       )
@@ -53,9 +62,17 @@ export default function RuleImpact({ matchText, isRegex, isTransfer, ruleId }: P
       clearTimeout(timer);
       controller.abort();
     };
-  }, [key, text, isRegex, isTransfer, ruleId]);
+  }, [key, text, isRegex, isTransfer, ruleId, range, impossible]);
 
   if (!text) return null;
+  if (impossible) {
+    return (
+      <div className="rule-impact bad">
+        <strong>The amount range is empty</strong> — no transaction can satisfy
+        both bounds.
+      </div>
+    );
+  }
   const fresh = result?.key === key ? result : null;
   if (!fresh) return <div className="rule-impact muted">Checking…</div>;
   if (fresh.error) return <div className="rule-impact bad">{fresh.error}</div>;

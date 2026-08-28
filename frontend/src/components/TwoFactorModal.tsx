@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Key, X } from 'lucide-react';
+import ModalOverlay from './ModalOverlay';
 
 export interface AuthPrompt {
   accountId: number;
@@ -53,7 +54,7 @@ export default function TwoFactorModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -111,6 +112,6 @@ export default function TwoFactorModal({
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

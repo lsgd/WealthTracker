@@ -8,6 +8,7 @@ import {
   createAccountsBulk,
   completeDiscoveryAuth,
 } from '../api/client';
+import ModalOverlay from './ModalOverlay';
 
 interface Broker {
   id: number;
@@ -91,17 +92,6 @@ export default function AddAccountModal({ onClose, onCreated }: Props) {
       .catch(() => setError('Failed to load brokers'))
       .finally(() => setLoadingBrokers(false));
   }, []);
-
-  // Close on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
 
   const handleBrokerChange = (code: string) => {
     const broker = brokers.find((b) => b.code === code) ?? null;
@@ -255,7 +245,7 @@ export default function AddAccountModal({ onClose, onCreated }: Props) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>
@@ -650,6 +640,6 @@ export default function AddAccountModal({ onClose, onCreated }: Props) {
           </form>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
