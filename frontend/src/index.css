@@ -665,9 +665,6 @@ a:hover {
   overflow: hidden;
 }
 
-/* Two-column dialogs (the rule editor) need room for both halves. */
-.modal-wide { max-width: 760px; }
-
 .modal-header {
   display: flex;
   align-items: center;
@@ -698,6 +695,14 @@ a:hover {
 /* Large modal */
 .modal-lg {
   max-width: 700px;
+}
+
+/* The two-column rule editor: room for the stacked fields on the left AND the
+   amount conditions on the right, which put a label, an operator, a number and
+   a currency on one line. Its own class rather than a wider .modal-wide, which
+   other dialogs share at their own size. */
+.modal-rule {
+  max-width: 920px;
 }
 
 /* Modal content scrolling */
@@ -2381,9 +2386,16 @@ input[type="date"]::-webkit-calendar-picker-indicator {
    fields and shoved everything below it down mid-typing. */
 .rule-dialog {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The right column carries the amount conditions — a label, an operator, a
+     number and a currency on one line — so it needs roughly twice the width
+     of the stacked fields on the left. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 20px;
   align-items: start;
+  /* The dialog itself clips (overflow: hidden) so its header and actions stay
+     put; a tall rule form scrolls here instead of being cut off. */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 @media (max-width: 720px) {
@@ -2446,7 +2458,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A flex item defaults to min-width:auto, so without this the row refuses
+     to shrink below its content and spills past the panel border. */
+  min-width: 0;
 }
+
+.rule-bound > * { min-width: 0; }
 
 .rule-bound-label {
   flex: 0 0 62px;
@@ -2485,13 +2502,19 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   flex: 1 1 auto;
   display: flex;
   gap: 4px;
+  min-width: 0;
 }
 
 .rule-direction .btn {
   flex: 1 1 0;
+  min-width: 0;
   padding: 4px 6px;
   font-size: 0.78rem;
+  white-space: nowrap;
 }
+
+/* Wide enough for "1'234.56" before the panel starts squeezing it. */
+.rule-bound input { flex: 1 1 90px; }
 
 .rule-advanced-echo {
   font-size: 0.8rem;

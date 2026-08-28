@@ -1690,7 +1690,7 @@ export default function SpendingPage() {
 
         {editRule && (
           <ModalOverlay onClose={() => setEditRule(null)}>
-            <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal modal-rule" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editRule === 'new' ? 'New rule' : 'Edit rule'}</h3>
                 <button className="btn btn-ghost" onClick={() => setEditRule(null)}>
