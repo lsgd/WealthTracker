@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { previewCategoryRule, type RulePreview } from '../../api/client';
 import {
-  EMPTY_RANGE, isImpossible, rangePayload, type AmountRange,
-} from '../../utils/ruleRange';
+  EMPTY_FILTER, isImpossible, filterPayload, type AmountFilter,
+} from '../../utils/ruleAmount';
 
 interface Props {
   matchText: string;
@@ -10,8 +10,8 @@ interface Props {
   isTransfer: boolean;
   /** Set when editing an existing rule, so it is simulated in its own place. */
   ruleId?: number;
-  /** Optional amount bounds — the preview must apply them too. */
-  range?: AmountRange;
+  /** Optional amount conditions — the preview must apply them too. */
+  filter?: AmountFilter;
 }
 
 // Long enough that typing a merchant name is one request, short enough that
@@ -28,15 +28,15 @@ const DEBOUNCE_MS = 350;
  * from the match text alone.
  */
 export default function RuleImpact({
-  matchText, isRegex, isTransfer, ruleId, range = EMPTY_RANGE,
+  matchText, isRegex, isTransfer, ruleId, filter = EMPTY_FILTER,
 }: Props) {
   const text = matchText.trim();
   // Requests are keyed so a stale answer is never shown next to newer input;
   // the previous count simply stays until its replacement lands.
-  const key = JSON.stringify([text, isRegex, isTransfer, ruleId ?? null, range]);
+  const key = JSON.stringify([text, isRegex, isTransfer, ruleId ?? null, filter]);
   const [result, setResult] =
     useState<{ key: string; data?: RulePreview; error?: string } | null>(null);
-  const impossible = isImpossible(range);
+  const impossible = isImpossible(filter);
 
   useEffect(() => {
     if (!text || impossible) return;
@@ -48,7 +48,7 @@ export default function RuleImpact({
           is_regex: isRegex,
           is_transfer: isTransfer,
           ...(ruleId ? { rule_id: ruleId } : {}),
-          ...rangePayload(range),
+          ...filterPayload(filter),
         },
         controller.signal,
       )
@@ -62,7 +62,7 @@ export default function RuleImpact({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [key, text, isRegex, isTransfer, ruleId, range, impossible]);
+  }, [key, text, isRegex, isTransfer, ruleId, filter, impossible]);
 
   if (!text) return null;
   if (impossible) {

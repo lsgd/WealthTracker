@@ -885,7 +885,9 @@ export interface CategoryRule {
   is_regex: boolean;
   // Transfer rules mark matches as transfers instead of categorizing them.
   is_transfer: boolean;
-  // Optional amount bounds, compared against |amount|. Null means no bound.
+  // Optional amount conditions. `direction` restricts to money out or in;
+  // the bounds are the size only, so they are never negative. Null = no bound.
+  direction: 'any' | 'payment' | 'income';
   min_amount: string | null;
   min_inclusive: boolean;
   max_amount: string | null;
@@ -1005,6 +1007,7 @@ export async function createCategoryRule(fields: {
   spread_months?: number;
   is_regex?: boolean;
   is_transfer?: boolean;
+  direction?: 'any' | 'payment' | 'income';
   min_amount?: string | null;
   min_inclusive?: boolean;
   max_amount?: string | null;
@@ -1027,6 +1030,7 @@ export async function updateCategoryRule(ruleId: number, fields: {
   spread_months?: number;
   is_regex?: boolean;
   is_transfer?: boolean;
+  direction?: 'any' | 'payment' | 'income';
   min_amount?: string | null;
   min_inclusive?: boolean;
   max_amount?: string | null;
@@ -1061,6 +1065,7 @@ export async function previewCategoryRule(fields: {
   is_transfer?: boolean;
   /** Set when editing, so the simulation keeps the rule's own position. */
   rule_id?: number;
+  direction?: 'any' | 'payment' | 'income';
   min_amount?: string | null;
   min_inclusive?: boolean;
   max_amount?: string | null;

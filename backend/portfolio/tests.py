@@ -3789,7 +3789,7 @@ class RuleAmountRangeTests(APITestCase):
             self.assertEqual(tx.category, expected, f'{tx.amount}')
 
     def test_bounds_are_compared_without_the_sign(self):
-        """Spending is stored negative; "> 95.99" must still mean a big payment."""
+        """Size is written the way it is spoken; direction is a separate axis."""
         from portfolio.classification import apply_rules
         spent = self._tx('-120.00', key='k1')
         refunded = self._tx('120.00', key='k2')
@@ -3803,8 +3803,99 @@ class RuleAmountRangeTests(APITestCase):
             tx.refresh_from_db()
             self.assertEqual(tx.category, expected, f'{tx.amount}')
 
+    def test_direction_separates_payments_from_income(self):
+        from portfolio.classification import apply_rules
+        spent = self._tx('-50.00', key='k1')
+        received = self._tx('50.00', key='k2')
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.groceries,
+            position=0, direction='payment')
+        apply_rules(self.user)
+        spent.refresh_from_db(); received.refresh_from_db()
+        self.assertEqual(spent.category, self.groceries)
+        self.assertIsNone(received.category, 'a refund is not a payment')
+
+    def test_direction_combines_with_the_bounds(self):
+        """"payment and < 2.00" — the case a signed bound cannot express."""
+        from portfolio.classification import apply_rules
+        small_payment = self._tx('-1.00', key='k1')
+        big_payment = self._tx('-9.00', key='k2')
+        small_income = self._tx('1.00', key='k3')
+        self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.coffee,
+            position=0, direction='payment', max_amount=Decimal('2.00'))
+        apply_rules(self.user)
+        for tx, expected in ((small_payment, self.coffee), (big_payment, None),
+                             (small_income, None)):
+            tx.refresh_from_db()
+            self.assertEqual(tx.category, expected, f'{tx.amount}')
+
+    def test_direction_alone_needs_no_bounds(self):
+        from portfolio.classification import amount_matches
+
+        class R:
+            min_amount = max_amount = None
+            min_inclusive, max_inclusive = True, False
+
+            def __init__(self, direction):
+                self.direction = direction
+
+        self.assertTrue(amount_matches(R('income'), Decimal('5')))
+        self.assertFalse(amount_matches(R('income'), Decimal('-5')))
+        self.assertTrue(amount_matches(R('payment'), Decimal('-5')))
+        self.assertFalse(amount_matches(R('payment'), Decimal('5')))
+        # Zero is neither, and 'any' takes everything.
+        self.assertFalse(amount_matches(R('payment'), Decimal('0')))
+        self.assertFalse(amount_matches(R('income'), Decimal('0')))
+        self.assertTrue(amount_matches(R('any'), Decimal('0')))
+
+    def test_same_text_allowed_when_only_the_direction_differs(self):
+        url = reverse('rule_list')
+        out = self.client.post(url, {
+            'match_text': 'twint', 'category': self.groceries.id,
+            'direction': 'payment',
+        }, format='json')
+        self.assertEqual(out.status_code, 201, out.data)
+        inn = self.client.post(url, {
+            'match_text': 'twint', 'category': self.coffee.id,
+            'direction': 'income',
+        }, format='json')
+        self.assertEqual(inn.status_code, 201, inn.data)
+        again = self.client.post(url, {
+            'match_text': 'twint', 'category': self.coffee.id,
+            'direction': 'payment',
+        }, format='json')
+        self.assertEqual(again.status_code, 400, again.data)
+
+    def test_preview_respects_the_direction(self):
+        self._tx('-4.20', key='k1')
+        self._tx('4.20', key='k2')
+        both = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros'}, format='json')
+        self.assertEqual(both.data['will_classify'], 2)
+        payments = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros', 'direction': 'payment'}, format='json')
+        self.assertEqual(payments.data['will_classify'], 1)
+        bad = self.client.post(reverse('rule_preview'), {
+            'match_text': 'migros', 'direction': 'sideways'}, format='json')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_existing_rules_keep_matching_everything(self):
+        """Rules created before the feature must not narrow silently."""
+        rule = self.CategoryRule.objects.create(
+            user=self.user, match_text='migros', category=self.groceries,
+            position=0)
+        self.assertEqual(rule.direction, 'any')
+        from portfolio.classification import apply_rules
+        spent = self._tx('-50.00', key='k1')
+        received = self._tx('50.00', key='k2')
+        apply_rules(self.user)
+        for tx in (spent, received):
+            tx.refresh_from_db()
+            self.assertEqual(tx.category, self.groceries)
+
     def test_exclusive_and_inclusive_edges(self):
-        from portfolio.classification import amount_in_range
+        from portfolio.classification import amount_matches
 
         class R:
             def __init__(self, **kw):
@@ -3814,14 +3905,14 @@ class RuleAmountRangeTests(APITestCase):
 
         gte = R(min_amount=Decimal('20'), min_inclusive=True)
         gt = R(min_amount=Decimal('20'), min_inclusive=False)
-        self.assertTrue(amount_in_range(gte, Decimal('-20')))
-        self.assertFalse(amount_in_range(gt, Decimal('-20')))
+        self.assertTrue(amount_matches(gte, Decimal('-20')))
+        self.assertFalse(amount_matches(gt, Decimal('-20')))
         lte = R(max_amount=Decimal('20'), max_inclusive=True)
         lt = R(max_amount=Decimal('20'), max_inclusive=False)
-        self.assertTrue(amount_in_range(lte, Decimal('-20')))
-        self.assertFalse(amount_in_range(lt, Decimal('-20')))
+        self.assertTrue(amount_matches(lte, Decimal('-20')))
+        self.assertFalse(amount_matches(lt, Decimal('-20')))
         # A rule with no bounds is every rule that predates the feature.
-        self.assertTrue(amount_in_range(R(), Decimal('-1')))
+        self.assertTrue(amount_matches(R(), Decimal('-1')))
 
     def test_same_text_allowed_with_a_different_range_but_not_the_same(self):
         url = reverse('rule_list')

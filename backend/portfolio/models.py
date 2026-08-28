@@ -258,11 +258,24 @@ class CategoryRule(models.Model):
         default=1,
         help_text='Spread matched transactions over this many months (1 = no spread)'
     )
-    # Optional amount range, compared against the transaction's amount WITHOUT
-    # its sign: spending is stored negative, so a user asking for "between 1.57
-    # and 20" would otherwise have to invert and negate the bounds. A lower and
-    # an upper bound are the only two that can both hold at once, which is why
-    # there are exactly two — each independently inclusive or exclusive.
+    # Direction and size are independent facts about a transaction, so they are
+    # separate conditions: a signed bound cannot say "payments between 1 and 20"
+    # without inverting the range, and an unsigned one cannot say "payments"
+    # at all. Splitting them lets each control mean one thing, and keeps the
+    # bounds below positive — the way an amount is spoken about.
+    DIRECTION_CHOICES = [
+        ('any', 'Any'),
+        ('payment', 'Payments only (amount < 0)'),
+        ('income', 'Income only (amount > 0)'),
+    ]
+    direction = models.CharField(
+        max_length=8, choices=DIRECTION_CHOICES, default='any',
+        help_text='Restrict to money out, money in, or neither'
+    )
+    # Optional amount bounds, compared against the transaction's amount WITHOUT
+    # its sign — direction above carries that. A lower and an upper bound are
+    # the only two conditions that can both hold at once, which is why there
+    # are exactly two, each independently inclusive or exclusive.
     min_amount = models.DecimalField(
         max_digits=14, decimal_places=2, null=True, blank=True,
         help_text='Lower bound on |amount|; NULL for no lower bound'

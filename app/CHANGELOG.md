@@ -84,7 +84,7 @@
 - Web: creating or editing a rule now shows how many existing transactions it would classify, with examples, and says when an earlier rule would claim them first
 - Web: dropdowns and budget fields no longer render as white boxes on the dark background
 - Web: in the normalized view the transaction list now also shows bills booked earlier whose spread reaches into the selected period, each stating the share counted (e.g. "6/12"), so the list adds up to the category total in the breakdown
-- Rules can now be limited to an amount range under a new Advanced section (at least / at most, each inclusive or exclusive), so the same merchant can go to different categories by size; bounds ignore the sign, and two rules may share match text when their ranges differ
+- Rules can now be limited by amount under a new Advanced section: a direction (any, payments only, income only) plus an at least / at most range, each bound inclusive or exclusive. Sizes are written without a sign, so a one franc payment is "Payments, under 2". Two rules may share match text when their amount conditions differ, which lets the same merchant go to different categories by size or direction
 - Web: the rule dialog is two columns, with the match count in its own so it no longer pushes the form down as you type
 - Web: dialogs close with the Escape key, and no longer close when a text selection started inside the dialog ends outside it
 - Bug fixes and improvements.

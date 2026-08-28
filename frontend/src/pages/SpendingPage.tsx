@@ -18,7 +18,7 @@ import ClampedText from '../components/ClampedText';
 import CategoryBreakdown from '../components/spending/CategoryBreakdown';
 import CategoryDetail from '../components/spending/CategoryDetail';
 import PeriodBar from '../components/spending/PeriodBar';
-import RuleAmountRange from '../components/spending/RuleAmountRange';
+import RuleAmountFilter from '../components/spending/RuleAmountFilter';
 import RuleImpact from '../components/spending/RuleImpact';
 import SummaryTiles from '../components/spending/SummaryTiles';
 import {
@@ -36,8 +36,9 @@ import {
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
 import {
-  EMPTY_RANGE, isImpossible, rangeOf, rangePayload, type AmountRange,
-} from '../utils/ruleRange';
+  describeFilter, EMPTY_FILTER, filterOf, filterPayload, isImpossible,
+  type AmountFilter,
+} from '../utils/ruleAmount';
 import type {
   BackfillOutcome,
   TransactionSortKey,
@@ -172,7 +173,7 @@ export default function SpendingPage() {
     useState<number | '__transfer__' | ''>('__transfer__');
   const [editSpread, setEditSpread] = useState(1);
   const [editIsRegex, setEditIsRegex] = useState(false);
-  const [editRange, setEditRange] = useState<AmountRange>(EMPTY_RANGE);
+  const [editFilter, setEditRange] = useState<AmountFilter>(EMPTY_FILTER);
   const [editSaving, setEditSaving] = useState(false);
   const [ruleFilter, setRuleFilter] = useState('');
   const ruleInputRef = useRef<HTMLInputElement>(null);
@@ -771,7 +772,7 @@ export default function SpendingPage() {
     setEditTarget(tx.is_transfer ? '__transfer__' : (tx.category ?? ''));
     setEditSpread(tx.spread_months > 1 ? tx.spread_months : 1);
     setEditIsRegex(false);
-    setEditRange(EMPTY_RANGE);
+    setEditRange(EMPTY_FILTER);
     setError('');
     setEditRule('new');
   };
@@ -801,7 +802,7 @@ export default function SpendingPage() {
     setEditTarget(rule.is_transfer ? '__transfer__' : (rule.category as number));
     setEditSpread(rule.spread_months);
     setEditIsRegex(rule.is_regex);
-    setEditRange(rangeOf(rule));
+    setEditRange(filterOf(rule));
     setError('');
   };
 
@@ -816,7 +817,7 @@ export default function SpendingPage() {
         return;
       }
     }
-    if (isImpossible(editRange)) {
+    if (isImpossible(editFilter)) {
       setError('The amount range is empty — no transaction can satisfy both bounds.');
       return;
     }
@@ -826,7 +827,7 @@ export default function SpendingPage() {
     const target = isTransfer
       ? { is_transfer: true, spread_months: 1 }
       : { category: editTarget as number, spread_months: editSpread };
-    const bounds = rangePayload(editRange);
+    const bounds = filterPayload(editFilter);
     setEditSaving(true);
     try {
       if (rule === 'new') {
@@ -1763,20 +1764,20 @@ export default function SpendingPage() {
                 </div>
 
                 <div className="rule-dialog-side">
-                  <RuleAmountRange
-                    value={editRange}
+                  <RuleAmountFilter
+                    value={editFilter}
                     onChange={setEditRange}
                     currency={currency}
                     // Open when the rule already has a range, so an existing
                     // condition is never hidden behind a collapsed section.
-                    startOpen={editRange.min !== '' || editRange.max !== ''}
+                    startOpen={describeFilter(editFilter) !== null}
                   />
                   <RuleImpact
                     matchText={editText}
                     isRegex={editIsRegex}
                     isTransfer={editTarget === '__transfer__'}
                     ruleId={editRule === 'new' ? undefined : editRule.id}
-                    range={editRange}
+                    filter={editFilter}
                   />
                 </div>
               </div>

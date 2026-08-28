@@ -2480,6 +2480,19 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-size: 0.78rem;
 }
 
+/* Direction sits on the same grid as the bounds, but spans their columns. */
+.rule-direction {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.rule-direction .btn {
+  flex: 1 1 0;
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
 .rule-advanced-echo {
   font-size: 0.8rem;
   color: var(--color-text-muted);

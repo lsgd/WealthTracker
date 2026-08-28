@@ -1553,8 +1553,10 @@ class CategoryRulePreviewView(APIView):
 
     @staticmethod
     def _bounds(data):
-        """The amount range from the payload, or None when unbounded."""
+        """The amount condition from the payload, or None when unrestricted."""
         from decimal import Decimal, InvalidOperation
+
+        from .models import CategoryRule
 
         def amount(key):
             raw = data.get(key)
@@ -1565,14 +1567,18 @@ class CategoryRulePreviewView(APIView):
             except (InvalidOperation, ValueError):
                 raise ValueError(f'"{key}" is not a number')
 
+        direction = data.get('direction') or 'any'
+        if direction not in dict(CategoryRule.DIRECTION_CHOICES):
+            raise ValueError('"direction" must be any, payment or income')
         low, high = amount('min_amount'), amount('max_amount')
-        if low is None and high is None:
+        if direction == 'any' and low is None and high is None:
             return None
         # Bounds are compared against |amount|; a negative one matches nothing.
         for name, value in (('min_amount', low), ('max_amount', high)):
             if value is not None and value < 0:
                 raise ValueError(f'"{name}" cannot be negative')
         return {
+            'direction': direction,
             'min_amount': low,
             'min_inclusive': data.get('min_inclusive', True) is not False,
             'max_amount': high,

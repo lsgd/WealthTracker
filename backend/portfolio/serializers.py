@@ -67,7 +67,7 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
         model = CategoryRule
         fields = [
             'id', 'match_text', 'category', 'category_name', 'spread_months',
-            'position', 'is_regex', 'is_transfer',
+            'position', 'is_regex', 'is_transfer', 'direction',
             'min_amount', 'min_inclusive', 'max_amount', 'max_inclusive',
         ]
         read_only_fields = ['position']
@@ -128,13 +128,15 @@ class CategoryRuleSerializer(serializers.ModelSerializer):
                     {'max_amount': 'The range is empty — no amount can satisfy '
                                    'both bounds.'})
         # Rules are first-match-wins, so a second rule with the same match text
-        # AND the same amount range can never fire — reject it instead of
-        # growing dead entries. Same text with a DIFFERENT range is the point
-        # of the feature ("migros under 20" before "migros"), so it is allowed.
+        # AND the same amount condition can never fire — reject it instead of
+        # growing dead entries. Same text with a DIFFERENT condition is the
+        # point of the feature ("migros under 20" before "migros"), so it is
+        # allowed.
         request = self.context.get('request')
         if match_text and request:
             clashing = CategoryRule.objects.filter(
                 user=request.user, match_text__iexact=match_text,
+                direction=bound('direction', 'any'),
                 min_amount=low, max_amount=high,
             )
             if low is not None:

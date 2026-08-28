@@ -43,18 +43,26 @@ def rule_matcher(rule):
     return lambda haystack: needle in haystack
 
 
-def amount_in_range(rule, amount) -> bool:
-    """Does ``amount`` satisfy the rule's optional amount bounds?
+def amount_matches(rule, amount) -> bool:
+    """Does ``amount`` satisfy the rule's direction and its bounds?
 
-    Compared without the sign: spending is stored negative, so "between 1.57
-    and 20" would otherwise have to be written as an inverted, negated range.
-    A rule with neither bound set accepts everything, which is every rule that
+    Two independent conditions. ``direction`` decides money out vs money in;
+    the bounds are compared against the size alone, so they are written the way
+    an amount is spoken about ("under 20") rather than inverted and negated.
+    A rule that sets neither accepts everything, which is every rule that
     predates the feature.
     """
+    direction = getattr(rule, 'direction', 'any') or 'any'
     low, high = rule.min_amount, rule.max_amount
-    if low is None and high is None:
+    if direction == 'any' and low is None and high is None:
         return True
     if amount is None:
+        return False
+    # An amount of exactly zero is neither a payment nor income, so a rule
+    # that asks for either does not claim it.
+    if direction == 'payment' and amount >= 0:
+        return False
+    if direction == 'income' and amount <= 0:
         return False
     value = abs(amount)
     if low is not None and not (value >= low if rule.min_inclusive else value > low):
@@ -65,10 +73,10 @@ def amount_in_range(rule, amount) -> bool:
 
 
 def rule_predicate(rule):
-    """``(haystack, amount) -> bool`` for one rule: the text AND the range."""
+    """``(haystack, amount) -> bool`` for one rule: the text AND the amount."""
     matches_text = rule_matcher(rule)
     return lambda haystack, amount: (
-        matches_text(haystack) and amount_in_range(rule, amount))
+        matches_text(haystack) and amount_matches(rule, amount))
 
 
 def first_matching_rule(user, tx):
@@ -89,10 +97,11 @@ class _Draft:
 
     id = None
 
-    def __init__(self, match_text, is_regex, min_amount=None, min_inclusive=True,
-                 max_amount=None, max_inclusive=False):
+    def __init__(self, match_text, is_regex, direction='any', min_amount=None,
+                 min_inclusive=True, max_amount=None, max_inclusive=False):
         self.match_text = match_text
         self.is_regex = is_regex
+        self.direction = direction
         self.min_amount = min_amount
         self.min_inclusive = min_inclusive
         self.max_amount = max_amount
@@ -116,8 +125,8 @@ def preview_rule(user, match_text, is_regex, is_transfer, rule_id=None,
 
     An edit (``rule_id``) is simulated in place, so the rule keeps its
     position; a new rule is appended, which is where a saved one would land.
-    ``bounds`` is the optional amount range, as the same four keys the model
-    stores.
+    ``bounds`` is the optional amount condition, as the same keys the model
+    stores (direction plus the two bounds).
     """
     from .models import Transaction
 
