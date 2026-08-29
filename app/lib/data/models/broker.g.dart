@@ -10,10 +10,12 @@ _Broker _$BrokerFromJson(Map<String, dynamic> json) => _Broker(
   code: json['code'] as String,
   name: json['name'] as String,
   supportsAutoSync: json['supports_auto_sync'] as bool? ?? false,
+  requiresInteractiveSync: json['requires_interactive_sync'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$BrokerToJson(_Broker instance) => <String, dynamic>{
   'code': instance.code,
   'name': instance.name,
   'supports_auto_sync': instance.supportsAutoSync,
+  'requires_interactive_sync': instance.requiresInteractiveSync,
 };

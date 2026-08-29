@@ -234,7 +234,7 @@ class AccountCard extends ConsumerWidget {
     }
   }
 
-  /// Whether this account can be manually synced from the app.
-  /// Only accounts with sync enabled AND broker supports auto-sync.
-  bool get _canSync => account.syncEnabled && account.broker.supportsAutoSync;
+  /// Whether this account can be synced from the app — including brokers that
+  /// stop for a one-time code, which is exactly what the sync button is for.
+  bool get _canSync => account.canSync;
 }

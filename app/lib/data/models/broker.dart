@@ -9,6 +9,11 @@ abstract class Broker with _$Broker {
     required String code,
     required String name,
     @JsonKey(name: 'supports_auto_sync') @Default(false) bool supportsAutoSync,
+    // Syncs fine, but stops mid-way for a code the user has to type in, so it
+    // is left out of unattended runs ("Sync all", sync on app open).
+    @JsonKey(name: 'requires_interactive_sync')
+    @Default(false)
+    bool requiresInteractiveSync,
   }) = _Broker;
 
   factory Broker.fromJson(Map<String, dynamic> json) => _$BrokerFromJson(json);

@@ -2,6 +2,8 @@
 
 ## Next: 1.4.0
 
+- Swisscard accounts can be synced from the app again: the card no longer counts as a manual account, and its sync button starts the login that texts you a code (it stays out of "Sync all", which runs unattended)
+- Tapping the "Syncing accounts" bar opens a live breakdown: accounts still in progress on top, finished ones below, each moving down as it completes
 - Transactions can now be marked as transfers by hand (checkbox in the web transaction list, switch in the app's category sheet), excluding them from the spending report — needed for broker funding that auto-detection cannot pair
 - Importing historical transactions now reports the date range the bank actually served and warns when it is shorter than requested
 - Syncs for brokers that report holdings (IBKR, Morgan Stanley) now record per-asset positions; a Holdings card on the dashboard (web and app) shows them merged across accounts

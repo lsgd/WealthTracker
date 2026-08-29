@@ -4,13 +4,24 @@ from .models import Broker, EbicsCredential
 
 
 class BrokerSerializer(serializers.ModelSerializer):
+    # `supports_auto_sync` says whether a sync can finish with nobody watching.
+    # It does NOT say whether the broker can sync at all: an interactive broker
+    # syncs perfectly well, it just stops mid-way for a code the user types in.
+    # Clients need both facts to decide whether to offer a sync button.
+    requires_interactive_sync = serializers.SerializerMethodField()
+
     class Meta:
         model = Broker
         fields = [
             'id', 'code', 'name', 'integration_type',
             'country', 'is_active', 'supports_2fa', 'supports_auto_sync',
+            'requires_interactive_sync',
             'credential_schema', 'logo_url', 'website_url', 'api_base_url'
         ]
+
+    def get_requires_interactive_sync(self, obj) -> bool:
+        from .integrations import INTERACTIVE_BROKER_CODES
+        return obj.code in INTERACTIVE_BROKER_CODES
 
 
 class EbicsCredentialSerializer(serializers.ModelSerializer):

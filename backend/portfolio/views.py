@@ -111,8 +111,11 @@ def _sync_single_account(*, account_id, credentials, base_currency):
 
     from brokers.integrations import get_broker_integration
 
+    from .sync_queue import sync_queue
+
     account = FinancialAccount.objects.get(pk=account_id)
     integration = get_broker_integration(account.broker, credentials, account_id=account.id)
+    sync_queue.report_account(account_id, 'syncing')
 
     try:
         auth_result = integration.authenticate()
@@ -125,6 +128,8 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                     'session_data': auth_result.session_data,
                 }
                 account.save()
+                sync_queue.report_account(
+                    account_id, 'pending_2fa', 'Waiting for a code')
                 return {
                     'status': 'pending_auth',
                     'message': 'Two-factor authentication required',
@@ -135,9 +140,17 @@ def _sync_single_account(*, account_id, credentials, base_currency):
                 account.status = 'error'
                 account.last_sync_error = auth_result.error_message
                 account.save()
+                sync_queue.report_account(
+                    account_id, 'error', auth_result.error_message or '')
                 return {'status': 'error', 'error': auth_result.error_message}
 
-        return _sync_authenticated_account(account, integration, base_currency)
+        result = _sync_authenticated_account(account, integration, base_currency)
+        sync_queue.report_account(
+            account_id, 'done', result.get('message') or '')
+        return result
+    except Exception as exc:
+        sync_queue.report_account(account_id, 'error', str(exc) or repr(exc))
+        raise
     finally:
         integration.close()
 
@@ -259,6 +272,8 @@ def _sync_all_accounts(*, account_creds, base_currency):
 
     from brokers.integrations import get_broker_integration
 
+    from .sync_queue import sync_queue
+
     results = {
         'synced': [],
         'pending_2fa': [],
@@ -267,6 +282,7 @@ def _sync_all_accounts(*, account_creds, base_currency):
     }
 
     for account_id, credentials in account_creds:
+        sync_queue.report_account(account_id, 'syncing')
         try:
             account = FinancialAccount.objects.get(pk=account_id)
             integration = get_broker_integration(account.broker, credentials, account_id=account.id)
@@ -287,6 +303,8 @@ def _sync_all_accounts(*, account_creds, base_currency):
                             'name': account.name,
                             'two_fa_type': auth_result.two_fa_type,
                         })
+                        sync_queue.report_account(
+                            account_id, 'pending_2fa', 'Waiting for a code')
                         continue
                     else:
                         account.status = 'error'
@@ -297,6 +315,8 @@ def _sync_all_accounts(*, account_creds, base_currency):
                             'name': account.name,
                             'error': auth_result.error_message,
                         })
+                        sync_queue.report_account(
+                            account_id, 'error', auth_result.error_message or '')
                         continue
 
                 from brokers.integrations.base import NoNewDataError
@@ -312,6 +332,7 @@ def _sync_all_accounts(*, account_creds, base_currency):
                     results['skipped'].append({
                         'id': account.id, 'name': account.name, 'reason': 'No new data',
                     })
+                    sync_queue.report_account(account_id, 'skipped', 'No new data')
                     continue
 
                 existing = AccountSnapshot.objects.filter(
@@ -327,6 +348,7 @@ def _sync_all_accounts(*, account_creds, base_currency):
                         'name': account.name,
                         'reason': 'No change',
                     })
+                    sync_queue.report_account(account_id, 'skipped', 'No change')
                 else:
                     snapshot = AccountSnapshot.objects.create(
                         account=account,
@@ -355,6 +377,9 @@ def _sync_all_accounts(*, account_creds, base_currency):
                         'balance': float(balance_info.balance),
                         'currency': balance_info.currency,
                     })
+                    sync_queue.report_account(
+                        account_id, 'done',
+                        f'{balance_info.currency} {balance_info.balance:,.2f}')
 
                 # Snapshot every other day the broker delivered too (e.g. an EBICS
                 # camt.053 backlog), not just the latest — otherwise those are lost.
@@ -391,6 +416,7 @@ def _sync_all_accounts(*, account_creds, base_currency):
                 'name': getattr(account, 'name', str(account_id)),
                 'error': str(e) or repr(e),
             })
+            sync_queue.report_account(account_id, 'error', str(e) or repr(e))
 
     return {
         'status': 'success',
@@ -675,6 +701,12 @@ class AccountSyncView(KEKAuthenticationMixin, APIView):
             account_id=account.id,
             credentials=credentials,
             base_currency=base_currency,
+            progress=[{
+                'id': account.id,
+                'name': account.name,
+                'state': 'waiting',
+                'message': '',
+            }],
         )
 
         return Response({
@@ -739,10 +771,17 @@ class SyncAllAccountsView(KEKAuthenticationMixin, APIView):
         # Decrypt all credentials on the request thread (needs KEK header)
         base_currency = request.user.profile.base_currency
         account_creds = []
+        progress = []
         for account in accounts:
             try:
                 creds = self.decrypt_sync_credentials(request, account)
                 account_creds.append((account.id, creds))
+                progress.append({
+                    'id': account.id,
+                    'name': account.name,
+                    'state': 'waiting',
+                    'message': '',
+                })
             except Exception as e:
                 logger.warning("Failed to decrypt credentials for account %s: %s", account.id, e)
 
@@ -757,6 +796,7 @@ class SyncAllAccountsView(KEKAuthenticationMixin, APIView):
             _sync_all_accounts,
             account_creds=account_creds,
             base_currency=base_currency,
+            progress=progress,
         )
 
         return Response({

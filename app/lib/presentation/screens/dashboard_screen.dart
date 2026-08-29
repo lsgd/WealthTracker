@@ -15,6 +15,7 @@ import '../providers/wealth_provider.dart';
 import '../widgets/account_card.dart';
 import '../widgets/holdings_card.dart';
 import '../widgets/quick_snapshot_sheet.dart';
+import '../widgets/sync_progress_dialog.dart';
 import '../widgets/two_factor_prompt.dart';
 import '../widgets/wealth_line_chart.dart';
 import '../widgets/wealth_summary_card.dart';
@@ -161,16 +162,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         final taskId = startResult['task_id'] as String?;
 
         if (taskId != null) {
-          final result = await _pollSyncTask(repo, taskId);
+          final outcome = await _pollSyncTask(repo, taskId);
           await _refresh();
-          // Brokers that cannot sync unattended (Swisscard sends an SMS)
-          // stop here and wait for the code.
-          if (result?['status'] == 'pending_auth') {
-            await _askForAuthCode(repo, account, result!);
+          if (outcome == null) return;
+          // Brokers that cannot sync unattended (Swisscard sends an SMS,
+          // some FinTS banks a TAN) stop here and wait for the code.
+          if (outcome['status'] == 'pending_auth') {
+            await _askForAuthCode(repo, account, outcome);
+            return;
+          }
+          if (outcome['status'] == 'error') {
+            if (mounted) {
+              _showSyncErrorsDialog([
+                {
+                  'name': account.name,
+                  'error': outcome['error'] ?? 'Sync failed',
+                }
+              ]);
+            }
             return;
           }
           if (mounted) {
-            final message = result?['message'] as String?;
+            final message = outcome['message'] as String?;
             if (message != null) _showSuccessSnackBar(message);
           }
         }
@@ -242,7 +255,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
-  /// Poll a sync task until it completes or fails.
+  /// Poll a sync task until it completes or fails, and return what the sync
+  /// itself reported — the task envelope only says whether the worker ran.
   Future<Map<String, dynamic>?> _pollSyncTask(
     AccountRepository repo,
     String taskId,
@@ -258,8 +272,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         final status = await repo.getSyncTaskStatus(taskId);
         final taskStatus = status['status'] as String?;
 
-        if (taskStatus == 'completed' || taskStatus == 'failed') {
-          return status;
+        if (taskStatus == 'completed') {
+          final result = status['result'];
+          return result is Map
+              ? result.cast<String, dynamic>()
+              : {'status': 'success'};
+        }
+        if (taskStatus == 'failed') {
+          return {
+            'status': 'error',
+            'error': status['error'] ?? 'Sync failed',
+          };
         }
       } catch (_) {
         // Status endpoint failed — keep polling
@@ -546,8 +569,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
                         final account = accountList[index];
-                        final canSync = account.syncEnabled &&
-                            account.broker.supportsAutoSync;
+                        final canSync = account.canSync;
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: AccountCard(
@@ -603,36 +625,54 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
 /// Slim bar under the app bar shown while a sync-all run is in progress.
 /// Stays visible while scrolling, unlike the button spinner in the list.
-class _SyncStatusBar extends StatelessWidget {
+/// Tapping it opens the per-account breakdown of the run.
+class _SyncStatusBar extends ConsumerWidget {
   static const double height = 32;
 
   const _SyncStatusBar();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      height: height,
+    final progress = ref.watch(syncAllProvider.select((s) => s.progress));
+    final done = progress.where((a) => !a.isPending).length;
+    final label = progress.isEmpty
+        ? 'Syncing accounts…'
+        : 'Syncing accounts… $done of ${progress.length}';
+
+    return Material(
       color: colorScheme.primaryContainer,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: colorScheme.onPrimaryContainer,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            'Syncing accounts…',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+      child: InkWell(
+        onTap: () => SyncProgressDialog.show(context),
+        child: SizedBox(
+          height: height,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
                   color: colorScheme.onPrimaryContainer,
                 ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onPrimaryContainer,
+                    ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.expand_more,
+                size: 16,
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

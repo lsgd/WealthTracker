@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Broker {
 
- String get code; String get name;@JsonKey(name: 'supports_auto_sync') bool get supportsAutoSync;
+ String get code; String get name;@JsonKey(name: 'supports_auto_sync') bool get supportsAutoSync;@JsonKey(name: 'requires_interactive_sync') bool get requiresInteractiveSync;
 /// Create a copy of Broker
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $BrokerCopyWith<Broker> get copyWith => _$BrokerCopyWithImpl<Broker>(this as Bro
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Broker&&(identical(other.code, code) || other.code == code)&&(identical(other.name, name) || other.name == name)&&(identical(other.supportsAutoSync, supportsAutoSync) || other.supportsAutoSync == supportsAutoSync));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Broker&&(identical(other.code, code) || other.code == code)&&(identical(other.name, name) || other.name == name)&&(identical(other.supportsAutoSync, supportsAutoSync) || other.supportsAutoSync == supportsAutoSync)&&(identical(other.requiresInteractiveSync, requiresInteractiveSync) || other.requiresInteractiveSync == requiresInteractiveSync));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,code,name,supportsAutoSync);
+int get hashCode => Object.hash(runtimeType,code,name,supportsAutoSync,requiresInteractiveSync);
 
 @override
 String toString() {
-  return 'Broker(code: $code, name: $name, supportsAutoSync: $supportsAutoSync)';
+  return 'Broker(code: $code, name: $name, supportsAutoSync: $supportsAutoSync, requiresInteractiveSync: $requiresInteractiveSync)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $BrokerCopyWith<$Res>  {
   factory $BrokerCopyWith(Broker value, $Res Function(Broker) _then) = _$BrokerCopyWithImpl;
 @useResult
 $Res call({
- String code, String name,@JsonKey(name: 'supports_auto_sync') bool supportsAutoSync
+ String code, String name,@JsonKey(name: 'supports_auto_sync') bool supportsAutoSync,@JsonKey(name: 'requires_interactive_sync') bool requiresInteractiveSync
 });
 
 
@@ -65,11 +65,12 @@ class _$BrokerCopyWithImpl<$Res>
 
 /// Create a copy of Broker
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? code = null,Object? name = null,Object? supportsAutoSync = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? code = null,Object? name = null,Object? supportsAutoSync = null,Object? requiresInteractiveSync = null,}) {
   return _then(_self.copyWith(
 code: null == code ? _self.code : code // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,supportsAutoSync: null == supportsAutoSync ? _self.supportsAutoSync : supportsAutoSync // ignore: cast_nullable_to_non_nullable
+as bool,requiresInteractiveSync: null == requiresInteractiveSync ? _self.requiresInteractiveSync : requiresInteractiveSync // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
 }
@@ -155,10 +156,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync, @JsonKey(name: 'requires_interactive_sync')  bool requiresInteractiveSync)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Broker() when $default != null:
-return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
+return $default(_that.code,_that.name,_that.supportsAutoSync,_that.requiresInteractiveSync);case _:
   return orElse();
 
 }
@@ -176,10 +177,10 @@ return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync, @JsonKey(name: 'requires_interactive_sync')  bool requiresInteractiveSync)  $default,) {final _that = this;
 switch (_that) {
 case _Broker():
-return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
+return $default(_that.code,_that.name,_that.supportsAutoSync,_that.requiresInteractiveSync);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -196,10 +197,10 @@ return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String code,  String name, @JsonKey(name: 'supports_auto_sync')  bool supportsAutoSync, @JsonKey(name: 'requires_interactive_sync')  bool requiresInteractiveSync)?  $default,) {final _that = this;
 switch (_that) {
 case _Broker() when $default != null:
-return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
+return $default(_that.code,_that.name,_that.supportsAutoSync,_that.requiresInteractiveSync);case _:
   return null;
 
 }
@@ -211,12 +212,13 @@ return $default(_that.code,_that.name,_that.supportsAutoSync);case _:
 @JsonSerializable()
 
 class _Broker implements Broker {
-  const _Broker({required this.code, required this.name, @JsonKey(name: 'supports_auto_sync') this.supportsAutoSync = false});
+  const _Broker({required this.code, required this.name, @JsonKey(name: 'supports_auto_sync') this.supportsAutoSync = false, @JsonKey(name: 'requires_interactive_sync') this.requiresInteractiveSync = false});
   factory _Broker.fromJson(Map<String, dynamic> json) => _$BrokerFromJson(json);
 
 @override final  String code;
 @override final  String name;
 @override@JsonKey(name: 'supports_auto_sync') final  bool supportsAutoSync;
+@override@JsonKey(name: 'requires_interactive_sync') final  bool requiresInteractiveSync;
 
 /// Create a copy of Broker
 /// with the given fields replaced by the non-null parameter values.
@@ -231,16 +233,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Broker&&(identical(other.code, code) || other.code == code)&&(identical(other.name, name) || other.name == name)&&(identical(other.supportsAutoSync, supportsAutoSync) || other.supportsAutoSync == supportsAutoSync));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Broker&&(identical(other.code, code) || other.code == code)&&(identical(other.name, name) || other.name == name)&&(identical(other.supportsAutoSync, supportsAutoSync) || other.supportsAutoSync == supportsAutoSync)&&(identical(other.requiresInteractiveSync, requiresInteractiveSync) || other.requiresInteractiveSync == requiresInteractiveSync));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,code,name,supportsAutoSync);
+int get hashCode => Object.hash(runtimeType,code,name,supportsAutoSync,requiresInteractiveSync);
 
 @override
 String toString() {
-  return 'Broker(code: $code, name: $name, supportsAutoSync: $supportsAutoSync)';
+  return 'Broker(code: $code, name: $name, supportsAutoSync: $supportsAutoSync, requiresInteractiveSync: $requiresInteractiveSync)';
 }
 
 
@@ -251,7 +253,7 @@ abstract mixin class _$BrokerCopyWith<$Res> implements $BrokerCopyWith<$Res> {
   factory _$BrokerCopyWith(_Broker value, $Res Function(_Broker) _then) = __$BrokerCopyWithImpl;
 @override @useResult
 $Res call({
- String code, String name,@JsonKey(name: 'supports_auto_sync') bool supportsAutoSync
+ String code, String name,@JsonKey(name: 'supports_auto_sync') bool supportsAutoSync,@JsonKey(name: 'requires_interactive_sync') bool requiresInteractiveSync
 });
 
 
@@ -268,11 +270,12 @@ class __$BrokerCopyWithImpl<$Res>
 
 /// Create a copy of Broker
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? code = null,Object? name = null,Object? supportsAutoSync = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? code = null,Object? name = null,Object? supportsAutoSync = null,Object? requiresInteractiveSync = null,}) {
   return _then(_Broker(
 code: null == code ? _self.code : code // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,supportsAutoSync: null == supportsAutoSync ? _self.supportsAutoSync : supportsAutoSync // ignore: cast_nullable_to_non_nullable
+as bool,requiresInteractiveSync: null == requiresInteractiveSync ? _self.requiresInteractiveSync : requiresInteractiveSync // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
 }

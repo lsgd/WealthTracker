@@ -54,7 +54,7 @@
       "country": "DE",
       "is_active": true,
       "supports_2fa": true,
-      "supports_auto_sync": false,
+      "supports_auto_sync": true,
       "credential_schema": {
         "type": "object",
         "required": [

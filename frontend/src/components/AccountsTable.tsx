@@ -22,7 +22,12 @@ interface ToastData {
 export interface Account {
   id: number;
   name: string;
-  broker: { code: string; name: string; supports_auto_sync?: boolean };
+  broker: {
+    code: string;
+    name: string;
+    supports_auto_sync?: boolean;
+    requires_interactive_sync?: boolean;
+  };
   account_type: string;
   currency: string;
   is_manual: boolean;
@@ -774,7 +779,8 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                   )
                 ))}
 
-                {credentialsAccount.broker.supports_auto_sync && (
+                {(credentialsAccount.broker.supports_auto_sync ||
+                  credentialsAccount.broker.requires_interactive_sync) && (
                   <div className="form-group">
                     <label className="toggle-label">
                       <input
@@ -782,10 +788,12 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                         checked={settingsSyncEnabled}
                         onChange={(e) => setSettingsSyncEnabled(e.target.checked)}
                       />
-                      <span>Auto-sync enabled</span>
+                      <span>Sync enabled</span>
                     </label>
                     <small className="form-hint">
-                      When enabled, this account will be synced automatically during daily sync.
+                      {credentialsAccount.broker.requires_interactive_sync
+                        ? 'This bank texts a code, so it is left out of the daily sync — sync it from its row when you want it updated.'
+                        : 'When enabled, this account will be synced automatically during daily sync.'}
                     </small>
                   </div>
                 )}

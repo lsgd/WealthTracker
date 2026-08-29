@@ -30,10 +30,17 @@ abstract class Account with _$Account {
   factory Account.fromJson(Map<String, dynamic> json) =>
       _$AccountFromJson(json);
 
-  /// Whether this account requires manual snapshot entry.
-  /// True if the account is manual, sync is disabled, or broker doesn't support auto-sync.
-  bool get needsManualEntry =>
-      isManual || !syncEnabled || !broker.supportsAutoSync;
+  /// Whether the balance has to be typed in by hand.
+  ///
+  /// A broker that needs a one-time code still fetches the balance itself —
+  /// it just has to be started by hand — so it does not belong here.
+  bool get needsManualEntry => isManual || !syncEnabled || !canSync;
+
+  /// Whether a sync can be started for this account from the app.
+  bool get canSync =>
+      !isManual &&
+      syncEnabled &&
+      (broker.supportsAutoSync || broker.requiresInteractiveSync);
 
   /// Whether this account is missing today's snapshot.
   bool isMissingTodaySnapshot() {

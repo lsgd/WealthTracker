@@ -21,6 +21,34 @@ class SyncAllResult {
   });
 }
 
+/// Where the running sync has got to with one account.
+class SyncAccountProgress {
+  final int id;
+  final String name;
+
+  /// 'waiting', 'syncing', 'done', 'skipped', 'pending_2fa' or 'error'.
+  final String state;
+  final String message;
+
+  const SyncAccountProgress({
+    required this.id,
+    required this.name,
+    required this.state,
+    this.message = '',
+  });
+
+  factory SyncAccountProgress.fromJson(Map<String, dynamic> json) =>
+      SyncAccountProgress(
+        id: json['id'] as int? ?? 0,
+        name: json['name'] as String? ?? 'Account',
+        state: json['state'] as String? ?? 'waiting',
+        message: json['message'] as String? ?? '',
+      );
+
+  /// Whether this account is still to come (or currently being worked on).
+  bool get isPending => state == 'waiting' || state == 'syncing';
+}
+
 /// State for sync-all operations.
 class SyncAllState {
   final bool isSyncing;
@@ -30,10 +58,15 @@ class SyncAllState {
   /// (or when the run timed out without a final status).
   final SyncAllResult? lastResult;
 
+  /// Per-account progress of the run in flight, newest poll wins. Kept after
+  /// the run so the dialog can still be read for a moment afterwards.
+  final List<SyncAccountProgress> progress;
+
   const SyncAllState({
     this.isSyncing = false,
     this.lastSyncTime,
     this.lastResult,
+    this.progress = const [],
   });
 }
 
@@ -56,6 +89,7 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
         isSyncing: state.isSyncing,
         lastSyncTime: lastSync,
         lastResult: state.lastResult,
+        progress: state.progress,
       );
     }
   }
@@ -67,6 +101,7 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
   Future<void> syncAll() async {
     if (state.isSyncing) return;
 
+    // Drop the previous run's list: a stale "done" would read as this run's.
     state = SyncAllState(isSyncing: true, lastSyncTime: state.lastSyncTime);
 
     try {
@@ -94,15 +129,19 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
           return;
         }
 
-        // Poll for completion
+        // Poll for completion, publishing per-account progress as it arrives
         final result = await _pollTask(repository, taskId);
 
         await notificationService.recordSyncAll();
+
+        final finished =
+            result != null ? _parseProgress(result) : <SyncAccountProgress>[];
 
         state = SyncAllState(
           isSyncing: false,
           lastSyncTime: DateTime.now(),
           lastResult: result != null ? _parseResult(result) : null,
+          progress: finished.isEmpty ? state.progress : finished,
         );
       }, active: anyNeedsRelay(accounts));
     } catch (e) {
@@ -114,6 +153,7 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
             {'name': 'Sync', 'error': e.toString()}
           ],
         ),
+        progress: state.progress,
       );
     } finally {
       _refreshData();
@@ -142,6 +182,16 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
     return const SyncAllResult();
   }
 
+  /// Per-account progress out of a task status payload.
+  List<SyncAccountProgress> _parseProgress(Map<String, dynamic> status) {
+    final entries = status['progress'] as List?;
+    if (entries == null) return const [];
+    return entries
+        .whereType<Map>()
+        .map((e) => SyncAccountProgress.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
   /// Invalidate all providers derived from account/snapshot data so every
   /// screen (summary card, chart, account list, snapshot banner) refreshes.
   void _refreshData() {
@@ -164,6 +214,16 @@ class SyncAllNotifier extends Notifier<SyncAllState> {
       try {
         final status = await repository.getSyncTaskStatus(taskId);
         final taskStatus = status['status'] as String?;
+        // Publish progress on every poll so the dialog moves accounts from
+        // "in progress" to "finished" while the run is still going. An empty
+        // list means the server said nothing this time — keep what we had.
+        final progress = _parseProgress(status);
+        state = SyncAllState(
+          isSyncing: true,
+          lastSyncTime: state.lastSyncTime,
+          lastResult: state.lastResult,
+          progress: progress.isEmpty ? state.progress : progress,
+        );
         if (taskStatus == 'completed' || taskStatus == 'failed') {
           return status;
         }

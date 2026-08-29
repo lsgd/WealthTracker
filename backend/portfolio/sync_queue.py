@@ -40,6 +40,9 @@ class SyncTask:
     created_at: datetime = field(default_factory=datetime.now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # Per-account progress, so a client polling mid-run can show which
+    # accounts are still waiting and which are already done.
+    progress: list[dict] = field(default_factory=list)
 
 
 class SyncQueue:
@@ -54,6 +57,11 @@ class SyncQueue:
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._started = False
+        # The task the worker is running right now. Only the worker thread
+        # writes it, and there is exactly one worker, so a plain attribute is
+        # enough to let running work report progress without threading an id
+        # through every call.
+        self._current: SyncTask | None = None
 
     def _ensure_worker(self):
         """Start the worker thread on first use (lazy init)."""
@@ -78,6 +86,7 @@ class SyncQueue:
             try:
                 task.status = TaskStatus.RUNNING
                 task.started_at = datetime.now()
+                self._current = task
                 logger.info('Sync task %s started for user %s', task.id, task.user_id)
 
                 result = task._callable(*task._args, **task._kwargs)
@@ -94,15 +103,21 @@ class SyncQueue:
                 logger.exception('Sync task %s failed', task.id)
 
             finally:
+                self._current = None
                 self._queue.task_done()
                 self._cleanup_old_tasks()
 
-    def enqueue(self, user_id: int, fn: Callable, *args, **kwargs) -> str:
-        """Enqueue a sync operation. Returns a task ID for status polling."""
+    def enqueue(self, user_id: int, fn: Callable, *args,
+                progress: list[dict] | None = None, **kwargs) -> str:
+        """Enqueue a sync operation. Returns a task ID for status polling.
+
+        `progress` seeds the per-account list so a client that polls before the
+        worker picks the task up already sees everything as waiting.
+        """
         self._ensure_worker()
 
         task_id = uuid.uuid4().hex[:12]
-        task = SyncTask(id=task_id, user_id=user_id)
+        task = SyncTask(id=task_id, user_id=user_id, progress=list(progress or []))
         # Store callable privately (not part of the dataclass fields)
         task._callable = fn
         task._args = args
@@ -119,26 +134,47 @@ class SyncQueue:
         """Get the current status of a task."""
         with self._lock:
             task = self._tasks.get(task_id)
+            if task is None:
+                return None
 
-        if task is None:
-            return None
+            result = {
+                'task_id': task.id,
+                'status': task.status.value,
+                'created_at': task.created_at.isoformat(),
+                # Copied, not shared: the worker keeps mutating the originals.
+                'progress': [dict(entry) for entry in task.progress],
+            }
 
-        result = {
-            'task_id': task.id,
-            'status': task.status.value,
-            'created_at': task.created_at.isoformat(),
-        }
-
-        if task.started_at:
-            result['started_at'] = task.started_at.isoformat()
-        if task.completed_at:
-            result['completed_at'] = task.completed_at.isoformat()
-        if task.status == TaskStatus.COMPLETED:
-            result['result'] = task.result
-        if task.status == TaskStatus.FAILED:
-            result['error'] = task.error
+            if task.started_at:
+                result['started_at'] = task.started_at.isoformat()
+            if task.completed_at:
+                result['completed_at'] = task.completed_at.isoformat()
+            if task.status == TaskStatus.COMPLETED:
+                result['result'] = task.result
+            if task.status == TaskStatus.FAILED:
+                result['error'] = task.error
 
         return result
+
+    def report_account(self, account_id, state: str, message: str = '') -> None:
+        """Record where the running task has got to with one account.
+
+        Called from inside the work function, which only ever runs on the
+        worker thread; a no-op when nothing is running so callers do not have
+        to care whether they are queued or invoked directly (e.g. in tests).
+        """
+        task = self._current
+        if task is None:
+            return
+        with self._lock:
+            for entry in task.progress:
+                if entry.get('id') == account_id:
+                    entry['state'] = state
+                    entry['message'] = message
+                    return
+            task.progress.append(
+                {'id': account_id, 'name': str(account_id),
+                 'state': state, 'message': message})
 
     def has_pending_task(self, user_id: int) -> str | None:
         """Check if a user already has a pending/running sync task.

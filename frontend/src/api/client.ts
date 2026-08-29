@@ -439,6 +439,8 @@ export interface Broker {
   is_active: boolean;
   supports_2fa: boolean;
   supports_auto_sync: boolean;
+  /** Syncs on demand but stops for a code, so it is left out of bulk runs. */
+  requires_interactive_sync?: boolean;
   credential_schema: Record<string, unknown>;
   logo_url?: string;
   website_url?: string;
