@@ -35,6 +35,7 @@ import {
 } from '../utils/categoryPalette';
 import TwoFactorModal, { type AuthPrompt } from '../components/TwoFactorModal';
 import { stripLeadingIban } from '../utils/iban';
+import { trimLeading, trimmedInput } from '../utils/text';
 import {
   describeFilter, EMPTY_FILTER, filterOf, filterPayload, isImpossible,
   type AmountFilter,
@@ -986,12 +987,13 @@ export default function SpendingPage() {
         placeholder="match text, e.g. rewe"
         value={ruleText}
         onChange={(e) => {
-          const value = e.target.value;
+          const value = trimLeading(e.target.value);
           setRuleText(value);
           // Obvious pattern syntax flips the switch on (and off again when
           // deleted) — but never after the user touched it themselves.
           if (!ruleRegexTouched) setRuleIsRegex(REGEX_HINT.test(value));
         }}
+        onBlur={(e) => setRuleText(e.target.value.trim())}
       />
       <label className="spending-switch" title="Interpret the match text as a regular expression instead of a plain substring">
         <input
@@ -1212,7 +1214,7 @@ export default function SpendingPage() {
                   aria-label="Search transactions"
                   placeholder="Search text or amount…"
                   value={txSearchInput}
-                  onChange={(e) => setTxSearchInput(e.target.value)}
+                  {...trimmedInput(setTxSearchInput)}
                   onKeyDown={(e) => { if (e.key === 'Escape') setTxSearchInput(''); }}
                 />
                 {txSearchInput && (
@@ -1463,7 +1465,7 @@ export default function SpendingPage() {
                   className="rule-filter"
                   placeholder="Filter…"
                   value={ruleFilter}
-                  onChange={(e) => setRuleFilter(e.target.value)}
+                  {...trimmedInput(setRuleFilter)}
                 />
               )}
               <button
@@ -1742,7 +1744,7 @@ export default function SpendingPage() {
                       id="edit-rule-text"
                       autoFocus
                       value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
+                      {...trimmedInput(setEditText)}
                     />
                   </div>
                   <div className="form-group">
@@ -1962,7 +1964,7 @@ export default function SpendingPage() {
                     required
                     autoFocus
                     value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    {...trimmedInput(setNewCategoryName)}
                     placeholder="e.g. Insurance"
                   />
                 </div>
