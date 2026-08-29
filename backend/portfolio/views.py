@@ -1,7 +1,8 @@
 import logging
+import re
 import uuid
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from time import time
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def _cleanup_expired_sessions():
                     pass
 
 
-from django.db.models import ExpressionWrapper, F, IntegerField
+from django.db.models import ExpressionWrapper, F, IntegerField, Q
 from django.db.models.functions import ExtractMonth, ExtractYear
 from django.utils import timezone
 from rest_framework import generics, status
@@ -1258,8 +1259,9 @@ class TransactionListView(generics.ListAPIView):
     ``category`` (comma-separated ids, or ``transfer`` for transfers only),
     ``period`` (``YYYY``, ``YYYY-Qn`` or ``YYYY-MM``; ``month`` is the older
     name for the same thing), ``mode`` (``normalized`` to match the spending
-    report's amortized view — see :meth:`_period`), ``ordering`` (a key from
-    ``ORDER_FIELDS``, ``-`` prefixed for descending).
+    report's amortized view — see :meth:`_period`), ``search`` (free text over
+    the booking text and the amount — see :meth:`_search`), ``ordering`` (a key
+    from ``ORDER_FIELDS``, ``-`` prefixed for descending).
     """
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionSerializer
@@ -1323,6 +1325,9 @@ class TransactionListView(generics.ListAPIView):
             if ids:
                 # Own categories only — ids from another user must not leak rows.
                 qs = qs.filter(category_id__in=ids, category__user=self.request.user)
+        search = self._search()
+        if search is not None:
+            qs = qs.filter(search)
         bounds, normalized = self._period()
         if bounds and normalized:
             # Normalized mode spreads a bill across the months it covers, so a
@@ -1346,6 +1351,50 @@ class TransactionListView(generics.ListAPIView):
         if ordering:
             qs = qs.order_by(*ordering)
         return qs
+
+    # Amount queries: "13.45", "13,45" and "1'234.50" all name one number.
+    # Comma is the Swiss/German decimal mark and the apostrophe its thousands
+    # separator, so both forms of what the list itself prints are accepted.
+    _AMOUNT_QUERY_RE = re.compile(r"^[+-]?\d[\d'\s.,]*$")
+
+    @classmethod
+    def _search_amount(cls, text):
+        """``text`` read as an amount, or None when it is not one."""
+        if not cls._AMOUNT_QUERY_RE.match(text):
+            return None
+        cleaned = text.replace("'", '').replace(' ', '').lstrip('+-')
+        if ',' in cleaned and '.' in cleaned:
+            # With both present the LAST one is the decimal mark and the other
+            # groups thousands — "1.234,50" German, "1,234.50" English.
+            mark = ',' if cleaned.rfind(',') > cleaned.rfind('.') else '.'
+            cleaned = cleaned.replace(',' if mark == '.' else '.', '')
+            cleaned = cleaned.replace(mark, '.')
+        else:
+            # A lone comma is always the decimal mark; a lone dot already is.
+            cleaned = cleaned.replace(',', '.')
+        try:
+            return Decimal(cleaned)
+        except InvalidOperation:
+            return None
+
+    def _search(self):
+        """A Q for the ``search`` param, or None when nothing was asked.
+
+        Matches the booking text the list actually shows (counterparty and
+        description) or the amount. The amount is matched on its size, so
+        "13.45" finds a 13.45 payment as readily as a 13.45 refund — a sign
+        the user never typed should not decide whether they find the row.
+        The counterparty IBAN is deliberately not searched: the account filter
+        covers that, and an IBAN's digits would match half the amount queries.
+        """
+        text = (self.request.query_params.get('search') or '').strip()
+        if not text:
+            return None
+        matches = Q(counterparty__icontains=text) | Q(description__icontains=text)
+        amount = self._search_amount(text)
+        if amount is not None:
+            matches |= Q(amount=amount) | Q(amount=-amount)
+        return matches
 
     def _period(self):
         """(bounds, normalized) for the requested period, or (None, False).

@@ -1349,6 +1349,83 @@ class TransactionEndpointTests(APITestCase):
         listed = sum(Decimal(t['period_slice']['amount']) for t in rows)
         self.assertEqual(charted, float(-listed))
 
+    def _searchable(self):
+        from portfolio.models import Transaction
+        rows = [
+            ('Migros Fil. 234', 'Einkauf', '-13.45'),
+            ('Coop Pronto', 'Refund', '13.45'),
+            ('Lidl Adliswil', 'Wocheneinkauf', '-99.00'),
+            ('SBB', 'Billett Zürich', '-1234.50'),
+        ]
+        for i, (cp, desc, amount) in enumerate(rows):
+            Transaction.objects.create(
+                account=self.account, booking_date=date(2026, 8, 5),
+                amount=Decimal(amount), currency='CHF', counterparty=cp,
+                description=desc, source='camt053', dedup_key=f's{i}',
+                counterparty_account='CH9300762011623852957',
+            )
+
+    def _search(self, term, **extra):
+        resp = self.client.get(
+            reverse('transaction_list_all'), {'search': term, **extra})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        return sorted(t['counterparty'] for t in resp.data['results'])
+
+    def test_search_matches_counterparty_and_description(self):
+        self._searchable()
+        self.assertEqual(self._search('migros'), ['Migros', 'Migros Fil. 234'])
+        self.assertEqual(self._search('wocheneinkauf'), ['Lidl Adliswil'])
+        # Case-insensitive and a substring, not a prefix.
+        self.assertEqual(self._search('ADLISWIL'), ['Lidl Adliswil'])
+
+    def test_search_matches_an_amount_regardless_of_sign(self):
+        """A sign the user never typed must not decide what they find."""
+        self._searchable()
+        self.assertEqual(self._search('13.45'), ['Coop Pronto', 'Migros Fil. 234'])
+        # The Swiss/German decimal comma means the same number.
+        self.assertEqual(self._search('13,45'), ['Coop Pronto', 'Migros Fil. 234'])
+        # As does the thousands apostrophe the list itself prints.
+        self.assertEqual(self._search("1'234.50"), ['SBB'])
+        self.assertEqual(self._search('1234,50'), ['SBB'])
+        self.assertEqual(self._search('-99'), ['Lidl Adliswil'])
+
+    def test_search_ignores_the_counterparty_iban(self):
+        """The account filter covers accounts; IBAN digits would swamp amounts."""
+        self._searchable()
+        self.assertEqual(self._search('CH9300762011623852957'), [])
+
+    def test_search_combines_with_the_other_filters(self):
+        from portfolio.models import TransactionCategory
+        self._searchable()
+        food = TransactionCategory.objects.create(user=self.user, name='Food')
+        from portfolio.models import Transaction
+        Transaction.objects.filter(counterparty='Lidl Adliswil').update(category=food)
+        self.assertEqual(
+            self._search('adliswil', category=str(food.id)), ['Lidl Adliswil'])
+        self.assertEqual(self._search('adliswil', period='2020'), [])
+
+    def test_search_that_is_neither_text_nor_a_number_finds_nothing(self):
+        self._searchable()
+        self.assertEqual(self._search('zzzz'), [])
+        # A blank search is not a filter at all.
+        self.assertEqual(len(self._search('   ')), 5)
+
+    def test_amount_query_parsing(self):
+        from portfolio.views import TransactionListView as V
+        for text, expected in (
+            ('13.45', Decimal('13.45')),
+            ('13,45', Decimal('13.45')),
+            ("1'234.50", Decimal('1234.50')),
+            ('1.234,50', Decimal('1234.50')),   # German thousands + decimal
+            ('1,234.50', Decimal('1234.50')),   # English thousands + decimal
+            ('-99', Decimal('99')),
+            ('+7', Decimal('7')),
+            ('migros', None),
+            ('', None),
+            ('13.45.67', None),
+        ):
+            self.assertEqual(V._search_amount(text), expected, text)
+
     def test_several_categories_at_once(self):
         """The breakdown chips ask for "groceries plus restaurants"."""
         from portfolio.models import Transaction, TransactionCategory

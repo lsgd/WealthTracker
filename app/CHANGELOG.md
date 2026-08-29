@@ -87,6 +87,7 @@
 - Rules can now be limited by amount under a new Advanced section: a direction (any, payments only, income only) plus an at least / at most range, each bound inclusive or exclusive. Sizes are written without a sign, so a one franc payment is "Payments, under 2". Two rules may share match text when their amount conditions differ, which lets the same merchant go to different categories by size or direction
 - Web: the rule dialog is two columns, with the match count in its own so it no longer pushes the form down as you type
 - Web: dialogs close with the Escape key, and no longer close when a text selection started inside the dialog ends outside it
+- Web: a search box on the transaction list matches the booking text or an amount; amounts are matched on their size, so searching 13.45 (or 13,45) finds both a payment and a refund of that amount
 - Bug fixes and improvements.
 
 ## 1.3.8

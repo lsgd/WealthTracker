@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, GripVertical, History, Plus, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, GripVertical, History, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import AiCategorization from '../components/AiCategorization';
 import CategoryPatternDefs from '../components/CategoryPatternDefs';
 import ClampedText from '../components/ClampedText';
@@ -123,6 +123,10 @@ export default function SpendingPage() {
   // The list follows the selected period unless it is widened on purpose —
   // derived rather than mirrored, so the two can never disagree.
   const [txAllPeriods, setTxAllPeriods] = useState(false);
+  // Two values: what is being typed, and what has settled long enough to ask
+  // the server about. Without the second, every keystroke is a request.
+  const [txSearchInput, setTxSearchInput] = useState('');
+  const [txSearch, setTxSearch] = useState('');
   // Category names picked in the breakdown; they filter the list and sum up.
   const [pickedCategories, setPickedCategories] = useState<string[]>([]);
   // Category whose history is open, if any.
@@ -223,6 +227,13 @@ export default function SpendingPage() {
 
   const txPeriod = txAllPeriods ? '' : (monthDetail?.month ?? '');
 
+  // Let the typed query settle before asking the server: one request per
+  // pause in typing rather than one per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setTxSearch(txSearchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [txSearchInput]);
+
   const loadReport = useCallback(async () => {
     try {
       setReport(await getSpendingMonthly(months, mode, granularity));
@@ -240,7 +251,8 @@ export default function SpendingPage() {
     try {
       const data = await getTransactions(
         page, id ?? undefined, category === '' ? undefined : category,
-        period || undefined, `${txSortDesc ? '-' : ''}${txSort}`, mode);
+        period || undefined, `${txSortDesc ? '-' : ''}${txSort}`, mode,
+        txSearch);
       setTxCount(data.count);
       setTransactions((prev) => (page === 1 ? data.results : [...prev, ...data.results]));
       setTxPage(page);
@@ -249,7 +261,7 @@ export default function SpendingPage() {
     }
     // `mode`: the normalized view puts a bill in every period it covers, so
     // the list has to follow it or it cannot add up to the chart above.
-  }, [txCategory, txPeriod, txSort, txSortDesc, mode]);
+  }, [txCategory, txPeriod, txSort, txSortDesc, mode, txSearch]);
 
   useEffect(() => {
     loadReport();
@@ -518,8 +530,9 @@ export default function SpendingPage() {
     if (accountId !== null) {
       parts.push(accounts.find((a) => a.id === accountId)?.name ?? 'one account');
     }
+    if (txSearch) parts.push(`“${txSearch}”`);
     return parts.join(' · ');
-  }, [txPeriod, pickedCategories, txCategory, accountId, accounts]);
+  }, [txPeriod, pickedCategories, txCategory, accountId, accounts, txSearch]);
 
   const avgExpenses = useMemo(() => {
     if (!report || report.months.length === 0) return 0;
@@ -1192,6 +1205,26 @@ export default function SpendingPage() {
               <span className="spending-month-title"> · {filterSummary}</span>
             </h2>
             <div className="range-buttons">
+              <div className="tx-search">
+                <Search size={14} className="tx-search-icon" />
+                <input
+                  type="search"
+                  aria-label="Search transactions"
+                  placeholder="Search text or amount…"
+                  value={txSearchInput}
+                  onChange={(e) => setTxSearchInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setTxSearchInput(''); }}
+                />
+                {txSearchInput && (
+                  <button
+                    className="tx-search-clear"
+                    aria-label="Clear search"
+                    onClick={() => setTxSearchInput('')}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
               <select
                 aria-label="Filter by account"
                 value={accountId ?? ''}
@@ -1229,7 +1262,7 @@ export default function SpendingPage() {
           </div>
           {transactions.length === 0 ? (
             <p className="table-empty">
-              {txCategory !== '' || txPeriod || accountId !== null
+              {txCategory !== '' || txPeriod || accountId !== null || txSearch
                 ? 'No transactions match this filter.'
                 : 'No transactions yet.'}
             </p>

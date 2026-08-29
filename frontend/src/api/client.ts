@@ -1123,6 +1123,9 @@ export async function getTransactions(
   // Matches the spending report: in 'normalized' the period also holds bills
   // booked earlier whose spread reaches into it, each reporting its share.
   mode?: 'normalized' | 'actual',
+  // Free text over the booking text, or an amount ("13.45", "13,45") matched
+  // on its size so a payment and a refund of it both turn up.
+  search?: string,
 ): Promise<{ count: number; results: Transaction[] }> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
@@ -1132,6 +1135,7 @@ export async function getTransactions(
   if (period) params.set('period', period);
   if (ordering) params.set('ordering', ordering);
   if (mode === 'normalized') params.set('mode', mode);
+  if (search?.trim()) params.set('search', search.trim());
   const qs = params.toString();
   const res = await fetchWithAuth(`/api/transactions/${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch transactions');

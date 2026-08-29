@@ -2743,6 +2743,70 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
 
+/* Free-text search over the transaction list. The icon and the clear button
+   sit inside the field's frame, so the row reads as one control. */
+.tx-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tx-search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.tx-search input {
+  width: 200px;
+  padding-left: 28px;
+  padding-right: 26px;
+  background-color: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding-block: 6px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.tx-search input:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.tx-search input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background-color: rgba(79, 140, 255, 0.08);
+}
+
+/* Safari draws its own clear affordance on type=search; ours is the one that
+   also matches the theme. */
+.tx-search input::-webkit-search-cancel-button { appearance: none; }
+
+.tx-search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.tx-search-clear:hover { color: var(--color-text); }
+
+@media (max-width: 700px) {
+  .tx-search { flex: 1 1 100%; }
+  .tx-search input { width: 100%; }
+}
+
 .spending-amount-col {
   text-align: right;
   font-variant-numeric: tabular-nums;
