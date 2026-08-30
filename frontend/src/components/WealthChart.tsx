@@ -54,14 +54,46 @@ function formatCurrency(value: number, currency: string): string {
   }).format(value);
 }
 
-function formatCurrencyCompact(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}M`;
+function formatCurrencyCompact(value: number, step = 0): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    const decimals = step >= 1_000_000 ? 0 : step >= 100_000 ? 1 : 2;
+    return `${(value / 1_000_000).toFixed(decimals)}M`;
   }
-  if (value >= 1_000) {
-    return `${Math.round(value / 1_000)}k`;
+  if (abs >= 1_000) {
+    const decimals = step >= 1_000 || step === 0 ? 0 : 1;
+    return `${(value / 1_000).toFixed(decimals)}k`;
   }
-  return value.toString();
+  return Math.round(value).toString();
+}
+
+// Round a raw tick spacing up to the next 1/2/5 * 10^n so labels stay readable.
+function niceStep(span: number, targetTicks: number): number {
+  if (!(span > 0)) return 1;
+  const raw = span / targetTicks;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const normalized = raw / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
+}
+
+// Fit the axis to the visible range, leaving the line roughly 70% of the height
+// instead of anchoring the scale at zero.
+function computeYAxis(values: number[]): { domain: [number, number]; ticks: number[]; step: number } {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  const pad = span > 0 ? span * 0.2 : Math.max(Math.abs(max) * 0.05, 1);
+  const step = niceStep(span + 2 * pad, 5);
+  let lower = Math.floor((min - pad) / step) * step;
+  const upper = Math.ceil((max + pad) / step) * step;
+  if (min >= 0 && lower < 0) lower = 0;
+
+  const ticks: number[] = [];
+  for (let t = lower; t <= upper + step / 2; t += step) {
+    ticks.push(Math.round(t * 100) / 100);
+  }
+  return { domain: [lower, upper], ticks, step };
 }
 
 export default function WealthChart({ history, baseCurrency, onRangeChange, defaultRange = 365, defaultGranularity = 'daily' }: Props) {
@@ -88,6 +120,11 @@ export default function WealthChart({ history, baseCurrency, onRangeChange, defa
     const year = dt.getFullYear().toString().slice(-2);
     return `${dt.getDate()}.${dt.getMonth() + 1}.${year}`;
   };
+
+  const values = history
+    .map((h) => Number(h.total_wealth))
+    .filter((v) => Number.isFinite(v));
+  const yAxis = values.length > 0 ? computeYAxis(values) : null;
 
 
   return (
@@ -122,7 +159,7 @@ export default function WealthChart({ history, baseCurrency, onRangeChange, defa
           </div>
         </div>
       </div>
-      {history.length === 0 ? (
+      {history.length === 0 || !yAxis ? (
         <div className="chart-empty">
           <p>No data yet. Add accounts and snapshots to see your wealth over time.</p>
         </div>
@@ -143,8 +180,11 @@ export default function WealthChart({ history, baseCurrency, onRangeChange, defa
             />
             <YAxis
               tick={{ fill: 'var(--color-text-muted)', fontSize: isMobile ? 9 : 11 }}
-              tickFormatter={formatCurrencyCompact}
-              width={isMobile ? 32 : 45}
+              tickFormatter={(v) => formatCurrencyCompact(Number(v), yAxis.step)}
+              width={isMobile ? 38 : 52}
+              domain={yAxis.domain}
+              ticks={yAxis.ticks}
+              allowDataOverflow={false}
             />
             <Tooltip
               contentStyle={{

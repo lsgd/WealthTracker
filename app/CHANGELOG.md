@@ -10,6 +10,7 @@
 - App spending: spent, income and net for the selected period, each against the period before and against the average of the last six
 - App spending: budgets are shown in the app now — how much of this period's budget is left, and per category as a target marker on its bar with what is left or over
 - App spending: the breakdown lists categories as ranked bars with their share and how they compare with their own average; tapping one opens its history (total, average, highest, and a bar per period)
+- Web: the wealth chart's y-axis now fits the range on screen instead of always starting at zero, so movements within a period are actually visible
 - Web: a dashboard icon in the top navigation, first of the icons on the right, so getting back no longer means clicking the app name
 - Swisscard accounts can be synced from the app again: the card no longer counts as a manual account, and its sync button starts the login that texts you a code (it stays out of "Sync all", which runs unattended)
 - Tapping the "Syncing accounts" bar opens a live breakdown: accounts still in progress on top, finished ones below, each moving down as it completes
