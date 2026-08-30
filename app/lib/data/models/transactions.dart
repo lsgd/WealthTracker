@@ -71,10 +71,75 @@ abstract class CategoryRule with _$CategoryRule {
     @JsonKey(name: 'is_transfer') @Default(false) bool isTransfer,
     @JsonKey(name: 'spread_months') @Default(1) int spreadMonths,
     @Default(0) int position,
-    /// Regex rules are created on the web; the app renders them read-only.
     @JsonKey(name: 'is_regex') @Default(false) bool isRegex,
+    /// 'any', 'payment' (amount < 0) or 'income' (amount > 0). Direction and
+    /// size are independent facts about a transaction, so they are separate
+    /// conditions — the bounds below carry no sign.
+    @Default('any') String direction,
+    /// Bounds on the amount WITHOUT its sign, as decimal strings ("20.00"),
+    /// null for no bound.
+    @JsonKey(name: 'min_amount') String? minAmount,
+    @JsonKey(name: 'min_inclusive') @Default(true) bool minInclusive,
+    @JsonKey(name: 'max_amount') String? maxAmount,
+    @JsonKey(name: 'max_inclusive') @Default(false) bool maxInclusive,
   }) = _CategoryRule;
 
   factory CategoryRule.fromJson(Map<String, dynamic> json) =>
       _$CategoryRuleFromJson(json);
+}
+
+extension CategoryRuleX on CategoryRule {
+  /// Human reading of the amount conditions, or null when there are none.
+  String? get amountCondition {
+    // Trailing zeros are noise in a condition read at a glance.
+    String trim(String value) {
+      final number = double.tryParse(value);
+      return number == null ? value : _trimZeros(number);
+    }
+
+    final parts = [
+      if (direction == 'payment') 'payments',
+      if (direction == 'income') 'income',
+      if (minAmount != null) '${minInclusive ? '≥' : '>'} ${trim(minAmount!)}',
+      if (maxAmount != null) '${maxInclusive ? '≤' : '<'} ${trim(maxAmount!)}',
+    ];
+    return parts.isEmpty ? null : parts.join(', ');
+  }
+}
+
+String _trimZeros(double value) =>
+    value == value.roundToDouble() && value.abs() < 1e15
+        ? value.toStringAsFixed(0)
+        : value.toString();
+
+/// What a rule would do to the transactions already imported, answered before
+/// it is saved.
+///
+/// The useful number is not how many bookings contain the text: rules never
+/// overwrite an existing category, and first-match-wins means an earlier rule
+/// can claim a row first. Both are counted separately, because a rule that
+/// reports zero is far more often shadowed than wrong.
+@freezed
+abstract class RulePreview with _$RulePreview {
+  const factory RulePreview({
+    @Default(0) int matched,
+    @JsonKey(name: 'will_classify') @Default(0) int willClassify,
+    @Default(0) int shadowed,
+    @JsonKey(name: 'already_classified') @Default(0) int alreadyClassified,
+    @Default(<RuleExample>[]) List<RuleExample> examples,
+  }) = _RulePreview;
+
+  factory RulePreview.fromJson(Map<String, dynamic> json) =>
+      _$RulePreviewFromJson(json);
+}
+
+@freezed
+abstract class RuleExample with _$RuleExample {
+  const factory RuleExample({
+    @JsonKey(name: 'booking_date') String? bookingDate,
+    @Default('') String text,
+  }) = _RuleExample;
+
+  factory RuleExample.fromJson(Map<String, dynamic> json) =>
+      _$RuleExampleFromJson(json);
 }

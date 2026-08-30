@@ -70,13 +70,20 @@ class SpendingRepository {
     return TransactionPage.fromJson(response.data as Map<String, dynamic>);
   }
 
-  /// All transactions across accounts, newest first. [accountId] restricts to
-  /// one account, [uncategorizedOnly] to transactions still needing a label
-  /// (transfers are excluded — they are assigned, not undecided), [month] to
-  /// one calendar month as ``YYYY-MM``.
+  /// All transactions across accounts, newest first.
+  ///
+  /// [accountId] restricts to one account, [month] to one period — a
+  /// ``YYYY-MM``, ``YYYY-Qn`` or ``YYYY`` label. [uncategorizedOnly] narrows to
+  /// transactions still needing a label (transfers are excluded — they are
+  /// assigned, not undecided) and [transfersOnly] to the transfers themselves;
+  /// [categoryIds] to a set of categories. [search] matches the booking text or
+  /// an amount.
   Future<TransactionPage> getTransactions({
     int? accountId,
     bool uncategorizedOnly = false,
+    bool transfersOnly = false,
+    List<int>? categoryIds,
+    String search = '',
     String? month,
     int page = 1,
   }) async {
@@ -86,6 +93,11 @@ class SpendingRepository {
         'account': ?accountId,
         'month': ?month,
         if (uncategorizedOnly) 'uncategorized': 1,
+        if (transfersOnly)
+          'category': 'transfer'
+        else if (categoryIds != null && categoryIds.isNotEmpty)
+          'category': categoryIds.join(','),
+        if (search.isNotEmpty) 'search': search,
         if (page > 1) 'page': page,
       },
     );
@@ -186,20 +198,129 @@ class SpendingRepository {
 
   /// Create a rule; the backend appends it last and applies it retroactively to
   /// still-uncategorized transactions.
+  ///
+  /// A rule targets a category or marks matches as transfers, never both —
+  /// [categoryId] is required unless [isTransfer].
   Future<CategoryRule> createRule({
     required String matchText,
-    required int categoryId,
+    int? categoryId,
+    bool isTransfer = false,
     int spreadMonths = 1,
+    bool isRegex = false,
+    String direction = 'any',
+    String? minAmount,
+    bool minInclusive = true,
+    String? maxAmount,
+    bool maxInclusive = false,
   }) async {
     final response = await _apiClient.post(
       ApiConfig.spendingRulesPath,
-      data: {
-        'match_text': matchText,
-        'category': categoryId,
-        'spread_months': spreadMonths,
-      },
+      data: _rulePayload(
+        matchText: matchText,
+        categoryId: categoryId,
+        isTransfer: isTransfer,
+        spreadMonths: spreadMonths,
+        isRegex: isRegex,
+        direction: direction,
+        minAmount: minAmount,
+        minInclusive: minInclusive,
+        maxAmount: maxAmount,
+        maxInclusive: maxInclusive,
+      ),
     );
     return CategoryRule.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Overwrite every editable field of a rule — what the rule editor saves.
+  ///
+  /// Distinct from [updateRule], which retargets a rule without touching
+  /// anything else: correcting one transaction's category must not silently
+  /// rewrite the rule's amount conditions.
+  Future<CategoryRule> saveRule(
+    int ruleId, {
+    required String matchText,
+    int? categoryId,
+    bool isTransfer = false,
+    int spreadMonths = 1,
+    bool isRegex = false,
+    String direction = 'any',
+    String? minAmount,
+    bool minInclusive = true,
+    String? maxAmount,
+    bool maxInclusive = false,
+  }) async {
+    final response = await _apiClient.patch(
+      '${ApiConfig.spendingRulesPath}$ruleId/',
+      data: _rulePayload(
+        matchText: matchText,
+        categoryId: categoryId,
+        isTransfer: isTransfer,
+        spreadMonths: spreadMonths,
+        isRegex: isRegex,
+        direction: direction,
+        minAmount: minAmount,
+        minInclusive: minInclusive,
+        maxAmount: maxAmount,
+        maxInclusive: maxInclusive,
+      ),
+    );
+    return CategoryRule.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Map<String, dynamic> _rulePayload({
+    required String matchText,
+    required int? categoryId,
+    required bool isTransfer,
+    required int spreadMonths,
+    required bool isRegex,
+    required String direction,
+    required String? minAmount,
+    required bool minInclusive,
+    required String? maxAmount,
+    required bool maxInclusive,
+  }) =>
+      {
+        'match_text': matchText,
+        'is_regex': isRegex,
+        'is_transfer': isTransfer,
+        // A transfer is excluded from spending, so it carries neither a
+        // category nor a spread to amortize.
+        'category': isTransfer ? null : categoryId,
+        'spread_months': isTransfer ? 1 : spreadMonths,
+        'direction': direction,
+        'min_amount': minAmount,
+        'min_inclusive': minInclusive,
+        'max_amount': maxAmount,
+        'max_inclusive': maxInclusive,
+      };
+
+  /// What a rule would do if it were saved now. Nothing is written.
+  Future<RulePreview> previewRule({
+    required String matchText,
+    bool isRegex = false,
+    bool isTransfer = false,
+    int? ruleId,
+    String direction = 'any',
+    String? minAmount,
+    bool minInclusive = true,
+    String? maxAmount,
+    bool maxInclusive = false,
+  }) async {
+    final response = await _apiClient.post(
+      ApiConfig.spendingRulesPreviewPath,
+      data: {
+        'match_text': matchText,
+        'is_regex': isRegex,
+        'is_transfer': isTransfer,
+        'rule_id': ?ruleId,
+        'direction': direction,
+        'min_amount': minAmount,
+        'min_inclusive': minInclusive,
+        'max_amount': maxAmount,
+        'max_inclusive': maxInclusive,
+      },
+    );
+    return RulePreview.fromJson(response.data as Map<String, dynamic>);
   }
 
   /// Change a rule's target. Only the given fields are sent, so correcting a

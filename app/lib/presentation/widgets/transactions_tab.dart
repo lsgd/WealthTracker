@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +10,7 @@ import '../../data/repositories/spending_repository.dart';
 import '../providers/accounts_provider.dart';
 import '../providers/spending_provider.dart';
 import 'ai_relabel_sheet.dart';
+import 'rule_dialog.dart';
 
 /// All transactions across accounts, newest first, with manual categorization.
 ///
@@ -26,6 +29,7 @@ class TransactionsTab extends ConsumerWidget {
 
     return Column(
       children: [
+        const _SearchField(),
         _FilterBar(filter: filter, accountNames: accountNames),
         Expanded(
           child: transactions.when(
@@ -33,15 +37,7 @@ class TransactionsTab extends ConsumerWidget {
             error: (e, _) => _Message(text: e.toString()),
             data: (data) {
               if (data.results.isEmpty) {
-                return _Message(
-                  text: switch (filter) {
-                    (uncategorizedOnly: true, accountId: _, month: _) =>
-                      'Nothing uncategorized — all done.',
-                    (month: final String m, accountId: _, uncategorizedOnly: _) =>
-                      'No transactions in ${formatPeriod(m)}.',
-                    _ => 'No transactions yet.',
-                  },
-                );
+                return _Message(text: _emptyMessage(filter));
               }
               return NotificationListener<ScrollNotification>(
                 // Endless scrolling: fetch the next page as the end comes
@@ -95,8 +91,100 @@ class TransactionsTab extends ConsumerWidget {
   }
 }
 
+/// Why the list is empty — which of the filters is responsible, so nobody
+/// concludes there are no transactions when it is only the search.
+String _emptyMessage(TransactionsFilter filter) {
+  if (filter.search.isNotEmpty) return 'Nothing matches "${filter.search}".';
+  return switch (filter.show) {
+    TransactionsShow.uncategorized => 'Nothing uncategorized — all done.',
+    TransactionsShow.transfers => 'No transfers here.',
+    TransactionsShow.categories => 'Nothing in this category here.',
+    TransactionsShow.everything => filter.month == null
+        ? 'No transactions yet.'
+        : 'No transactions in ${formatPeriod(filter.month!)}.',
+  };
+}
+
+/// Free-text or amount search over the list.
+///
+/// Above the filter bar rather than inside it: recognizing a charge and not
+/// its merchant is the common way into this list, and a control folded away
+/// is a control nobody reaches for.
+class _SearchField extends ConsumerStatefulWidget {
+  const _SearchField();
+
+  @override
+  ConsumerState<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends ConsumerState<_SearchField> {
+  late final TextEditingController _controller;
+  Timer? _debounce;
+
+  /// Long enough that typing a merchant name is one request, short enough that
+  /// the list has moved on before the eye leaves the field.
+  static const _delay = Duration(milliseconds: 350);
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+        text: ref.read(transactionsFilterProvider).search);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(_delay, () {
+      ref.read(transactionsFilterProvider.notifier).setSearch(value.trim());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final search = ref.watch(transactionsFilterProvider.select((f) => f.search));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: TextField(
+        controller: _controller,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          isDense: true,
+          prefixIcon: const Icon(Icons.search, size: 20),
+          hintText: 'Search text or amount',
+          border: const OutlineInputBorder(),
+          suffixIcon: search.isEmpty && _controller.text.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear, size: 20),
+                  tooltip: 'Clear search',
+                  onPressed: () {
+                    _debounce?.cancel();
+                    _controller.clear();
+                    ref
+                        .read(transactionsFilterProvider.notifier)
+                        .setSearch('');
+                  },
+                ),
+        ),
+        onChanged: _onChanged,
+        onSubmitted: (value) {
+          _debounce?.cancel();
+          ref.read(transactionsFilterProvider.notifier).setSearch(value.trim());
+        },
+      ),
+    );
+  }
+}
+
 /// Collapsed: one row summarizing the active filters. Expanded: the account
-/// picker and the uncategorized switch.
+/// picker and what to show.
 class _FilterBar extends ConsumerWidget {
   final TransactionsFilter filter;
   final Map<int, String> accountNames;
@@ -106,13 +194,24 @@ class _FilterBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(transactionsFilterProvider.notifier);
+    final categoryNames = {
+      for (final c in ref.watch(categoriesProvider).value ?? const [])
+        c.id: c.name,
+    };
     final summary = [
       filter.accountId == null
           ? 'All accounts'
           : (accountNames[filter.accountId] ?? 'One account'),
       if (filter.month != null) formatPeriod(filter.month!),
-      if (filter.uncategorizedOnly) 'only uncategorized',
-    ].join(' · ');
+      switch (filter.show) {
+        TransactionsShow.uncategorized => 'only uncategorized',
+        TransactionsShow.transfers => 'only transfers',
+        TransactionsShow.categories => filter.categoryIds
+            .map((id) => categoryNames[id] ?? 'category')
+            .join(' + '),
+        TransactionsShow.everything => null,
+      },
+    ].nonNulls.join(' · ');
     // Periods the report covers, newest first, plus the selected one (the
     // range can be shortened after a period was picked in Insights). The
     // labels carry their granularity — '2026-Q3' as readily as '2026-08'.
@@ -163,12 +262,47 @@ class _FilterBar extends ConsumerWidget {
           ],
           onChanged: notifier.setMonth,
         ),
-        SwitchListTile(
-          title: const Text('Only uncategorized'),
-          contentPadding: EdgeInsets.zero,
-          value: filter.uncategorizedOnly,
-          onChanged: notifier.setUncategorizedOnly,
+        const SizedBox(height: 8),
+        // One control: a transaction is either awaiting a label or a transfer,
+        // and drilling in from a category is a third answer to the same
+        // question — parallel switches could ask for two at once.
+        DropdownButtonFormField<TransactionsShow>(
+          initialValue: filter.show,
+          decoration: const InputDecoration(
+            labelText: 'Show',
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            const DropdownMenuItem(
+              value: TransactionsShow.everything,
+              child: Text('Everything'),
+            ),
+            const DropdownMenuItem(
+              value: TransactionsShow.uncategorized,
+              child: Text('Uncategorized only'),
+            ),
+            const DropdownMenuItem(
+              value: TransactionsShow.transfers,
+              child: Text('Transfers only'),
+            ),
+            // Only reachable by drilling in from a category, so it is offered
+            // to keep rather than to pick.
+            if (filter.show == TransactionsShow.categories)
+              DropdownMenuItem(
+                value: TransactionsShow.categories,
+                child: Text(
+                  filter.categoryIds
+                      .map((id) => categoryNames[id] ?? 'category')
+                      .join(' + '),
+                ),
+              ),
+          ],
+          onChanged: (value) {
+            if (value != null) notifier.setShow(value);
+          },
         ),
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -260,6 +394,16 @@ class _TransactionTile extends ConsumerWidget {
       builder: (context) => ListView(
         shrinkWrap: true,
         children: [
+          // Categorizing this one booking fixes one row; a rule fixes every
+          // future booking of the same merchant, and this is the moment the
+          // merchant is on screen.
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text('Create a rule from this'),
+            subtitle: const Text('Categorize every booking that matches'),
+            onTap: () => Navigator.pop(context, const _SheetChoice.rule()),
+          ),
+          const Divider(height: 1),
           // Transfers between own accounts are excluded from spending. Manual
           // marking is the only way in for transfers auto-detection cannot see
           // (e.g. a wire to a broker without a transaction feed).
@@ -323,6 +467,22 @@ class _TransactionTile extends ConsumerWidget {
     );
     if (choice == null || !context.mounted) return;
 
+    if (choice.isRuleChoice) {
+      // Prefilled from the booking: the counterparty is what a rule for this
+      // merchant matches on, and the category it already has is the one the
+      // rule should hand to the rest.
+      await editRule(
+        context,
+        ref,
+        initialMatchText: stripLeadingIban(transaction.counterparty).isEmpty
+            ? transaction.description
+            : stripLeadingIban(transaction.counterparty),
+        initialCategoryId: transaction.category,
+        initialIsTransfer: transaction.isTransfer,
+      );
+      return;
+    }
+
     final messenger = ScaffoldMessenger.of(context);
     // The tile can be disposed by the reload below while its snackbar is
     // still visible — the navigator's context outlives it for the sheet.
@@ -352,10 +512,17 @@ class _TransactionTile extends ConsumerWidget {
         }
       }
       // In-place update keeps scroll position and loaded pages. Exception:
-      // with the uncategorized filter on, a categorized entry no longer
-      // belongs in the list — reload to drop it.
+      // with a filter the row no longer satisfies (uncategorized, or a
+      // category it just left), it does not belong here — reload to drop it.
       final filter = ref.read(transactionsFilterProvider);
-      if (filter.uncategorizedOnly && updated.category != null) {
+      final leftTheFilter = switch (filter.show) {
+        TransactionsShow.uncategorized => updated.category != null,
+        TransactionsShow.transfers => !updated.isTransfer,
+        TransactionsShow.categories =>
+          !filter.categoryIds.contains(updated.category),
+        TransactionsShow.everything => false,
+      };
+      if (leftTheFilter) {
         ref.invalidate(transactionsProvider);
       } else {
         ref.read(transactionsProvider.notifier).replace(updated);
@@ -463,27 +630,37 @@ class _TransactionTile extends ConsumerWidget {
 }
 
 /// What the bottom sheet resolved to: a category assignment, a transfer flip,
-/// or a spread.
+/// a spread, or opening the rule editor for this booking.
 class _SheetChoice {
   final int? categoryId;
   final bool? transferValue;
   final int? spreadMonths;
+  final bool isRuleChoice;
 
   const _SheetChoice.category(this.categoryId)
       : transferValue = null,
-        spreadMonths = null;
+        spreadMonths = null,
+        isRuleChoice = false;
   const _SheetChoice.transfer(this.transferValue)
       : categoryId = null,
-        spreadMonths = null;
+        spreadMonths = null,
+        isRuleChoice = false;
   const _SheetChoice.spread(this.spreadMonths)
       : categoryId = null,
-        transferValue = null;
+        transferValue = null,
+        isRuleChoice = false;
+  const _SheetChoice.rule()
+      : categoryId = null,
+        transferValue = null,
+        spreadMonths = null,
+        isRuleChoice = true;
 
   bool get isTransferChoice => transferValue != null;
   bool get isSpreadChoice => spreadMonths != null;
 
   /// Note a category choice can carry a null id — that clears the category.
-  bool get isCategoryChoice => !isTransferChoice && !isSpreadChoice;
+  bool get isCategoryChoice =>
+      !isTransferChoice && !isSpreadChoice && !isRuleChoice;
 }
 
 class _Chip extends StatelessWidget {

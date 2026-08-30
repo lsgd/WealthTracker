@@ -75,6 +75,11 @@ _CategoryRule _$CategoryRuleFromJson(Map<String, dynamic> json) =>
       spreadMonths: (json['spread_months'] as num?)?.toInt() ?? 1,
       position: (json['position'] as num?)?.toInt() ?? 0,
       isRegex: json['is_regex'] as bool? ?? false,
+      direction: json['direction'] as String? ?? 'any',
+      minAmount: json['min_amount'] as String?,
+      minInclusive: json['min_inclusive'] as bool? ?? true,
+      maxAmount: json['max_amount'] as String?,
+      maxInclusive: json['max_inclusive'] as bool? ?? false,
     );
 
 Map<String, dynamic> _$CategoryRuleToJson(_CategoryRule instance) =>
@@ -87,4 +92,41 @@ Map<String, dynamic> _$CategoryRuleToJson(_CategoryRule instance) =>
       'spread_months': instance.spreadMonths,
       'position': instance.position,
       'is_regex': instance.isRegex,
+      'direction': instance.direction,
+      'min_amount': instance.minAmount,
+      'min_inclusive': instance.minInclusive,
+      'max_amount': instance.maxAmount,
+      'max_inclusive': instance.maxInclusive,
+    };
+
+_RulePreview _$RulePreviewFromJson(Map<String, dynamic> json) => _RulePreview(
+  matched: (json['matched'] as num?)?.toInt() ?? 0,
+  willClassify: (json['will_classify'] as num?)?.toInt() ?? 0,
+  shadowed: (json['shadowed'] as num?)?.toInt() ?? 0,
+  alreadyClassified: (json['already_classified'] as num?)?.toInt() ?? 0,
+  examples:
+      (json['examples'] as List<dynamic>?)
+          ?.map((e) => RuleExample.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const <RuleExample>[],
+);
+
+Map<String, dynamic> _$RulePreviewToJson(_RulePreview instance) =>
+    <String, dynamic>{
+      'matched': instance.matched,
+      'will_classify': instance.willClassify,
+      'shadowed': instance.shadowed,
+      'already_classified': instance.alreadyClassified,
+      'examples': instance.examples,
+    };
+
+_RuleExample _$RuleExampleFromJson(Map<String, dynamic> json) => _RuleExample(
+  bookingDate: json['booking_date'] as String?,
+  text: json['text'] as String? ?? '',
+);
+
+Map<String, dynamic> _$RuleExampleToJson(_RuleExample instance) =>
+    <String, dynamic>{
+      'booking_date': instance.bookingDate,
+      'text': instance.text,
     };

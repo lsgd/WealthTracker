@@ -20,6 +20,10 @@ class CategoryDetailSheet extends StatelessWidget {
   final String? selectedPeriod;
   final ValueChanged<String> onSelectPeriod;
 
+  /// Opens the transaction list narrowed to this category, when the caller can
+  /// get there (the Insights tab can; a sheet opened from elsewhere cannot).
+  final VoidCallback? onShowTransactions;
+
   const CategoryDetailSheet({
     super.key,
     required this.category,
@@ -27,6 +31,7 @@ class CategoryDetailSheet extends StatelessWidget {
     required this.report,
     required this.selectedPeriod,
     required this.onSelectPeriod,
+    this.onShowTransactions,
   });
 
   static Future<void> show(
@@ -36,6 +41,7 @@ class CategoryDetailSheet extends StatelessWidget {
     required SpendingReport report,
     required String? selectedPeriod,
     required ValueChanged<String> onSelectPeriod,
+    VoidCallback? onShowTransactions,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -47,6 +53,7 @@ class CategoryDetailSheet extends StatelessWidget {
         report: report,
         selectedPeriod: selectedPeriod,
         onSelectPeriod: onSelectPeriod,
+        onShowTransactions: onShowTransactions,
       ),
     );
   }
@@ -102,6 +109,15 @@ class CategoryDetailSheet extends StatelessWidget {
                 Expanded(
                   child: Text(category, style: theme.textTheme.titleMedium),
                 ),
+                if (onShowTransactions != null)
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      onShowTransactions!();
+                    },
+                    icon: const Icon(Icons.receipt_long, size: 18),
+                    label: const Text('Transactions'),
+                  ),
               ],
             ),
             const SizedBox(height: 16),

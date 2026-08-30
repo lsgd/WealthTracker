@@ -854,8 +854,12 @@ mixin _$CategoryRule {
 
  int get id;@JsonKey(name: 'match_text') String get matchText;/// Null for transfer rules (see [isTransfer]).
  int? get category;@JsonKey(name: 'category_name') String? get categoryName;/// Marks matches as transfers instead of assigning a category.
-@JsonKey(name: 'is_transfer') bool get isTransfer;@JsonKey(name: 'spread_months') int get spreadMonths; int get position;/// Regex rules are created on the web; the app renders them read-only.
-@JsonKey(name: 'is_regex') bool get isRegex;
+@JsonKey(name: 'is_transfer') bool get isTransfer;@JsonKey(name: 'spread_months') int get spreadMonths; int get position;@JsonKey(name: 'is_regex') bool get isRegex;/// 'any', 'payment' (amount < 0) or 'income' (amount > 0). Direction and
+/// size are independent facts about a transaction, so they are separate
+/// conditions — the bounds below carry no sign.
+ String get direction;/// Bounds on the amount WITHOUT its sign, as decimal strings ("20.00"),
+/// null for no bound.
+@JsonKey(name: 'min_amount') String? get minAmount;@JsonKey(name: 'min_inclusive') bool get minInclusive;@JsonKey(name: 'max_amount') String? get maxAmount;@JsonKey(name: 'max_inclusive') bool get maxInclusive;
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -868,16 +872,16 @@ $CategoryRuleCopyWith<CategoryRule> get copyWith => _$CategoryRuleCopyWithImpl<C
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex)&&(identical(other.direction, direction) || other.direction == direction)&&(identical(other.minAmount, minAmount) || other.minAmount == minAmount)&&(identical(other.minInclusive, minInclusive) || other.minInclusive == minInclusive)&&(identical(other.maxAmount, maxAmount) || other.maxAmount == maxAmount)&&(identical(other.maxInclusive, maxInclusive) || other.maxInclusive == maxInclusive));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex);
+int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex,direction,minAmount,minInclusive,maxAmount,maxInclusive);
 
 @override
 String toString() {
-  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
+  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex, direction: $direction, minAmount: $minAmount, minInclusive: $minInclusive, maxAmount: $maxAmount, maxInclusive: $maxInclusive)';
 }
 
 
@@ -888,7 +892,7 @@ abstract mixin class $CategoryRuleCopyWith<$Res>  {
   factory $CategoryRuleCopyWith(CategoryRule value, $Res Function(CategoryRule) _then) = _$CategoryRuleCopyWithImpl;
 @useResult
 $Res call({
- int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
+ int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex, String direction,@JsonKey(name: 'min_amount') String? minAmount,@JsonKey(name: 'min_inclusive') bool minInclusive,@JsonKey(name: 'max_amount') String? maxAmount,@JsonKey(name: 'max_inclusive') bool maxInclusive
 });
 
 
@@ -905,7 +909,7 @@ class _$CategoryRuleCopyWithImpl<$Res>
 
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,Object? direction = null,Object? minAmount = freezed,Object? minInclusive = null,Object? maxAmount = freezed,Object? maxInclusive = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as int,matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
@@ -915,6 +919,11 @@ as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ign
 as bool,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
 as int,position: null == position ? _self.position : position // ignore: cast_nullable_to_non_nullable
 as int,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
+as bool,direction: null == direction ? _self.direction : direction // ignore: cast_nullable_to_non_nullable
+as String,minAmount: freezed == minAmount ? _self.minAmount : minAmount // ignore: cast_nullable_to_non_nullable
+as String?,minInclusive: null == minInclusive ? _self.minInclusive : minInclusive // ignore: cast_nullable_to_non_nullable
+as bool,maxAmount: freezed == maxAmount ? _self.maxAmount : maxAmount // ignore: cast_nullable_to_non_nullable
+as String?,maxInclusive: null == maxInclusive ? _self.maxInclusive : maxInclusive // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
 }
@@ -1000,10 +1009,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex,  String direction, @JsonKey(name: 'min_amount')  String? minAmount, @JsonKey(name: 'min_inclusive')  bool minInclusive, @JsonKey(name: 'max_amount')  String? maxAmount, @JsonKey(name: 'max_inclusive')  bool maxInclusive)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _CategoryRule() when $default != null:
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex,_that.direction,_that.minAmount,_that.minInclusive,_that.maxAmount,_that.maxInclusive);case _:
   return orElse();
 
 }
@@ -1021,10 +1030,10 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex,  String direction, @JsonKey(name: 'min_amount')  String? minAmount, @JsonKey(name: 'min_inclusive')  bool minInclusive, @JsonKey(name: 'max_amount')  String? maxAmount, @JsonKey(name: 'max_inclusive')  bool maxInclusive)  $default,) {final _that = this;
 switch (_that) {
 case _CategoryRule():
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex,_that.direction,_that.minAmount,_that.minInclusive,_that.maxAmount,_that.maxInclusive);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1041,10 +1050,10 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int id, @JsonKey(name: 'match_text')  String matchText,  int? category, @JsonKey(name: 'category_name')  String? categoryName, @JsonKey(name: 'is_transfer')  bool isTransfer, @JsonKey(name: 'spread_months')  int spreadMonths,  int position, @JsonKey(name: 'is_regex')  bool isRegex,  String direction, @JsonKey(name: 'min_amount')  String? minAmount, @JsonKey(name: 'min_inclusive')  bool minInclusive, @JsonKey(name: 'max_amount')  String? maxAmount, @JsonKey(name: 'max_inclusive')  bool maxInclusive)?  $default,) {final _that = this;
 switch (_that) {
 case _CategoryRule() when $default != null:
-return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex);case _:
+return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that.isTransfer,_that.spreadMonths,_that.position,_that.isRegex,_that.direction,_that.minAmount,_that.minInclusive,_that.maxAmount,_that.maxInclusive);case _:
   return null;
 
 }
@@ -1056,7 +1065,7 @@ return $default(_that.id,_that.matchText,_that.category,_that.categoryName,_that
 @JsonSerializable()
 
 class _CategoryRule implements CategoryRule {
-  const _CategoryRule({required this.id, @JsonKey(name: 'match_text') required this.matchText, this.category, @JsonKey(name: 'category_name') this.categoryName, @JsonKey(name: 'is_transfer') this.isTransfer = false, @JsonKey(name: 'spread_months') this.spreadMonths = 1, this.position = 0, @JsonKey(name: 'is_regex') this.isRegex = false});
+  const _CategoryRule({required this.id, @JsonKey(name: 'match_text') required this.matchText, this.category, @JsonKey(name: 'category_name') this.categoryName, @JsonKey(name: 'is_transfer') this.isTransfer = false, @JsonKey(name: 'spread_months') this.spreadMonths = 1, this.position = 0, @JsonKey(name: 'is_regex') this.isRegex = false, this.direction = 'any', @JsonKey(name: 'min_amount') this.minAmount, @JsonKey(name: 'min_inclusive') this.minInclusive = true, @JsonKey(name: 'max_amount') this.maxAmount, @JsonKey(name: 'max_inclusive') this.maxInclusive = false});
   factory _CategoryRule.fromJson(Map<String, dynamic> json) => _$CategoryRuleFromJson(json);
 
 @override final  int id;
@@ -1068,8 +1077,17 @@ class _CategoryRule implements CategoryRule {
 @override@JsonKey(name: 'is_transfer') final  bool isTransfer;
 @override@JsonKey(name: 'spread_months') final  int spreadMonths;
 @override@JsonKey() final  int position;
-/// Regex rules are created on the web; the app renders them read-only.
 @override@JsonKey(name: 'is_regex') final  bool isRegex;
+/// 'any', 'payment' (amount < 0) or 'income' (amount > 0). Direction and
+/// size are independent facts about a transaction, so they are separate
+/// conditions — the bounds below carry no sign.
+@override@JsonKey() final  String direction;
+/// Bounds on the amount WITHOUT its sign, as decimal strings ("20.00"),
+/// null for no bound.
+@override@JsonKey(name: 'min_amount') final  String? minAmount;
+@override@JsonKey(name: 'min_inclusive') final  bool minInclusive;
+@override@JsonKey(name: 'max_amount') final  String? maxAmount;
+@override@JsonKey(name: 'max_inclusive') final  bool maxInclusive;
 
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
@@ -1084,16 +1102,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _CategoryRule&&(identical(other.id, id) || other.id == id)&&(identical(other.matchText, matchText) || other.matchText == matchText)&&(identical(other.category, category) || other.category == category)&&(identical(other.categoryName, categoryName) || other.categoryName == categoryName)&&(identical(other.isTransfer, isTransfer) || other.isTransfer == isTransfer)&&(identical(other.spreadMonths, spreadMonths) || other.spreadMonths == spreadMonths)&&(identical(other.position, position) || other.position == position)&&(identical(other.isRegex, isRegex) || other.isRegex == isRegex)&&(identical(other.direction, direction) || other.direction == direction)&&(identical(other.minAmount, minAmount) || other.minAmount == minAmount)&&(identical(other.minInclusive, minInclusive) || other.minInclusive == minInclusive)&&(identical(other.maxAmount, maxAmount) || other.maxAmount == maxAmount)&&(identical(other.maxInclusive, maxInclusive) || other.maxInclusive == maxInclusive));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex);
+int get hashCode => Object.hash(runtimeType,id,matchText,category,categoryName,isTransfer,spreadMonths,position,isRegex,direction,minAmount,minInclusive,maxAmount,maxInclusive);
 
 @override
 String toString() {
-  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex)';
+  return 'CategoryRule(id: $id, matchText: $matchText, category: $category, categoryName: $categoryName, isTransfer: $isTransfer, spreadMonths: $spreadMonths, position: $position, isRegex: $isRegex, direction: $direction, minAmount: $minAmount, minInclusive: $minInclusive, maxAmount: $maxAmount, maxInclusive: $maxInclusive)';
 }
 
 
@@ -1104,7 +1122,7 @@ abstract mixin class _$CategoryRuleCopyWith<$Res> implements $CategoryRuleCopyWi
   factory _$CategoryRuleCopyWith(_CategoryRule value, $Res Function(_CategoryRule) _then) = __$CategoryRuleCopyWithImpl;
 @override @useResult
 $Res call({
- int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex
+ int id,@JsonKey(name: 'match_text') String matchText, int? category,@JsonKey(name: 'category_name') String? categoryName,@JsonKey(name: 'is_transfer') bool isTransfer,@JsonKey(name: 'spread_months') int spreadMonths, int position,@JsonKey(name: 'is_regex') bool isRegex, String direction,@JsonKey(name: 'min_amount') String? minAmount,@JsonKey(name: 'min_inclusive') bool minInclusive,@JsonKey(name: 'max_amount') String? maxAmount,@JsonKey(name: 'max_inclusive') bool maxInclusive
 });
 
 
@@ -1121,7 +1139,7 @@ class __$CategoryRuleCopyWithImpl<$Res>
 
 /// Create a copy of CategoryRule
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? matchText = null,Object? category = freezed,Object? categoryName = freezed,Object? isTransfer = null,Object? spreadMonths = null,Object? position = null,Object? isRegex = null,Object? direction = null,Object? minAmount = freezed,Object? minInclusive = null,Object? maxAmount = freezed,Object? maxInclusive = null,}) {
   return _then(_CategoryRule(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as int,matchText: null == matchText ? _self.matchText : matchText // ignore: cast_nullable_to_non_nullable
@@ -1131,7 +1149,559 @@ as String?,isTransfer: null == isTransfer ? _self.isTransfer : isTransfer // ign
 as bool,spreadMonths: null == spreadMonths ? _self.spreadMonths : spreadMonths // ignore: cast_nullable_to_non_nullable
 as int,position: null == position ? _self.position : position // ignore: cast_nullable_to_non_nullable
 as int,isRegex: null == isRegex ? _self.isRegex : isRegex // ignore: cast_nullable_to_non_nullable
+as bool,direction: null == direction ? _self.direction : direction // ignore: cast_nullable_to_non_nullable
+as String,minAmount: freezed == minAmount ? _self.minAmount : minAmount // ignore: cast_nullable_to_non_nullable
+as String?,minInclusive: null == minInclusive ? _self.minInclusive : minInclusive // ignore: cast_nullable_to_non_nullable
+as bool,maxAmount: freezed == maxAmount ? _self.maxAmount : maxAmount // ignore: cast_nullable_to_non_nullable
+as String?,maxInclusive: null == maxInclusive ? _self.maxInclusive : maxInclusive // ignore: cast_nullable_to_non_nullable
 as bool,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$RulePreview {
+
+ int get matched;@JsonKey(name: 'will_classify') int get willClassify; int get shadowed;@JsonKey(name: 'already_classified') int get alreadyClassified; List<RuleExample> get examples;
+/// Create a copy of RulePreview
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$RulePreviewCopyWith<RulePreview> get copyWith => _$RulePreviewCopyWithImpl<RulePreview>(this as RulePreview, _$identity);
+
+  /// Serializes this RulePreview to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is RulePreview&&(identical(other.matched, matched) || other.matched == matched)&&(identical(other.willClassify, willClassify) || other.willClassify == willClassify)&&(identical(other.shadowed, shadowed) || other.shadowed == shadowed)&&(identical(other.alreadyClassified, alreadyClassified) || other.alreadyClassified == alreadyClassified)&&const DeepCollectionEquality().equals(other.examples, examples));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,matched,willClassify,shadowed,alreadyClassified,const DeepCollectionEquality().hash(examples));
+
+@override
+String toString() {
+  return 'RulePreview(matched: $matched, willClassify: $willClassify, shadowed: $shadowed, alreadyClassified: $alreadyClassified, examples: $examples)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $RulePreviewCopyWith<$Res>  {
+  factory $RulePreviewCopyWith(RulePreview value, $Res Function(RulePreview) _then) = _$RulePreviewCopyWithImpl;
+@useResult
+$Res call({
+ int matched,@JsonKey(name: 'will_classify') int willClassify, int shadowed,@JsonKey(name: 'already_classified') int alreadyClassified, List<RuleExample> examples
+});
+
+
+
+
+}
+/// @nodoc
+class _$RulePreviewCopyWithImpl<$Res>
+    implements $RulePreviewCopyWith<$Res> {
+  _$RulePreviewCopyWithImpl(this._self, this._then);
+
+  final RulePreview _self;
+  final $Res Function(RulePreview) _then;
+
+/// Create a copy of RulePreview
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? matched = null,Object? willClassify = null,Object? shadowed = null,Object? alreadyClassified = null,Object? examples = null,}) {
+  return _then(_self.copyWith(
+matched: null == matched ? _self.matched : matched // ignore: cast_nullable_to_non_nullable
+as int,willClassify: null == willClassify ? _self.willClassify : willClassify // ignore: cast_nullable_to_non_nullable
+as int,shadowed: null == shadowed ? _self.shadowed : shadowed // ignore: cast_nullable_to_non_nullable
+as int,alreadyClassified: null == alreadyClassified ? _self.alreadyClassified : alreadyClassified // ignore: cast_nullable_to_non_nullable
+as int,examples: null == examples ? _self.examples : examples // ignore: cast_nullable_to_non_nullable
+as List<RuleExample>,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [RulePreview].
+extension RulePreviewPatterns on RulePreview {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _RulePreview value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _RulePreview() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _RulePreview value)  $default,){
+final _that = this;
+switch (_that) {
+case _RulePreview():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _RulePreview value)?  $default,){
+final _that = this;
+switch (_that) {
+case _RulePreview() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int matched, @JsonKey(name: 'will_classify')  int willClassify,  int shadowed, @JsonKey(name: 'already_classified')  int alreadyClassified,  List<RuleExample> examples)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _RulePreview() when $default != null:
+return $default(_that.matched,_that.willClassify,_that.shadowed,_that.alreadyClassified,_that.examples);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int matched, @JsonKey(name: 'will_classify')  int willClassify,  int shadowed, @JsonKey(name: 'already_classified')  int alreadyClassified,  List<RuleExample> examples)  $default,) {final _that = this;
+switch (_that) {
+case _RulePreview():
+return $default(_that.matched,_that.willClassify,_that.shadowed,_that.alreadyClassified,_that.examples);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int matched, @JsonKey(name: 'will_classify')  int willClassify,  int shadowed, @JsonKey(name: 'already_classified')  int alreadyClassified,  List<RuleExample> examples)?  $default,) {final _that = this;
+switch (_that) {
+case _RulePreview() when $default != null:
+return $default(_that.matched,_that.willClassify,_that.shadowed,_that.alreadyClassified,_that.examples);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _RulePreview implements RulePreview {
+  const _RulePreview({this.matched = 0, @JsonKey(name: 'will_classify') this.willClassify = 0, this.shadowed = 0, @JsonKey(name: 'already_classified') this.alreadyClassified = 0, final  List<RuleExample> examples = const <RuleExample>[]}): _examples = examples;
+  factory _RulePreview.fromJson(Map<String, dynamic> json) => _$RulePreviewFromJson(json);
+
+@override@JsonKey() final  int matched;
+@override@JsonKey(name: 'will_classify') final  int willClassify;
+@override@JsonKey() final  int shadowed;
+@override@JsonKey(name: 'already_classified') final  int alreadyClassified;
+ final  List<RuleExample> _examples;
+@override@JsonKey() List<RuleExample> get examples {
+  if (_examples is EqualUnmodifiableListView) return _examples;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_examples);
+}
+
+
+/// Create a copy of RulePreview
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$RulePreviewCopyWith<_RulePreview> get copyWith => __$RulePreviewCopyWithImpl<_RulePreview>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$RulePreviewToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _RulePreview&&(identical(other.matched, matched) || other.matched == matched)&&(identical(other.willClassify, willClassify) || other.willClassify == willClassify)&&(identical(other.shadowed, shadowed) || other.shadowed == shadowed)&&(identical(other.alreadyClassified, alreadyClassified) || other.alreadyClassified == alreadyClassified)&&const DeepCollectionEquality().equals(other._examples, _examples));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,matched,willClassify,shadowed,alreadyClassified,const DeepCollectionEquality().hash(_examples));
+
+@override
+String toString() {
+  return 'RulePreview(matched: $matched, willClassify: $willClassify, shadowed: $shadowed, alreadyClassified: $alreadyClassified, examples: $examples)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$RulePreviewCopyWith<$Res> implements $RulePreviewCopyWith<$Res> {
+  factory _$RulePreviewCopyWith(_RulePreview value, $Res Function(_RulePreview) _then) = __$RulePreviewCopyWithImpl;
+@override @useResult
+$Res call({
+ int matched,@JsonKey(name: 'will_classify') int willClassify, int shadowed,@JsonKey(name: 'already_classified') int alreadyClassified, List<RuleExample> examples
+});
+
+
+
+
+}
+/// @nodoc
+class __$RulePreviewCopyWithImpl<$Res>
+    implements _$RulePreviewCopyWith<$Res> {
+  __$RulePreviewCopyWithImpl(this._self, this._then);
+
+  final _RulePreview _self;
+  final $Res Function(_RulePreview) _then;
+
+/// Create a copy of RulePreview
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? matched = null,Object? willClassify = null,Object? shadowed = null,Object? alreadyClassified = null,Object? examples = null,}) {
+  return _then(_RulePreview(
+matched: null == matched ? _self.matched : matched // ignore: cast_nullable_to_non_nullable
+as int,willClassify: null == willClassify ? _self.willClassify : willClassify // ignore: cast_nullable_to_non_nullable
+as int,shadowed: null == shadowed ? _self.shadowed : shadowed // ignore: cast_nullable_to_non_nullable
+as int,alreadyClassified: null == alreadyClassified ? _self.alreadyClassified : alreadyClassified // ignore: cast_nullable_to_non_nullable
+as int,examples: null == examples ? _self._examples : examples // ignore: cast_nullable_to_non_nullable
+as List<RuleExample>,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$RuleExample {
+
+@JsonKey(name: 'booking_date') String? get bookingDate; String get text;
+/// Create a copy of RuleExample
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$RuleExampleCopyWith<RuleExample> get copyWith => _$RuleExampleCopyWithImpl<RuleExample>(this as RuleExample, _$identity);
+
+  /// Serializes this RuleExample to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is RuleExample&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.text, text) || other.text == text));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,bookingDate,text);
+
+@override
+String toString() {
+  return 'RuleExample(bookingDate: $bookingDate, text: $text)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $RuleExampleCopyWith<$Res>  {
+  factory $RuleExampleCopyWith(RuleExample value, $Res Function(RuleExample) _then) = _$RuleExampleCopyWithImpl;
+@useResult
+$Res call({
+@JsonKey(name: 'booking_date') String? bookingDate, String text
+});
+
+
+
+
+}
+/// @nodoc
+class _$RuleExampleCopyWithImpl<$Res>
+    implements $RuleExampleCopyWith<$Res> {
+  _$RuleExampleCopyWithImpl(this._self, this._then);
+
+  final RuleExample _self;
+  final $Res Function(RuleExample) _then;
+
+/// Create a copy of RuleExample
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? bookingDate = freezed,Object? text = null,}) {
+  return _then(_self.copyWith(
+bookingDate: freezed == bookingDate ? _self.bookingDate : bookingDate // ignore: cast_nullable_to_non_nullable
+as String?,text: null == text ? _self.text : text // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [RuleExample].
+extension RuleExamplePatterns on RuleExample {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _RuleExample value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _RuleExample() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _RuleExample value)  $default,){
+final _that = this;
+switch (_that) {
+case _RuleExample():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _RuleExample value)?  $default,){
+final _that = this;
+switch (_that) {
+case _RuleExample() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'booking_date')  String? bookingDate,  String text)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _RuleExample() when $default != null:
+return $default(_that.bookingDate,_that.text);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'booking_date')  String? bookingDate,  String text)  $default,) {final _that = this;
+switch (_that) {
+case _RuleExample():
+return $default(_that.bookingDate,_that.text);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'booking_date')  String? bookingDate,  String text)?  $default,) {final _that = this;
+switch (_that) {
+case _RuleExample() when $default != null:
+return $default(_that.bookingDate,_that.text);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _RuleExample implements RuleExample {
+  const _RuleExample({@JsonKey(name: 'booking_date') this.bookingDate, this.text = ''});
+  factory _RuleExample.fromJson(Map<String, dynamic> json) => _$RuleExampleFromJson(json);
+
+@override@JsonKey(name: 'booking_date') final  String? bookingDate;
+@override@JsonKey() final  String text;
+
+/// Create a copy of RuleExample
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$RuleExampleCopyWith<_RuleExample> get copyWith => __$RuleExampleCopyWithImpl<_RuleExample>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$RuleExampleToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _RuleExample&&(identical(other.bookingDate, bookingDate) || other.bookingDate == bookingDate)&&(identical(other.text, text) || other.text == text));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,bookingDate,text);
+
+@override
+String toString() {
+  return 'RuleExample(bookingDate: $bookingDate, text: $text)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$RuleExampleCopyWith<$Res> implements $RuleExampleCopyWith<$Res> {
+  factory _$RuleExampleCopyWith(_RuleExample value, $Res Function(_RuleExample) _then) = __$RuleExampleCopyWithImpl;
+@override @useResult
+$Res call({
+@JsonKey(name: 'booking_date') String? bookingDate, String text
+});
+
+
+
+
+}
+/// @nodoc
+class __$RuleExampleCopyWithImpl<$Res>
+    implements _$RuleExampleCopyWith<$Res> {
+  __$RuleExampleCopyWithImpl(this._self, this._then);
+
+  final _RuleExample _self;
+  final $Res Function(_RuleExample) _then;
+
+/// Create a copy of RuleExample
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? bookingDate = freezed,Object? text = null,}) {
+  return _then(_RuleExample(
+bookingDate: freezed == bookingDate ? _self.bookingDate : bookingDate // ignore: cast_nullable_to_non_nullable
+as String?,text: null == text ? _self.text : text // ignore: cast_nullable_to_non_nullable
+as String,
   ));
 }
 

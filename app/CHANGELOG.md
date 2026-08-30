@@ -2,6 +2,10 @@
 
 ## Next: 1.4.0
 
+- App transactions: search the list by text or amount, and one Show filter for everything, uncategorized only or transfers only
+- App transactions: a new "Create a rule from this" action in the category sheet, prefilled with the booking's merchant and category
+- App spending: the category history sheet can open the transaction list narrowed to that category
+- App rules: tapping a rule opens it for editing — target (category or transfer), spread, and under Advanced the regex switch, the payments/income direction and the amount bounds; a line under the form says how many existing transactions the rule would change, and how many are claimed by an earlier rule or already have a category
 - App spending: month, quarter or year, chosen in one period control that the chart, the breakdown and the transaction list all follow
 - App spending: spent, income and net for the selected period, each against the period before and against the average of the last six
 - App spending: budgets are shown in the app now — how much of this period's budget is left, and per category as a target marker on its bar with what is left or over

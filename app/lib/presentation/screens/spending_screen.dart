@@ -901,6 +901,25 @@ class _BreakdownCard extends ConsumerWidget {
     required this.colorFor,
   });
 
+  /// Narrow the transaction list to one category and go there. The period is
+  /// already whatever the period bar says, so the list opens on the same
+  /// slice of the same category the breakdown was showing.
+  void _showTransactions(BuildContext context, WidgetRef ref, String category) {
+    final notifier = ref.read(transactionsFilterProvider.notifier);
+    if (category == _uncategorizedLabel) {
+      // The bucket is an absence of category, not one to filter by.
+      notifier.setShow(TransactionsShow.uncategorized);
+    } else {
+      final id = (ref.read(categoriesProvider).value ?? const [])
+          .where((c) => c.name == category)
+          .map((c) => c.id)
+          .firstOrNull;
+      if (id == null) return;
+      notifier.setCategories([id]);
+    }
+    DefaultTabController.of(context).animateTo(1);
+  }
+
   /// Mean of the periods that actually had this category, or null when there
   /// is nothing to average — see [Comparison].
   double? _averageOf(String category) {
@@ -1047,6 +1066,8 @@ class _BreakdownCard extends ConsumerWidget {
                     onSelectPeriod: (period) => ref
                         .read(spendingSelectedMonthProvider.notifier)
                         .set(period),
+                    onShowTransactions: () =>
+                        _showTransactions(context, ref, row.name),
                   ),
                 ),
               const Divider(height: 20),

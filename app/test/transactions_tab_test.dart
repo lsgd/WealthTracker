@@ -143,7 +143,7 @@ void main() {
       expect(find.text('Cash'), findsOneWidget);
     });
 
-    testWidgets('filter bar expands to account picker and uncategorized switch',
+    testWidgets('filter bar expands to account, period and show pickers',
         (tester) async {
       await tester.pumpWidget(_harness());
       await tester.pumpAndSettle();
@@ -155,7 +155,42 @@ void main() {
       expect(find.byType(DropdownButtonFormField<int?>), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<String?>), findsOneWidget);
       expect(find.text('All periods'), findsOneWidget);
-      expect(find.text('Only uncategorized'), findsOneWidget);
+      expect(find.text('Everything'), findsOneWidget);
+    });
+
+    testWidgets('the show picker narrows to uncategorized', (tester) async {
+      await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(TransactionsTab)));
+
+      await tester.tap(find.text('All accounts'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Everything'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Uncategorized only').last);
+      await tester.pumpAndSettle();
+
+      expect(container.read(transactionsFilterProvider).show,
+          TransactionsShow.uncategorized);
+      // The collapsed bar says what it is showing.
+      expect(find.textContaining('only uncategorized'), findsOneWidget);
+    });
+
+    testWidgets('searching narrows the list after the debounce',
+        (tester) async {
+      await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(TransactionsTab)));
+
+      await tester.enterText(find.byType(TextField).first, ' migros ');
+      // Nothing is asked for while typing.
+      expect(container.read(transactionsFilterProvider).search, '');
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Trimmed: an accidental space is not part of what was searched for.
+      expect(container.read(transactionsFilterProvider).search, 'migros');
     });
 
     testWidgets('a period picked in Insights filters the list', (tester) async {

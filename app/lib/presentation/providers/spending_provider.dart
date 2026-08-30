@@ -104,11 +104,28 @@ final categoryRulesProvider = FutureProvider<List<CategoryRule>>((ref) async {
   return ref.watch(spendingRepositoryProvider).getRules();
 });
 
-/// Filter for the transaction list. Default: every account, every month,
-/// chronological. [month] is a ``YYYY-MM`` label, null for all months.
+/// What the transaction list is narrowed to beyond account and period.
+///
+/// One control rather than parallel switches: a transaction is either awaiting
+/// a label or a transfer, never both, and asking for a set of categories is a
+/// third answer to the same question.
+enum TransactionsShow {
+  everything,
+  uncategorized,
+  transfers,
+
+  /// Only [TransactionsFilter.categoryIds]; set by drilling in from a category.
+  categories,
+}
+
+/// Filter for the transaction list. Default: every account, every period,
+/// chronological. [month] is a ``YYYY-MM``, ``YYYY-Qn`` or ``YYYY`` label,
+/// null for all periods.
 typedef TransactionsFilter = ({
   int? accountId,
-  bool uncategorizedOnly,
+  TransactionsShow show,
+  List<int> categoryIds,
+  String search,
   String? month,
 });
 
@@ -118,24 +135,56 @@ final transactionsFilterProvider =
 
 class TransactionsFilterNotifier extends Notifier<TransactionsFilter> {
   @override
-  TransactionsFilter build() =>
-      (accountId: null, uncategorizedOnly: false, month: null);
+  TransactionsFilter build() => (
+        accountId: null,
+        show: TransactionsShow.everything,
+        categoryIds: const [],
+        search: '',
+        month: null,
+      );
 
   void setAccount(int? accountId) => state = (
         accountId: accountId,
-        uncategorizedOnly: state.uncategorizedOnly,
+        show: state.show,
+        categoryIds: state.categoryIds,
+        search: state.search,
         month: state.month,
       );
 
-  void setUncategorizedOnly(bool value) => state = (
+  /// Selecting anything but [TransactionsShow.categories] drops the category
+  /// list — leaving it set would silently narrow the new answer too.
+  void setShow(TransactionsShow show) => state = (
         accountId: state.accountId,
-        uncategorizedOnly: value,
+        show: show,
+        categoryIds:
+            show == TransactionsShow.categories ? state.categoryIds : const [],
+        search: state.search,
+        month: state.month,
+      );
+
+  void setCategories(List<int> ids) => state = (
+        accountId: state.accountId,
+        show: ids.isEmpty
+            ? TransactionsShow.everything
+            : TransactionsShow.categories,
+        categoryIds: ids,
+        search: state.search,
+        month: state.month,
+      );
+
+  void setSearch(String search) => state = (
+        accountId: state.accountId,
+        show: state.show,
+        categoryIds: state.categoryIds,
+        search: search,
         month: state.month,
       );
 
   void setMonth(String? month) => state = (
         accountId: state.accountId,
-        uncategorizedOnly: state.uncategorizedOnly,
+        show: state.show,
+        categoryIds: state.categoryIds,
+        search: state.search,
         month: month,
       );
 }
@@ -168,7 +217,10 @@ class TransactionsNotifier extends AsyncNotifier<TransactionsState> {
     final filter = ref.watch(transactionsFilterProvider);
     final page = await ref.read(spendingRepositoryProvider).getTransactions(
           accountId: filter.accountId,
-          uncategorizedOnly: filter.uncategorizedOnly,
+          uncategorizedOnly: filter.show == TransactionsShow.uncategorized,
+          transfersOnly: filter.show == TransactionsShow.transfers,
+          categoryIds: filter.categoryIds,
+          search: filter.search,
           month: filter.month,
         );
     return TransactionsState(
@@ -188,7 +240,10 @@ class TransactionsNotifier extends AsyncNotifier<TransactionsState> {
     try {
       final next = await ref.read(spendingRepositoryProvider).getTransactions(
             accountId: filter.accountId,
-            uncategorizedOnly: filter.uncategorizedOnly,
+            uncategorizedOnly: filter.show == TransactionsShow.uncategorized,
+            transfersOnly: filter.show == TransactionsShow.transfers,
+            categoryIds: filter.categoryIds,
+            search: filter.search,
             month: filter.month,
             page: current.page + 1,
           );

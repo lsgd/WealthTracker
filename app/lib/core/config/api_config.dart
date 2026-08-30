@@ -46,6 +46,7 @@ class ApiConfig {
   static const String spendingMonthlyPath = '/api/spending/monthly/';
   static const String spendingCategoriesPath = '/api/spending/categories/';
   static const String spendingRulesPath = '/api/spending/rules/';
+  static const String spendingRulesPreviewPath = '/api/spending/rules/preview/';
   static const String spendingRulesReorderPath = '/api/spending/rules/reorder/';
   static const String transactionsPath = '/api/transactions/';
   static const String aiConfigPath = '/api/spending/ai/config/';

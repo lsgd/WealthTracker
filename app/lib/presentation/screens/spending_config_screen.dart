@@ -5,6 +5,7 @@ import '../../data/models/transactions.dart';
 import '../providers/spending_provider.dart';
 import '../widgets/ai_categorization_card.dart';
 import '../widgets/ai_consolidate_sheet.dart';
+import '../widgets/rule_dialog.dart';
 
 /// Rules and AI configuration for the spending insight.
 ///
@@ -116,19 +117,8 @@ class _SpendingConfigScreenState extends ConsumerState<SpendingConfigScreen> {
     }
   }
 
-  Future<void> _addRule(BuildContext context, WidgetRef ref) async {
-    final categories = await ref.read(categoriesProvider.future);
-    if (!context.mounted) return;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (context) => _RuleDialog(categories: categories),
-    );
-    if (created == true) {
-      ref.invalidate(categoryRulesProvider);
-      ref.invalidate(categoriesProvider);
-      ref.invalidate(spendingReportProvider);
-    }
-  }
+  Future<void> _addRule(BuildContext context, WidgetRef ref) =>
+      editRule(context, ref);
 }
 
 /// Manage the flat category list: rename or delete.
@@ -338,8 +328,12 @@ class _GroupedRuleList extends ConsumerWidget {
                                   : rule.matchText) +
                               (rule.spreadMonths > 1
                                   ? ' · /${rule.spreadMonths}m'
+                                  : '') +
+                              (rule.amountCondition != null
+                                  ? ' · ${rule.amountCondition}'
                                   : ''),
                         ),
+                        onPressed: () => editRule(context, ref, rule: rule),
                         onDeleted: () => _delete(context, ref, rule),
                       ),
                   ],
@@ -395,8 +389,10 @@ class _RuleList extends ConsumerWidget {
               '→ ${rule.isTransfer ? 'Transfer (excluded)' : rule.categoryName ?? ''}',
               if (rule.isRegex) 'regex',
               if (rule.spreadMonths > 1) 'spread over ${rule.spreadMonths} months',
+              if (rule.amountCondition != null) rule.amountCondition!,
             ].join(' · '),
           ),
+          onTap: () => editRule(context, ref, rule: rule),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -439,151 +435,6 @@ class _RuleList extends ConsumerWidget {
       ref.invalidate(categoryRulesProvider);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('$e')));
-    }
-  }
-}
-
-/// Create a rule, optionally creating its category in the same step.
-class _RuleDialog extends ConsumerStatefulWidget {
-  final List<TransactionCategory> categories;
-  const _RuleDialog({required this.categories});
-
-  @override
-  ConsumerState<_RuleDialog> createState() => _RuleDialogState();
-}
-
-class _RuleDialogState extends ConsumerState<_RuleDialog> {
-  final _matchController = TextEditingController();
-  final _newCategoryController = TextEditingController();
-  int? _categoryId;
-  bool _newCategory = false;
-  int _spread = 1;
-  bool _saving = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _matchController.dispose();
-    _newCategoryController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('New rule'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _matchController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Match text',
-                hintText: 'e.g. rewe',
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<Object?>(
-              initialValue: _newCategory ? 'new' : _categoryId,
-              decoration: const InputDecoration(labelText: 'Category'),
-              items: [
-                for (final c in widget.categories)
-                  DropdownMenuItem(value: c.id, child: Text(c.name)),
-                const DropdownMenuItem(value: 'new', child: Text('New category…')),
-              ],
-              onChanged: (value) => setState(() {
-                _newCategory = value == 'new';
-                _categoryId = value is int ? value : null;
-              }),
-            ),
-            if (_newCategory) ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _newCategoryController,
-                decoration: const InputDecoration(labelText: 'New category name'),
-              ),
-            ],
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              initialValue: _spread,
-              decoration: const InputDecoration(
-                labelText: 'Spread',
-                helperText: 'Amortize a yearly bill across months',
-              ),
-              items: const [
-                DropdownMenuItem(value: 1, child: Text('No spread')),
-                DropdownMenuItem(value: 3, child: Text('3 months')),
-                DropdownMenuItem(value: 6, child: Text('6 months')),
-                DropdownMenuItem(value: 12, child: Text('12 months')),
-              ],
-              onChanged: (value) => setState(() => _spread = value ?? 1),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(_error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: Text(_saving ? 'Saving…' : 'Create'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _save() async {
-    final matchText = _matchController.text.trim();
-    if (matchText.isEmpty) {
-      setState(() => _error = 'Enter the text to match.');
-      return;
-    }
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    try {
-      final repository = ref.read(spendingRepositoryProvider);
-      var categoryId = _categoryId;
-      if (_newCategory) {
-        final name = _newCategoryController.text.trim();
-        if (name.isEmpty) {
-          setState(() {
-            _saving = false;
-            _error = 'Enter a name for the new category.';
-          });
-          return;
-        }
-        categoryId = (await repository.createCategory(name)).id;
-      }
-      if (categoryId == null) {
-        setState(() {
-          _saving = false;
-          _error = 'Pick a category.';
-        });
-        return;
-      }
-      await repository.createRule(
-        matchText: matchText,
-        categoryId: categoryId,
-        spreadMonths: _spread,
-      );
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) {
-      setState(() {
-        _saving = false;
-        _error = '$e';
-      });
     }
   }
 }
