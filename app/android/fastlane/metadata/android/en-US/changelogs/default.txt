@@ -1,3 +1,4 @@
-- Transactions can now be marked as transfers by hand (checkbox in the web transaction list, switch in the app's category sheet), excluding them from the spending report — needed for broker funding that auto-detection cannot pair
-- Importing historical transactions now reports the date range the bank actually served and warns when it is shorter than requested
-- Syncs for brokers that report holdings (IBKR, Morgan Stanley) now record per-asset positions; a Holdings card on the dashboard (web and 
+- App transactions: search the list by text or amount, and one Show filter for everything, uncategorized only or transfers only
+- App transactions: a new "Create a rule from this" action in the category sheet, prefilled with the booking's merchant and category
+- App spending: the category history sheet can open the transaction list narrowed to that category
+- App rules: tapping a rule opens it for editing — target (category or transfer), spread, and under Advanced the regex switch, the payments/

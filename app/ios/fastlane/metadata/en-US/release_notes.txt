@@ -1,3 +1,14 @@
+- App transactions: search the list by text or amount, and one Show filter for everything, uncategorized only or transfers only
+- App transactions: a new "Create a rule from this" action in the category sheet, prefilled with the booking's merchant and category
+- App spending: the category history sheet can open the transaction list narrowed to that category
+- App rules: tapping a rule opens it for editing — target (category or transfer), spread, and under Advanced the regex switch, the payments/income direction and the amount bounds; a line under the form says how many existing transactions the rule would change, and how many are claimed by an earlier rule or already have a category
+- App spending: month, quarter or year, chosen in one period control that the chart, the breakdown and the transaction list all follow
+- App spending: spent, income and net for the selected period, each against the period before and against the average of the last six
+- App spending: budgets are shown in the app now — how much of this period's budget is left, and per category as a target marker on its bar with what is left or over
+- App spending: the breakdown lists categories as ranked bars with their share and how they compare with their own average; tapping one opens its history (total, average, highest, and a bar per period)
+- Web: a dashboard icon in the top navigation, first of the icons on the right, so getting back no longer means clicking the app name
+- Swisscard accounts can be synced from the app again: the card no longer counts as a manual account, and its sync button starts the login that texts you a code (it stays out of "Sync all", which runs unattended)
+- Tapping the "Syncing accounts" bar opens a live breakdown: accounts still in progress on top, finished ones below, each moving down as it completes
 - Transactions can now be marked as transfers by hand (checkbox in the web transaction list, switch in the app's category sheet), excluding them from the spending report — needed for broker funding that auto-detection cannot pair
 - Importing historical transactions now reports the date range the bank actually served and warns when it is shorter than requested
 - Syncs for brokers that report holdings (IBKR, Morgan Stanley) now record per-asset positions; a Holdings card on the dashboard (web and app) shows them merged across accounts
@@ -8,14 +19,4 @@
 - Transaction lists now show the counterparty name instead of a leading IBAN, and the booking text gets two lines instead of one
 - AI suggestions: the settings card now explains upfront that a round proposes both categories and rules; a banner at the top announces proposed rules with a switch to skip creating them, select or deselect all with one tap in the app bar, and the apply button breaks its count into categories and rules
 - Categories can now be renamed and deleted in the app under Spending settings
-- Transactions tab now lists all accounts together in chronological order, with a collapsible filter for account and uncategorized-only, account chips on each row, and a load-more footer
-- Chart axis labels use the fewest decimals that keep every label distinct, and can no longer wrap into two lines
-- Simulation: picking a longer horizon than the server covered now re-runs the simulation instead of leaving the chart clipped at the previously selected horizon
-- Transactions list loads further pages automatically while scrolling (no more load-more button) and pages load faster
-- Fix similar with AI: after manually re-categorizing a transaction, a new action asks Gemini which other transactions belong to the same merchant or purpose; you review its picks (and an optional rule) before anything is changed. Re-labeling only considers the last 18 months; uncategorized entries are offered at any age
-- A corrective rule from the fix-similar flow is inserted before the rule that caused the mislabel (rules are first-match-wins), and no rule is proposed when the existing rules already classify the merchant correctly
-- Consolidate rules with AI: a new button in Spending settings asks Gemini to merge duplicate rules and drop dead ones; you review the resulting set including removed rules before it replaces the old one
-- AI review sheets show amounts with 2 decimals instead of the raw 4-decimal value, and the fix-similar sheet lists each entry's current label instead of a cramped old-to-new pair (the target category is in the title)
-- AI suggestions: the proposed category chip moved below the entry text — beside it, a long category name squeezed the merchant into a sliver
-- AI proposes more concise category names: one word where possible, no "A & B" composites
-- Transaction history can now be backfilled from a bank CSV export in the web app (ZKB "with details" and DKB formats, auto-detected); re-imports and EBICS-synced ZKB entries are
+- Transactions tab now lists all accounts together in chronological order, with a collapsible filter for account and uncategoriz
