@@ -43,6 +43,13 @@ cd frontend && npm run dev
 - Swiss 3a retirement platform
 - Requires: username + password
 
+### Commerzbank
+- Configured as FinTS, but **automated sync is not viable** — treated as a manual account
+- Offers exactly one TAN mechanism over FinTS: `900 photoTAN`, `decoupled=False`. No push variant
+- The tap-to-confirm on their web portal is their own frontend; FinTS only offers scan-the-mosaic
+- Balances entered by hand; transactions via CSV import (`/spending?tab=config` → Import history)
+- See full rationale and known defects: [docs/commerzbank-integration.md](docs/commerzbank-integration.md)
+
 ### ZKB (Zürcher Kantonalbank)
 - Uses the EBICS 3.0 (H005) protocol; read-only camt.053 statement download
 - Subscriber-level: one RSA keyring shared across all ZKB accounts
