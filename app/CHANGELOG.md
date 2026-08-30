@@ -2,6 +2,7 @@
 
 ## Next: 1.4.0
 
+- Web: a dashboard icon in the top navigation, first of the icons on the right, so getting back no longer means clicking the app name
 - Swisscard accounts can be synced from the app again: the card no longer counts as a manual account, and its sync button starts the login that texts you a code (it stays out of "Sync all", which runs unattended)
 - Tapping the "Syncing accounts" bar opens a live breakdown: accounts still in progress on top, finished ones below, each moving down as it completes
 - Transactions can now be marked as transfers by hand (checkbox in the web transaction list, switch in the app's category sheet), excluding them from the spending report — needed for broker funding that auto-detection cannot pair
