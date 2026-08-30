@@ -77,13 +77,13 @@ function niceStep(span: number, targetTicks: number): number {
   return multiplier * magnitude;
 }
 
-// Fit the axis to the visible range, leaving the line roughly 70% of the height
+// Fit the axis to the visible range, leaving the line roughly 80% of the height
 // instead of anchoring the scale at zero.
 function computeYAxis(values: number[]): { domain: [number, number]; ticks: number[]; step: number } {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min;
-  const pad = span > 0 ? span * 0.2 : Math.max(Math.abs(max) * 0.05, 1);
+  const pad = span > 0 ? span * 0.1 : Math.max(Math.abs(max) * 0.05, 1);
   const step = niceStep(span + 2 * pad, 5);
   let lower = Math.floor((min - pad) / step) * step;
   const upper = Math.ceil((max + pad) / step) * step;
