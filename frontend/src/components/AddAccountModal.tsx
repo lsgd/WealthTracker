@@ -7,6 +7,7 @@ import {
   discoverAccounts,
   createAccountsBulk,
   completeDiscoveryAuth,
+  brokerCanSync,
 } from '../api/client';
 import ModalOverlay from './ModalOverlay';
 
@@ -16,6 +17,10 @@ interface Broker {
   name: string;
   integration_type: string;
   supports_2fa: boolean;
+  supports_auto_sync?: boolean;
+  requires_interactive_sync?: boolean;
+  /** False for brokers that never fetch: the account is kept up to date by hand. */
+  supports_sync?: boolean;
   credential_schema: {
     properties?: Record<string, {
       type: string;
@@ -98,7 +103,10 @@ export default function AddAccountModal({ onClose, onCreated }: Props) {
     setSelectedBroker(broker);
     setCredentials({});
     setError('');
-    setStep(broker?.code === 'manual' ? 'manual' : 'credentials');
+    // A broker that never fetches anything has nothing to ask credentials for:
+    // it takes the same form as a manual account, keeping only the broker so the
+    // account still identifies itself and its CSV export format.
+    setStep(!broker || !brokerCanSync(broker) ? 'manual' : 'credentials');
     if (broker) {
       setManualName(broker.name);
       setSkipName(broker.name);
@@ -520,6 +528,13 @@ export default function AddAccountModal({ onClose, onCreated }: Props) {
                   <option key={b.code} value={b.code}>{b.name}</option>
                 ))}
               </select>
+              {selectedBroker && selectedBroker.code !== 'manual'
+                && !brokerCanSync(selectedBroker) && (
+                <small className="form-hint">
+                  {selectedBroker.name} cannot be synced: enter the balance by hand
+                  and import transactions from its CSV export.
+                </small>
+              )}
             </div>
 
             <div className="form-group">

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { RefreshCw, Plus, PlusCircle, AlertCircle, CheckCircle2, Clock, X, Trash2, History, MinusCircle, Settings, Upload, Download, Repeat, FileUp } from 'lucide-react';
-import { syncAccount, completeAccountAuth, deleteAccount, updateAccount, updateAccountCredentials, getAccountCredentials, getBroker } from '../api/client';
+import { syncAccount, completeAccountAuth, deleteAccount, updateAccount, updateAccountCredentials, getAccountCredentials, getBroker, brokerCanSync } from '../api/client';
 import AddSnapshotModal from './AddSnapshotModal';
 import AddAccountModal from './AddAccountModal';
 import MigrateAccountModal from './MigrateAccountModal';
@@ -27,6 +27,7 @@ export interface Account {
     name: string;
     supports_auto_sync?: boolean;
     requires_interactive_sync?: boolean;
+    supports_sync?: boolean;
   };
   account_type: string;
   currency: string;
@@ -210,8 +211,9 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
     setSettingsSyncEnabled(account.sync_enabled);
     setSettingsNotes(account.notes ?? '');
 
-    if (account.is_manual) {
-      // Manual accounts don't have credentials
+    if (account.is_manual || !brokerCanSync(account.broker)) {
+      // Neither has credentials: one has no broker to log into, the other has a
+      // broker it never logs into.
       return;
     }
 
@@ -252,8 +254,10 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
       if (Object.keys(updates).length > 0) {
         await updateAccount(accountId, updates);
       }
-      // Save credentials (only for non-manual accounts)
-      if (!credentialsAccount.is_manual) {
+      // Save credentials — only where there are any. A manual account has no
+      // broker to log into; a non-syncing broker never logs in either, and its
+      // settings form shows name and notes only.
+      if (!credentialsAccount.is_manual && brokerCanSync(credentialsAccount.broker)) {
         await updateAccountCredentials(accountId, credentialValues);
       }
 
@@ -452,7 +456,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                         >
                           <Plus size={14} />
                         </button>
-                        {!a.is_manual && (
+                        {!a.is_manual && brokerCanSync(a.broker) && (
                           <button
                             className="btn btn-sm btn-ghost"
                             onClick={() => handleSync(a.id)}
@@ -726,7 +730,8 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
               </p>
             )}
 
-            {!credentialsAccount.is_manual && credentialSchema?.properties ? (
+            {!credentialsAccount.is_manual && brokerCanSync(credentialsAccount.broker)
+              && credentialSchema?.properties ? (
               <form onSubmit={(e) => { e.preventDefault(); handleSaveCredentials(credentialsRetrySync); }}>
                 <div className="form-group">
                   <label htmlFor="settings-name">Account Name</label>
@@ -866,7 +871,7 @@ export default function AccountsTable({ accounts, baseCurrency, onRefresh }: Pro
                   )}
                 </div>
               </form>
-            ) : credentialsAccount.is_manual ? (
+            ) : credentialsAccount.is_manual || !brokerCanSync(credentialsAccount.broker) ? (
               <form onSubmit={(e) => { e.preventDefault(); handleSaveCredentials(false); }}>
                 <div className="form-group">
                   <label htmlFor="settings-name-manual">Account Name</label>

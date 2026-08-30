@@ -2,7 +2,7 @@
 
 ## Next: 1.4.0
 
-- Commerzbank is now a manual account: the bank only offers scan-the-graphic photoTAN over its data interface, so balances are entered by hand and transactions come from the CSV export
+- Commerzbank accounts are now kept up to date by hand: the bank only offers scan-the-graphic photoTAN over its data interface, so the sync button and the credential fields are gone, the balance is entered as a snapshot, and transactions come from the CSV export
 - App transactions: search the list by text or amount, and one Show filter for everything, uncategorized only or transfers only
 - App transactions: a new "Create a rule from this" action in the category sheet, prefilled with the booking's merchant and category
 - App spending: the category history sheet can open the transaction list narrowed to that category

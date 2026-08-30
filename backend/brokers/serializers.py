@@ -8,14 +8,17 @@ class BrokerSerializer(serializers.ModelSerializer):
     # It does NOT say whether the broker can sync at all: an interactive broker
     # syncs perfectly well, it just stops mid-way for a code the user types in.
     # Clients need both facts to decide whether to offer a sync button.
+    # `supports_sync` is the two combined: false means the broker never fetches
+    # anything and the account is kept up to date by hand.
     requires_interactive_sync = serializers.SerializerMethodField()
+    supports_sync = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Broker
         fields = [
             'id', 'code', 'name', 'integration_type',
             'country', 'is_active', 'supports_2fa', 'supports_auto_sync',
-            'requires_interactive_sync',
+            'requires_interactive_sync', 'supports_sync',
             'credential_schema', 'logo_url', 'website_url', 'api_base_url'
         ]
 

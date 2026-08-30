@@ -212,7 +212,9 @@ class WealthSummaryTests(APITestCase):
 class AccountSyncEndpointTests(APITestCase):
     def setUp(self):
         self.user, self.kek, self.user_key = make_kek_user(base_currency='CHF')
-        self.broker = Broker.objects.create(code='viac', name='VIAC', integration_type='rest')
+        self.broker = Broker.objects.create(
+            code='viac', name='VIAC', integration_type='rest', supports_auto_sync=True,
+        )
         self.client.force_authenticate(user=self.user)
         self.client.credentials(HTTP_X_KEK=self.kek)
 
@@ -254,6 +256,83 @@ class AccountSyncEndpointTests(APITestCase):
         )
         resp = self.client.post(reverse('account_sync', args=[account.pk]))
         self.assertEqual(resp.status_code, 404)
+
+
+class NonSyncingBrokerTests(APITestCase):
+    """A broker that cannot fetch anything (Commerzbank: photoTAN needs a camera).
+
+    The account still belongs to the broker — that is what identifies its CSV
+    export format — but every path that would talk to the bank is closed, and
+    the balance is entered by hand. See docs/commerzbank-integration.md.
+    """
+
+    def setUp(self):
+        self.user, self.kek, self.user_key = make_kek_user(base_currency='EUR')
+        self.broker = Broker.objects.create(
+            code='commerzbank', name='Commerzbank', integration_type='fints',
+            supports_auto_sync=False,
+        )
+        self.account = FinancialAccount.objects.create(
+            user=self.user, broker=self.broker, name='Commerzbank Giro',
+            currency='EUR', account_identifier='DE00', encrypted_credentials=b'x',
+            is_manual=False, sync_enabled=True,
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_KEK=self.kek)
+
+    def test_broker_reports_no_sync_support(self):
+        self.assertFalse(self.broker.supports_sync)
+
+    def test_interactive_broker_still_supports_sync(self):
+        """Stopping for a code is not the same as never fetching."""
+        swisscard = Broker.objects.create(
+            code='swisscard', name='Swisscard', integration_type='rest',
+            supports_auto_sync=False,
+        )
+        self.assertTrue(swisscard.supports_sync)
+
+    def test_serializer_exposes_supports_sync(self):
+        data = FinancialAccountSerializer(self.account).data
+        self.assertFalse(data['broker']['supports_sync'])
+
+    def test_sync_rejected(self):
+        resp = self.client.post(reverse('account_sync', args=[self.account.pk]))
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('by hand', resp.data['error'])
+
+    def test_backfill_rejected(self):
+        resp = self.client.post(
+            reverse('transaction_backfill', kwargs={'pk': self.account.pk}),
+            {'start': '2026-01-01'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('CSV', resp.data['error'])
+
+    def test_storing_credentials_rejected(self):
+        resp = self.client.put(
+            reverse('account_credentials', args=[self.account.pk]),
+            {'credentials': {'username': 'x', 'pin': 'y'}}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('no credentials', resp.data['error'])
+
+    def test_excluded_from_sync_all(self):
+        from portfolio.sync_queue import sync_queue
+        with patch.object(sync_queue, 'has_pending_task', return_value=None), \
+                patch.object(sync_queue, 'enqueue', return_value='task-1') as m_enqueue:
+            resp = self.client.post(reverse('sync_all_accounts'))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['synced_count'], 0)
+        m_enqueue.assert_not_called()
+
+    def test_manual_snapshots_still_allowed(self):
+        """The whole point: the balance is typed in instead of fetched."""
+        resp = self.client.post(
+            reverse('snapshot_list', kwargs={'account_id': self.account.pk}),
+            {'balance': '1234.56', 'currency': 'EUR', 'snapshot_date': '2026-08-30'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
 
 
 class SyncWorkerLogicTests(TestCase):
@@ -2901,7 +2980,9 @@ class TransactionBackfillTests(APITestCase):
 
     def setUp(self):
         self.user, self.kek, _ = make_kek_user()
-        self.broker = Broker.objects.create(code='zkb', name='ZKB', integration_type='ebics')
+        self.broker = Broker.objects.create(
+            code='zkb', name='ZKB', integration_type='ebics', supports_auto_sync=True,
+        )
         self.account = FinancialAccount.objects.create(
             user=self.user, broker=self.broker, name='Giro', currency='CHF',
             account_identifier='CH93', encrypted_credentials=b'x',

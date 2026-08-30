@@ -51,6 +51,22 @@ class Broker(models.Model):
         help_text='Whether accounts can be synced automatically without user interaction (e.g., decoupled TAN)'
     )
 
+    @property
+    def supports_sync(self) -> bool:
+        """Can an account at this broker fetch its own balance at all?
+
+        ``supports_auto_sync`` says a sync can finish unattended; an interactive
+        broker syncs too, it just stops for a code. False for both means the
+        broker is connected in name only — it identifies the account and its CSV
+        export format, but every balance is typed in by hand.
+
+        Commerzbank is that case: its only TAN mechanism over FinTS is a photoTAN
+        graphic that has to be scanned with a camera, so no sync can ever
+        complete. See docs/commerzbank-integration.md.
+        """
+        from .integrations import INTERACTIVE_BROKER_CODES
+        return self.supports_auto_sync or self.code in INTERACTIVE_BROKER_CODES
+
     # JSON schema defining required credentials
     credential_schema = models.JSONField(
         default=dict,

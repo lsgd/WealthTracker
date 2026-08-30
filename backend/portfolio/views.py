@@ -596,6 +596,12 @@ class AccountTransactionBackfillView(KEKAuthenticationMixin, APIView):
                 {'error': 'Manual accounts have no transaction feed'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not account.broker.supports_sync:
+            return Response(
+                {'error': f'{account.broker.name} has no transaction feed to fetch '
+                          'from. Import a CSV export from its online banking instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not account.encrypted_credentials and not account.ebics_credential_id:
             return Response({'error': 'No credentials configured'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -663,6 +669,14 @@ class AccountSyncView(KEKAuthenticationMixin, APIView):
 
         if account.is_manual:
             return Response({'error': 'Cannot sync manual accounts'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not account.broker.supports_sync:
+            return Response(
+                {'error': f'{account.broker.name} accounts are kept up to date by '
+                          'hand: add a snapshot for the balance, and import '
+                          'transactions from a CSV export.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # EBICS accounts carry their secret on the shared credential, not here.
         if not account.encrypted_credentials and not account.ebics_credential_id:
@@ -743,18 +757,18 @@ class SyncAllAccountsView(KEKAuthenticationMixin, APIView):
         # treated like a manual one until the bank activates it.
         from django.db.models import Q
 
-        from brokers.integrations import INTERACTIVE_BROKER_CODES
         accounts = FinancialAccount.objects.filter(
             user=request.user,
             is_manual=False,
             sync_enabled=True,
+            # Everything a bulk run cannot do, in one flag. It is false for
+            # brokers that stop for a code the user types (a bulk run would only
+            # send codes nobody is waiting for) and for brokers that cannot sync
+            # at all (Commerzbank — see docs/commerzbank-integration.md).
+            broker__supports_auto_sync=True,
         ).filter(
             ~Q(encrypted_credentials__isnull=True) & ~Q(encrypted_credentials=b'')
             | Q(ebics_credential__state='active')
-        ).exclude(
-            # These need an SMS code answered while the sync runs; a bulk run
-            # would only send codes nobody is waiting to type.
-            broker__code__in=INTERACTIVE_BROKER_CODES,
         ).select_related('broker', 'ebics_credential')
 
         if not accounts.exists():
@@ -961,6 +975,13 @@ class AccountCredentialsView(KEKAuthenticationMixin, APIView):
         if account.is_manual:
             return Response(
                 {'error': 'Manual accounts do not have credentials'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not account.broker.supports_sync:
+            return Response(
+                {'error': f'{account.broker.name} accounts never log in, so they '
+                          'have no credentials to store.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

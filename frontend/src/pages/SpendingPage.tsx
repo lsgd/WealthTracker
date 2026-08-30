@@ -51,6 +51,7 @@ import type {
 } from '../api/client';
 import {
   backfillTransactions,
+  brokerCanSync,
   compareCategoryNames,
   completeAccountAuth,
   importTransactionsCsv,
@@ -84,6 +85,8 @@ const ANY_REGEX_SYNTAX = /[.[\]{}()|\\^$?*+]/;
 interface AccountOption {
   id: number;
   name: string;
+  /** False for accounts kept by hand — nothing to fetch from a bank. */
+  canSync: boolean;
 }
 
 function formatAmount(value: number, currency: string): string {
@@ -279,7 +282,17 @@ export default function SpendingPage() {
         setCategories(cats);
         setRules(ruleList);
         const options: AccountOption[] = (accountData.results ?? accountData).map(
-          (a: { id: number; name: string }) => ({ id: a.id, name: a.name }),
+          (a: {
+            id: number;
+            name: string;
+            is_manual?: boolean;
+            broker?: { supports_sync?: boolean; supports_auto_sync?: boolean;
+                       requires_interactive_sync?: boolean };
+          }) => ({
+            id: a.id,
+            name: a.name,
+            canSync: !a.is_manual && brokerCanSync(a.broker ?? {}),
+          }),
         );
         setAccounts(options);
         // No preselection: the list shows all accounts chronologically, the
@@ -1608,7 +1621,7 @@ export default function SpendingPage() {
                   onChange={(e) => setBackfillAccount(e.target.value ? Number(e.target.value) : '')}
                 >
                   <option value="">Account…</option>
-                  {accounts.map((a) => (
+                  {accounts.filter((a) => a.canSync).map((a) => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
                 </select>

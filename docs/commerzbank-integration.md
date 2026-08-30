@@ -46,7 +46,26 @@ run would stall on a challenge with nobody holding a camera.
 
 ## Decision
 
-Commerzbank is treated as a **manual account**:
+The account stays a **Commerzbank** account — that is what identifies it and its
+CSV export format — but the broker is marked as non-syncing, so it behaves like a
+manual one everywhere.
+
+`Broker.supports_sync` is the flag: `supports_auto_sync or code in
+INTERACTIVE_BROKER_CODES`. It distinguishes "cannot finish unattended" (an
+interactive broker still fetches, it just stops for a code) from "never fetches
+at all", which is Commerzbank. With `supports_auto_sync: false` in the fixture
+and no interactive entry, `supports_sync` is false and:
+
+- the sync button, the credential form and the "Fetch from bank" backfill picker
+  disappear from the web UI (`brokerCanSync()` in `api/client.ts`);
+- the app already hid them — `Account.canSync` has always been
+  `supportsAutoSync || requiresInteractiveSync`;
+- adding an account picks the manual form instead of asking for credentials;
+- the sync, backfill and credential-write endpoints reject it with an
+  explanation rather than starting a login nobody can complete;
+- "Sync all" filters on `broker__supports_auto_sync=True`, so it is skipped.
+
+What remains:
 
 - **Balances** — entered by hand via the "Add Snapshot" (+) action on the
   account row. That button is not gated on `is_manual`, so it works either way.
@@ -60,9 +79,9 @@ Commerzbank is treated as a **manual account**:
   file changes nothing.
 
 Because the export carries its own IBAN, `TransactionCsvImportView` resolves the
-target account purely from `account_identifier` — no broker involvement. Keep the
-account's identifier set to the IBAN and the import lands correctly whether the
-account is migrated to manual or left on the Commerzbank broker with sync off.
+target account purely from `account_identifier`. Keep the account's identifier
+set to the IBAN and the import lands on it; the broker only matters as a
+fallback, for formats whose export names no account.
 
 ## Known defects, if anyone revisits this
 

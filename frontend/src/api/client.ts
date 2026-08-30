@@ -441,10 +441,27 @@ export interface Broker {
   supports_auto_sync: boolean;
   /** Syncs on demand but stops for a code, so it is left out of bulk runs. */
   requires_interactive_sync?: boolean;
+  /** The two above combined: false means it never fetches, ever. */
+  supports_sync?: boolean;
   credential_schema: Record<string, unknown>;
   logo_url?: string;
   website_url?: string;
   api_base_url?: string;
+}
+
+/** Whether a broker fetches anything at all.
+ *
+ * False means it is connected in name only: it identifies the account and its
+ * CSV export format, but the balance is typed in by hand and transactions come
+ * from an import. Commerzbank is the case — see docs/commerzbank-integration.md.
+ */
+export function brokerCanSync(broker: {
+  supports_sync?: boolean;
+  supports_auto_sync?: boolean;
+  requires_interactive_sync?: boolean;
+}): boolean {
+  return broker.supports_sync
+    ?? Boolean(broker.supports_auto_sync || broker.requires_interactive_sync);
 }
 
 // DRF list endpoints are paginated ({count, next, previous, results}). Unwrap to a

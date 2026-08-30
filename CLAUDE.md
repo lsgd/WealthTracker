@@ -47,6 +47,7 @@ cd frontend && npm run dev
 - Configured as FinTS, but **automated sync is not viable** — treated as a manual account
 - Offers exactly one TAN mechanism over FinTS: `900 photoTAN`, `decoupled=False`. No push variant
 - The tap-to-confirm on their web portal is their own frontend; FinTS only offers scan-the-mosaic
+- Broker-level `supports_sync` is false, so sync, credentials and backfill are hidden and refused
 - Balances entered by hand; transactions via CSV import (`/spending?tab=config` → Import history)
 - See full rationale and known defects: [docs/commerzbank-integration.md](docs/commerzbank-integration.md)
 
