@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/periods.dart';
 import '../../data/models/ai_categorization.dart';
 import '../../data/models/spending.dart';
 import '../../data/models/transactions.dart';
@@ -21,7 +22,27 @@ class SpendingModeNotifier extends Notifier<String> {
   void set(String value) => state = value;
 }
 
-/// Number of months the report covers.
+/// Period size of the report: 'month', 'quarter' or 'year'.
+final spendingGranularityProvider =
+    NotifierProvider<SpendingGranularityNotifier, String>(
+        SpendingGranularityNotifier.new);
+
+class SpendingGranularityNotifier extends Notifier<String> {
+  @override
+  String build() => 'month';
+
+  /// Switching period size invalidates both the amount of history (12 months
+  /// and 12 years are not the same ask) and the selected period, whose label
+  /// belongs to the old granularity.
+  void set(String value) {
+    if (state == value) return;
+    state = value;
+    ref.read(spendingRangeProvider.notifier).set(defaultHistory(value));
+    ref.read(spendingSelectedMonthProvider.notifier).set(null);
+  }
+}
+
+/// Number of periods the report covers, in the current granularity.
 final spendingRangeProvider =
     NotifierProvider<SpendingRangeNotifier, int>(SpendingRangeNotifier.new);
 
@@ -44,7 +65,7 @@ class SpendingShowUncategorizedNotifier extends Notifier<bool> {
   void set(bool value) => state = value;
 }
 
-/// Month selected for the breakdown; null follows the latest month.
+/// Period selected for the breakdown; null follows the latest period.
 final spendingSelectedMonthProvider =
     NotifierProvider<SpendingSelectedMonthNotifier, String?>(
         SpendingSelectedMonthNotifier.new);
@@ -53,8 +74,10 @@ class SpendingSelectedMonthNotifier extends Notifier<String?> {
   @override
   String? build() => null;
 
-  /// Also narrows the transaction list to that month: both tabs are looking at
-  /// the same month, and re-picking it by hand was pure friction.
+  /// Also narrows the transaction list to that period: both tabs are looking
+  /// at the same period, and re-picking it by hand was pure friction. The
+  /// label carries its own granularity ('2026-Q3'), which the transaction
+  /// endpoint understands as well as a month.
   void set(String? value) {
     state = value;
     ref.read(transactionsFilterProvider.notifier).setMonth(value);
@@ -66,6 +89,7 @@ final spendingReportProvider = FutureProvider<SpendingReport>((ref) async {
   return repository.getMonthly(
     months: ref.watch(spendingRangeProvider),
     mode: ref.watch(spendingModeProvider),
+    granularity: ref.watch(spendingGranularityProvider),
   );
 });
 

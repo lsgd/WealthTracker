@@ -154,11 +154,11 @@ void main() {
 
       expect(find.byType(DropdownButtonFormField<int?>), findsOneWidget);
       expect(find.byType(DropdownButtonFormField<String?>), findsOneWidget);
-      expect(find.text('All months'), findsOneWidget);
+      expect(find.text('All periods'), findsOneWidget);
       expect(find.text('Only uncategorized'), findsOneWidget);
     });
 
-    testWidgets('a month picked in Insights filters the list', (tester) async {
+    testWidgets('a period picked in Insights filters the list', (tester) async {
       await tester.pumpWidget(_harness());
       await tester.pumpAndSettle();
       // Same provider the bar chart and the breakdown arrows write to.
@@ -168,8 +168,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(container.read(transactionsFilterProvider).month, '2026-07');
-      // And the collapsed filter bar says so rather than filtering silently.
-      expect(find.textContaining('2026-07'), findsOneWidget);
+      // And the collapsed filter bar says so rather than filtering silently,
+      // spelling the period out the way the period bar does.
+      expect(find.textContaining('July 2026'), findsOneWidget);
     });
 
     testWidgets('scrolling near the end loads the next page', (tester) async {

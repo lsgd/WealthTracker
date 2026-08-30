@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/formatters.dart';
+import '../../core/utils/periods.dart';
 import '../../data/models/transactions.dart';
 import '../../data/repositories/spending_repository.dart';
 import '../providers/accounts_provider.dart';
@@ -37,7 +38,7 @@ class TransactionsTab extends ConsumerWidget {
                     (uncategorizedOnly: true, accountId: _, month: _) =>
                       'Nothing uncategorized — all done.',
                     (month: final String m, accountId: _, uncategorizedOnly: _) =>
-                      'No transactions in $m.',
+                      'No transactions in ${formatPeriod(m)}.',
                     _ => 'No transactions yet.',
                   },
                 );
@@ -109,11 +110,12 @@ class _FilterBar extends ConsumerWidget {
       filter.accountId == null
           ? 'All accounts'
           : (accountNames[filter.accountId] ?? 'One account'),
-      if (filter.month != null) filter.month!,
+      if (filter.month != null) formatPeriod(filter.month!),
       if (filter.uncategorizedOnly) 'only uncategorized',
     ].join(' · ');
-    // Months the report covers, newest first, plus the selected one (the range
-    // can be shortened after a month was picked in Insights).
+    // Periods the report covers, newest first, plus the selected one (the
+    // range can be shortened after a period was picked in Insights). The
+    // labels carry their granularity — '2026-Q3' as readily as '2026-08'.
     final report = ref.watch(spendingReportProvider).value;
     final months = <String>{
       if (filter.month != null) filter.month!,
@@ -148,15 +150,16 @@ class _FilterBar extends ConsumerWidget {
         DropdownButtonFormField<String?>(
           initialValue: filter.month,
           decoration: const InputDecoration(
-            labelText: 'Month',
+            labelText: 'Period',
             isDense: true,
             border: OutlineInputBorder(),
           ),
           items: [
             const DropdownMenuItem<String?>(
-                value: null, child: Text('All months')),
+                value: null, child: Text('All periods')),
             for (final month in months)
-              DropdownMenuItem<String?>(value: month, child: Text(month)),
+              DropdownMenuItem<String?>(
+                  value: month, child: Text(formatPeriod(month))),
           ],
           onChanged: notifier.setMonth,
         ),

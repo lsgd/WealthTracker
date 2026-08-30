@@ -296,7 +296,7 @@ as Map<String, double>,
 /// @nodoc
 mixin _$SpendingReport {
 
- String get mode;@JsonKey(name: 'base_currency') String get baseCurrency; List<String> get categories; List<SpendingMonth> get months;
+ String get mode;@JsonKey(name: 'base_currency') String get baseCurrency; String get granularity; List<String> get categories; List<SpendingMonth> get months; Map<String, double> get budgets;
 /// Create a copy of SpendingReport
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -309,16 +309,16 @@ $SpendingReportCopyWith<SpendingReport> get copyWith => _$SpendingReportCopyWith
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&const DeepCollectionEquality().equals(other.categories, categories)&&const DeepCollectionEquality().equals(other.months, months));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&(identical(other.granularity, granularity) || other.granularity == granularity)&&const DeepCollectionEquality().equals(other.categories, categories)&&const DeepCollectionEquality().equals(other.months, months)&&const DeepCollectionEquality().equals(other.budgets, budgets));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,mode,baseCurrency,const DeepCollectionEquality().hash(categories),const DeepCollectionEquality().hash(months));
+int get hashCode => Object.hash(runtimeType,mode,baseCurrency,granularity,const DeepCollectionEquality().hash(categories),const DeepCollectionEquality().hash(months),const DeepCollectionEquality().hash(budgets));
 
 @override
 String toString() {
-  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, categories: $categories, months: $months)';
+  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, granularity: $granularity, categories: $categories, months: $months, budgets: $budgets)';
 }
 
 
@@ -329,7 +329,7 @@ abstract mixin class $SpendingReportCopyWith<$Res>  {
   factory $SpendingReportCopyWith(SpendingReport value, $Res Function(SpendingReport) _then) = _$SpendingReportCopyWithImpl;
 @useResult
 $Res call({
- String mode,@JsonKey(name: 'base_currency') String baseCurrency, List<String> categories, List<SpendingMonth> months
+ String mode,@JsonKey(name: 'base_currency') String baseCurrency, String granularity, List<String> categories, List<SpendingMonth> months, Map<String, double> budgets
 });
 
 
@@ -346,13 +346,15 @@ class _$SpendingReportCopyWithImpl<$Res>
 
 /// Create a copy of SpendingReport
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? mode = null,Object? baseCurrency = null,Object? categories = null,Object? months = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? mode = null,Object? baseCurrency = null,Object? granularity = null,Object? categories = null,Object? months = null,Object? budgets = null,}) {
   return _then(_self.copyWith(
 mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
 as String,baseCurrency: null == baseCurrency ? _self.baseCurrency : baseCurrency // ignore: cast_nullable_to_non_nullable
+as String,granularity: null == granularity ? _self.granularity : granularity // ignore: cast_nullable_to_non_nullable
 as String,categories: null == categories ? _self.categories : categories // ignore: cast_nullable_to_non_nullable
 as List<String>,months: null == months ? _self.months : months // ignore: cast_nullable_to_non_nullable
-as List<SpendingMonth>,
+as List<SpendingMonth>,budgets: null == budgets ? _self.budgets : budgets // ignore: cast_nullable_to_non_nullable
+as Map<String, double>,
   ));
 }
 
@@ -437,10 +439,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  String granularity,  List<String> categories,  List<SpendingMonth> months,  Map<String, double> budgets)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SpendingReport() when $default != null:
-return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+return $default(_that.mode,_that.baseCurrency,_that.granularity,_that.categories,_that.months,_that.budgets);case _:
   return orElse();
 
 }
@@ -458,10 +460,10 @@ return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);cas
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  String granularity,  List<String> categories,  List<SpendingMonth> months,  Map<String, double> budgets)  $default,) {final _that = this;
 switch (_that) {
 case _SpendingReport():
-return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+return $default(_that.mode,_that.baseCurrency,_that.granularity,_that.categories,_that.months,_that.budgets);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -478,10 +480,10 @@ return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);cas
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  List<String> categories,  List<SpendingMonth> months)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String mode, @JsonKey(name: 'base_currency')  String baseCurrency,  String granularity,  List<String> categories,  List<SpendingMonth> months,  Map<String, double> budgets)?  $default,) {final _that = this;
 switch (_that) {
 case _SpendingReport() when $default != null:
-return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);case _:
+return $default(_that.mode,_that.baseCurrency,_that.granularity,_that.categories,_that.months,_that.budgets);case _:
   return null;
 
 }
@@ -493,11 +495,12 @@ return $default(_that.mode,_that.baseCurrency,_that.categories,_that.months);cas
 @JsonSerializable()
 
 class _SpendingReport implements SpendingReport {
-  const _SpendingReport({required this.mode, @JsonKey(name: 'base_currency') required this.baseCurrency, final  List<String> categories = const <String>[], final  List<SpendingMonth> months = const <SpendingMonth>[]}): _categories = categories,_months = months;
+  const _SpendingReport({required this.mode, @JsonKey(name: 'base_currency') required this.baseCurrency, this.granularity = 'month', final  List<String> categories = const <String>[], final  List<SpendingMonth> months = const <SpendingMonth>[], final  Map<String, double> budgets = const <String, double>{}}): _categories = categories,_months = months,_budgets = budgets;
   factory _SpendingReport.fromJson(Map<String, dynamic> json) => _$SpendingReportFromJson(json);
 
 @override final  String mode;
 @override@JsonKey(name: 'base_currency') final  String baseCurrency;
+@override@JsonKey() final  String granularity;
  final  List<String> _categories;
 @override@JsonKey() List<String> get categories {
   if (_categories is EqualUnmodifiableListView) return _categories;
@@ -510,6 +513,13 @@ class _SpendingReport implements SpendingReport {
   if (_months is EqualUnmodifiableListView) return _months;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_months);
+}
+
+ final  Map<String, double> _budgets;
+@override@JsonKey() Map<String, double> get budgets {
+  if (_budgets is EqualUnmodifiableMapView) return _budgets;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(_budgets);
 }
 
 
@@ -526,16 +536,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&const DeepCollectionEquality().equals(other._categories, _categories)&&const DeepCollectionEquality().equals(other._months, _months));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SpendingReport&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.baseCurrency, baseCurrency) || other.baseCurrency == baseCurrency)&&(identical(other.granularity, granularity) || other.granularity == granularity)&&const DeepCollectionEquality().equals(other._categories, _categories)&&const DeepCollectionEquality().equals(other._months, _months)&&const DeepCollectionEquality().equals(other._budgets, _budgets));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,mode,baseCurrency,const DeepCollectionEquality().hash(_categories),const DeepCollectionEquality().hash(_months));
+int get hashCode => Object.hash(runtimeType,mode,baseCurrency,granularity,const DeepCollectionEquality().hash(_categories),const DeepCollectionEquality().hash(_months),const DeepCollectionEquality().hash(_budgets));
 
 @override
 String toString() {
-  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, categories: $categories, months: $months)';
+  return 'SpendingReport(mode: $mode, baseCurrency: $baseCurrency, granularity: $granularity, categories: $categories, months: $months, budgets: $budgets)';
 }
 
 
@@ -546,7 +556,7 @@ abstract mixin class _$SpendingReportCopyWith<$Res> implements $SpendingReportCo
   factory _$SpendingReportCopyWith(_SpendingReport value, $Res Function(_SpendingReport) _then) = __$SpendingReportCopyWithImpl;
 @override @useResult
 $Res call({
- String mode,@JsonKey(name: 'base_currency') String baseCurrency, List<String> categories, List<SpendingMonth> months
+ String mode,@JsonKey(name: 'base_currency') String baseCurrency, String granularity, List<String> categories, List<SpendingMonth> months, Map<String, double> budgets
 });
 
 
@@ -563,13 +573,15 @@ class __$SpendingReportCopyWithImpl<$Res>
 
 /// Create a copy of SpendingReport
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? mode = null,Object? baseCurrency = null,Object? categories = null,Object? months = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? mode = null,Object? baseCurrency = null,Object? granularity = null,Object? categories = null,Object? months = null,Object? budgets = null,}) {
   return _then(_SpendingReport(
 mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
 as String,baseCurrency: null == baseCurrency ? _self.baseCurrency : baseCurrency // ignore: cast_nullable_to_non_nullable
+as String,granularity: null == granularity ? _self.granularity : granularity // ignore: cast_nullable_to_non_nullable
 as String,categories: null == categories ? _self._categories : categories // ignore: cast_nullable_to_non_nullable
 as List<String>,months: null == months ? _self._months : months // ignore: cast_nullable_to_non_nullable
-as List<SpendingMonth>,
+as List<SpendingMonth>,budgets: null == budgets ? _self._budgets : budgets // ignore: cast_nullable_to_non_nullable
+as Map<String, double>,
   ));
 }
 

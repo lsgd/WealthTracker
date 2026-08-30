@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/chart_axis.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/utils/periods.dart';
 import '../../data/models/spending.dart';
 import '../providers/spending_provider.dart';
+import '../widgets/category_detail_sheet.dart';
 import '../widgets/transactions_tab.dart';
 import 'spending_config_screen.dart';
 
@@ -49,7 +51,14 @@ const _incomeColor = Color(0xFF34D399);
 const _uncategorizedColor = Color(0xFF5B6270);
 const _uncategorizedLabel = 'Uncategorized';
 
-const _ranges = [6, 12, 24];
+/// A value against the period before it and against the trailing average.
+///
+/// Both on purpose: period-on-period is noisy when a yearly bill lands (a 300%
+/// jump that means nothing), while the average says whether this period is
+/// genuinely out of line. Null where there is nothing to compare against — a
+/// period before the data starts is absence of history, not a period of
+/// spending nothing, and averaging those in turns every delta into +400%.
+typedef Comparison = ({double? vsPrevious, double? vsAverage});
 
 class SpendingScreen extends ConsumerWidget {
   const SpendingScreen({super.key});
@@ -158,33 +167,83 @@ class _SpendingBody extends ConsumerWidget {
     );
   }
 
+  /// Spending of one period, matching what the charts show: with the
+  /// uncategorized bucket switched off, every number on screen refers to the
+  /// same set of transactions.
+  double _spentIn(SpendingMonth month, bool showUncategorized) =>
+      showUncategorized
+          ? month.expenses
+          : month.expenses - (month.byCategory[_uncategorizedLabel] ?? 0);
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(spendingModeProvider);
+    final granularity = ref.watch(spendingGranularityProvider);
     final range = ref.watch(spendingRangeProvider);
     final showUncategorized = ref.watch(spendingShowUncategorizedProvider);
     final selectedMonth = ref.watch(spendingSelectedMonthProvider);
 
     final categories = _visibleCategories(showUncategorized);
-    final month = report.months.firstWhere(
-      (m) => m.month == selectedMonth,
-      orElse: () => report.months.last,
-    );
+    var index = report.months.indexWhere((m) => m.month == selectedMonth);
+    if (index < 0) index = report.months.length - 1;
+    final month = report.months[index];
+    final noun = periodNoun(report.granularity);
+
+    // Only the completed periods before this one, newest last.
+    final trailing = report.months
+        .sublist(index - averageWindow < 0 ? 0 : index - averageWindow, index);
+
+    Comparison compare(double value, double Function(SpendingMonth) pick) {
+      final previous = index > 0 ? pick(report.months[index - 1]) : null;
+      final seen = trailing.map(pick).where((v) => v != 0).toList();
+      final average = seen.isEmpty
+          ? null
+          : seen.fold<double>(0, (sum, v) => sum + v) / seen.length;
+      return (
+        vsPrevious: previous == null || previous == 0
+            ? null
+            : (value - previous) / previous.abs(),
+        vsAverage:
+            average == null ? null : (value - average) / average.abs(),
+      );
+    }
+
+    final spent = _spentIn(month, showUncategorized);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        _ControlsCard(
+        _PeriodCard(
+          granularity: granularity,
           mode: mode,
           range: range,
           showUncategorized: showUncategorized,
-          average: report.averageExpenses,
+          periods: [for (final m in report.months) m.month],
+          selected: month.month,
+        ),
+        const SizedBox(height: 12),
+        _SummaryCard(
           currency: report.baseCurrency,
+          noun: noun,
+          // The running period is only a partial total, and reading it as a
+          // finished one makes every comparison look like a collapse.
+          partial: index == report.months.length - 1,
+          spent: spent,
+          income: month.income,
+          spentComparison:
+              compare(spent, (m) => _spentIn(m, showUncategorized)),
+          incomeComparison: compare(month.income, (m) => m.income),
+          netComparison: compare(month.income - spent,
+              (m) => m.income - _spentIn(m, showUncategorized)),
+          budgets: report.budgets,
+          byCategory: month.byCategory,
+          showUncategorized: showUncategorized,
         ),
         const SizedBox(height: 12),
         _MonthlyChartCard(
           report: report,
           categories: categories,
+          selectedPeriod: month.month,
           colorFor: _colorFor,
           onMonthSelected: (m) =>
               ref.read(spendingSelectedMonthProvider.notifier).set(m),
@@ -193,6 +252,8 @@ class _SpendingBody extends ConsumerWidget {
         _BreakdownCard(
           report: report,
           month: month,
+          previous: index > 0 ? report.months[index - 1] : null,
+          trailing: trailing,
           showUncategorized: showUncategorized,
           colorFor: _colorFor,
         ),
@@ -201,56 +262,113 @@ class _SpendingBody extends ConsumerWidget {
   }
 }
 
-class _ControlsCard extends ConsumerWidget {
+/// The one period control for the whole screen: chart, breakdown and the
+/// transaction list all follow it.
+///
+/// Before this, the period lived in two places — a range chip here and a month
+/// dropdown in the transaction filter — and they could disagree, so the
+/// breakdown showed August while the list showed everything.
+class _PeriodCard extends ConsumerWidget {
+  final String granularity;
   final String mode;
   final int range;
   final bool showUncategorized;
-  final double average;
-  final String currency;
 
-  const _ControlsCard({
+  /// Every period the report covers, oldest first.
+  final List<String> periods;
+  final String selected;
+
+  const _PeriodCard({
+    required this.granularity,
     required this.mode,
     required this.range,
     required this.showUncategorized,
-    required this.average,
-    required this.currency,
+    required this.periods,
+    required this.selected,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final index = periods.indexOf(selected);
+    final noun = periodNoun(granularity);
+    final counts = historyChoices[granularity] ?? historyChoices['month']!;
+
+    void select(String period) =>
+        ref.read(spendingSelectedMonthProvider.notifier).set(period);
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'normalized',
-                  label: Text('Normalized'),
-                  tooltip: 'Yearly bills spread across their months',
-                ),
-                ButtonSegment(
-                  value: 'actual',
-                  label: Text('Actual'),
-                  tooltip: 'Raw cash flow per month',
-                ),
-              ],
-              selected: {mode},
-              onSelectionChanged: (s) =>
-                  ref.read(spendingModeProvider.notifier).set(s.first),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'month', label: Text('Month')),
+                  ButtonSegment(value: 'quarter', label: Text('Quarter')),
+                  ButtonSegment(value: 'year', label: Text('Year')),
+                ],
+                selected: {granularity},
+                onSelectionChanged: (s) => ref
+                    .read(spendingGranularityProvider.notifier)
+                    .set(s.first),
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Row(
               children: [
-                ..._ranges.map((r) => Padding(
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  tooltip: 'Previous $noun',
+                  onPressed:
+                      index > 0 ? () => select(periods[index - 1]) : null,
+                ),
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: selected,
+                      // Newest first: the recent periods are the ones anyone
+                      // scrolls to, and they would otherwise sit at the bottom.
+                      items: [
+                        for (final period in periods.reversed)
+                          DropdownMenuItem(
+                            value: period,
+                            child: Text(
+                              formatPeriod(period),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) select(value);
+                      },
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  tooltip: 'Next $noun',
+                  onPressed: index >= 0 && index < periods.length - 1
+                      ? () => select(periods[index + 1])
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                ...counts.map((count) => Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
-                        label: Text('${r}m'),
-                        selected: range == r,
+                        label: Text('$count'),
+                        tooltip: 'Show $count ${noun}s of history',
+                        selected: range == count,
                         onSelected: (_) =>
-                            ref.read(spendingRangeProvider.notifier).set(r),
+                            ref.read(spendingRangeProvider.notifier).set(count),
                       ),
                     )),
                 const Spacer(),
@@ -265,10 +383,26 @@ class _ControlsCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              'Average monthly spending ($mode): '
-              '${formatCurrency(average, currency)}',
-              style: Theme.of(context).textTheme.bodySmall,
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: 'normalized',
+                    label: Text('Normalized'),
+                    tooltip: 'Yearly bills spread across the months they cover',
+                  ),
+                  ButtonSegment(
+                    value: 'actual',
+                    label: Text('Actual'),
+                    tooltip: 'Raw cash flow, each bill when it was paid',
+                  ),
+                ],
+                selected: {mode},
+                onSelectionChanged: (s) =>
+                    ref.read(spendingModeProvider.notifier).set(s.first),
+              ),
             ),
           ],
         ),
@@ -277,15 +411,262 @@ class _ControlsCard extends ConsumerWidget {
   }
 }
 
+/// Spending, income and net for the selected period, each against the period
+/// before and against the trailing average, plus how the budget is holding up.
+class _SummaryCard extends StatelessWidget {
+  final String currency;
+  final String noun;
+  final bool partial;
+  final double spent;
+  final double income;
+  final Comparison spentComparison;
+  final Comparison incomeComparison;
+  final Comparison netComparison;
+  final Map<String, double> budgets;
+  final Map<String, double> byCategory;
+  final bool showUncategorized;
+
+  const _SummaryCard({
+    required this.currency,
+    required this.noun,
+    required this.partial,
+    required this.spent,
+    required this.income,
+    required this.spentComparison,
+    required this.incomeComparison,
+    required this.netComparison,
+    required this.budgets,
+    required this.byCategory,
+    required this.showUncategorized,
+  });
+
+  /// Sum of the budgets of the categories on screen, or null when none is set.
+  double? get _budgetTotal {
+    final relevant = budgets.entries
+        .where((e) => showUncategorized || e.key != _uncategorizedLabel);
+    if (relevant.isEmpty) return null;
+    return relevant.fold<double>(0, (sum, e) => sum + e.value);
+  }
+
+  /// How much of the period's spending falls in categories that have a budget
+  /// — without it, "CHF 400 left" reads as if it covered everything.
+  double get _budgetedShare {
+    if (spent <= 0) return 100;
+    final budgeted = budgets.keys
+        .fold<double>(0, (sum, name) => sum + (byCategory[name] ?? 0));
+    return budgeted / spent * 100;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final budgetTotal = _budgetTotal;
+    final share = _budgetedShare;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SummaryTile(
+                  label: 'Spent',
+                  value: spent,
+                  currency: currency,
+                  comparison: spentComparison,
+                  moreIsBetter: false,
+                  partial: partial,
+                ),
+                _SummaryTile(
+                  label: 'Income',
+                  value: income,
+                  currency: currency,
+                  comparison: incomeComparison,
+                  moreIsBetter: true,
+                  partial: partial,
+                ),
+                _SummaryTile(
+                  label: 'Net',
+                  value: income - spent,
+                  currency: currency,
+                  comparison: netComparison,
+                  moreIsBetter: true,
+                  partial: partial,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Compared with the previous $noun and the average of the '
+              'last $averageWindow.',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            if (budgetTotal != null) ...[
+              const Divider(height: 20),
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                    text: spent > budgetTotal
+                        ? formatCurrency(spent - budgetTotal, currency)
+                        : formatCurrency(budgetTotal - spent, currency),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: spent > budgetTotal
+                          ? theme.colorScheme.error
+                          : _incomeColor,
+                    ),
+                  ),
+                  TextSpan(
+                    text: spent > budgetTotal
+                        ? ' over the ${formatCurrency(budgetTotal, currency)} '
+                            'budget for this $noun'
+                        : ' left of the ${formatCurrency(budgetTotal, currency)} '
+                            'budget for this $noun',
+                  ),
+                ]),
+                style: theme.textTheme.bodySmall,
+              ),
+              if (share < 99.5)
+                Text(
+                  'Budgets cover ${share.toStringAsFixed(0)}% of what you spend.',
+                  style: theme.textTheme.labelSmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryTile extends StatelessWidget {
+  final String label;
+  final double value;
+  final String currency;
+  final Comparison comparison;
+
+  /// Whether more is good: net and income yes, spending no.
+  final bool moreIsBetter;
+  final bool partial;
+
+  const _SummaryTile({
+    required this.label,
+    required this.value,
+    required this.currency,
+    required this.comparison,
+    required this.moreIsBetter,
+    required this.partial,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatCurrency(value, currency),
+              maxLines: 1,
+              style: theme.textTheme.titleSmall,
+            ),
+          ),
+          if (partial)
+            Text(
+              'so far',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          const SizedBox(height: 2),
+          _Delta(
+            change: comparison.vsPrevious,
+            moreIsBetter: moreIsBetter,
+            suffix: 'vs last',
+          ),
+          _Delta(
+            change: comparison.vsAverage,
+            moreIsBetter: moreIsBetter,
+            suffix: 'vs avg',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One comparison: the arrow shows the direction, the color says whether that
+/// direction is welcome — spending more is bad, earning more is good.
+class _Delta extends StatelessWidget {
+  final double? change;
+  final bool moreIsBetter;
+  final String suffix;
+
+  const _Delta({
+    required this.change,
+    required this.moreIsBetter,
+    required this.suffix,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.labelSmall
+        ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+
+    if (change == null) {
+      return Text('— $suffix', style: muted);
+    }
+    final percent = (change! * 100).round();
+    if (percent == 0) {
+      return Text('flat $suffix', style: muted);
+    }
+    final good = (percent > 0) == moreIsBetter;
+    final color = good ? _incomeColor : theme.colorScheme.error;
+    return Row(
+      children: [
+        Icon(percent > 0 ? Icons.arrow_upward : Icons.arrow_downward,
+            size: 11, color: color),
+        Expanded(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${percent.abs()}% $suffix',
+              maxLines: 1,
+              style: theme.textTheme.labelSmall?.copyWith(color: color),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _MonthlyChartCard extends StatelessWidget {
   final SpendingReport report;
   final List<String> categories;
+  final String selectedPeriod;
   final Color Function(String) colorFor;
   final ValueChanged<String> onMonthSelected;
 
   const _MonthlyChartCard({
     required this.report,
     required this.categories,
+    required this.selectedPeriod,
     required this.colorFor,
     required this.onMonthSelected,
   });
@@ -312,8 +693,10 @@ class _MonthlyChartCard extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 12),
-              child: Text('Monthly spending',
-                  style: Theme.of(context).textTheme.titleMedium),
+              child: Text(
+                'Spending per ${periodNoun(report.granularity)}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
             SizedBox(
               height: 240,
@@ -332,7 +715,7 @@ class _MonthlyChartCard extends StatelessWidget {
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
                         final m = months[groupIndex];
                         return BarTooltipItem(
-                          '${m.month}\n'
+                          '${formatPeriod(m.month)}\n'
                           '${formatCurrency(m.expenses, report.baseCurrency)}',
                           Theme.of(context).textTheme.bodySmall ??
                               const TextStyle(),
@@ -388,7 +771,7 @@ class _MonthlyChartCard extends StatelessWidget {
                           return Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Text(
-                              months[index].month.substring(2),
+                              formatPeriodShort(months[index].month),
                               style: Theme.of(context).textTheme.labelSmall,
                             ),
                           );
@@ -419,20 +802,39 @@ class _MonthlyChartCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             _Legend(categories: categories, colorFor: colorFor),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Text(
+                'Tap a bar to inspect that ${periodNoun(report.granularity)}. '
+                'Average over the completed ones: '
+                '${formatCurrency(report.averageExpenses, report.baseCurrency)}.',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  /// Stack segments for one month, in report category order.
+  /// Stack segments for one period, in report category order. The period being
+  /// inspected keeps its full color; the rest is context.
   List<BarChartRodStackItem> _stackFor(SpendingMonth month) {
+    final dim = month.month != selectedPeriod;
     final items = <BarChartRodStackItem>[];
     var from = 0.0;
     for (final category in categories) {
       final value = month.byCategory[category] ?? 0;
       if (value <= 0) continue;
-      items.add(BarChartRodStackItem(from, from + value, colorFor(category)));
+      final color = colorFor(category);
+      items.add(BarChartRodStackItem(
+        from,
+        from + value,
+        dim ? color.withValues(alpha: 0.5) : color,
+      ));
       from += value;
     }
     return items;
@@ -472,29 +874,76 @@ class _Legend extends StatelessWidget {
   }
 }
 
+/// One row of the ranking: what a category cost this period, next to what it
+/// usually costs and what it was allowed to cost.
+typedef _CategoryRow = ({
+  String name,
+  double amount,
+  double? previous,
+  double? average,
+  double? budget,
+});
+
 class _BreakdownCard extends ConsumerWidget {
   final SpendingReport report;
   final SpendingMonth month;
+  final SpendingMonth? previous;
+  final List<SpendingMonth> trailing;
   final bool showUncategorized;
   final Color Function(String) colorFor;
 
   const _BreakdownCard({
     required this.report,
     required this.month,
+    required this.previous,
+    required this.trailing,
     required this.showUncategorized,
     required this.colorFor,
   });
 
+  /// Mean of the periods that actually had this category, or null when there
+  /// is nothing to average — see [Comparison].
+  double? _averageOf(String category) {
+    final seen = trailing
+        .map((m) => m.byCategory[category] ?? 0)
+        .where((v) => v != 0)
+        .toList();
+    if (seen.isEmpty) return null;
+    return seen.fold<double>(0, (sum, v) => sum + v) / seen.length;
+  }
+
+  List<_CategoryRow> _rows() {
+    // Budgeted categories appear even with nothing spent — "CHF 200 left" is
+    // exactly the row a budget is there to show, and dropping it would make a
+    // category look untracked.
+    final spent = <String, double>{
+      ...month.byCategory,
+      for (final name in report.budgets.keys)
+        if (!month.byCategory.containsKey(name)) name: 0,
+    };
+    final rows = [
+      for (final entry in spent.entries)
+        if (showUncategorized || entry.key != _uncategorizedLabel)
+          (
+            name: entry.key,
+            amount: entry.value,
+            previous: previous?.byCategory[entry.key],
+            average: _averageOf(entry.key),
+            budget: report.budgets[entry.key],
+          ),
+    ]..sort((a, b) => b.amount.compareTo(a.amount));
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final entries = month.byCategory.entries
-        .where((e) => showUncategorized || e.key != _uncategorizedLabel)
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final total = entries.fold<double>(0, (sum, e) => sum + e.value);
+    final rows = _rows();
+    final total = rows.fold<double>(0, (sum, r) => sum + r.amount);
+    final entries = rows.where((r) => r.amount > 0).toList();
 
     final index = report.months.indexWhere((m) => m.month == month.month);
     final currency = report.baseCurrency;
+    final noun = periodNoun(report.granularity);
 
     return Card(
       child: Padding(
@@ -506,13 +955,13 @@ class _BreakdownCard extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Breakdown · ${month.month}',
+                    'Breakdown · ${formatPeriod(month.month)}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_left),
-                  tooltip: 'Previous month',
+                  tooltip: 'Previous $noun',
                   onPressed: index > 0
                       ? () => ref
                           .read(spendingSelectedMonthProvider.notifier)
@@ -521,7 +970,7 @@ class _BreakdownCard extends ConsumerWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
-                  tooltip: 'Next month',
+                  tooltip: 'Next $noun',
                   onPressed: index >= 0 && index < report.months.length - 1
                       ? () => ref
                           .read(spendingSelectedMonthProvider.notifier)
@@ -531,79 +980,73 @@ class _BreakdownCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 8),
-            if (entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 32),
-                child: Center(child: Text('No spending in this month.')),
+            if (rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Center(child: Text('No spending in this $noun.')),
               )
             else ...[
-              SizedBox(
-                height: 180,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    PieChart(
-                      PieChartData(
-                        sectionsSpace: 2,
-                        centerSpaceRadius: 52,
-                        sections: [
-                          for (final e in entries)
-                            PieChartSectionData(
-                              value: e.value,
-                              color: colorFor(e.key),
-                              radius: 26,
-                              showTitle: false,
-                            ),
+              if (entries.isNotEmpty)
+                SizedBox(
+                  height: 180,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      PieChart(
+                        PieChartData(
+                          sectionsSpace: 2,
+                          centerSpaceRadius: 52,
+                          sections: [
+                            for (final row in entries)
+                              PieChartSectionData(
+                                value: row.amount,
+                                color: colorFor(row.name),
+                                radius: 26,
+                                showTitle: false,
+                              ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            // Full format with thousands separator — the compact
+                            // one rendered mid-size totals as e.g. "CHF 14347".
+                            formatCurrency(total, currency),
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            formatPeriod(month.month),
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
                         ],
                       ),
-                    ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          // Full format with thousands separator — the compact
-                          // one rendered mid-size totals as e.g. "CHF 14347".
-                          formatCurrency(total, currency),
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        Text(
-                          month.month,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              for (final e in entries)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: colorFor(e.key),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(e.key)),
-                      Text(formatCurrency(e.value, currency)),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: 46,
-                        child: Text(
-                          total > 0
-                              ? '${(e.value / total * 100).toStringAsFixed(1)}%'
-                              : '0.0%',
-                          textAlign: TextAlign.right,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
                     ],
+                  ),
+                ),
+              const SizedBox(height: 12),
+              // Bars are scaled against the largest of spend and budget, so a
+              // category under its target shows visibly short of the marker.
+              for (final row in rows)
+                _CategoryRankingRow(
+                  row: row,
+                  color: colorFor(row.name),
+                  largest: rows.fold<double>(
+                      0,
+                      (max, r) => [max, r.amount, r.budget ?? 0]
+                          .reduce((a, b) => a > b ? a : b)),
+                  total: total,
+                  currency: currency,
+                  onTap: () => CategoryDetailSheet.show(
+                    context,
+                    category: row.name,
+                    color: colorFor(row.name),
+                    report: report,
+                    selectedPeriod: month.month,
+                    onSelectPeriod: (period) => ref
+                        .read(spendingSelectedMonthProvider.notifier)
+                        .set(period),
                   ),
                 ),
               const Divider(height: 20),
@@ -620,6 +1063,159 @@ class _BreakdownCard extends ConsumerWidget {
                         .bodyMedium
                         ?.copyWith(color: _incomeColor),
                   ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One category of the selected period: its share as a bar, what it cost, how
+/// that compares with its own average, and how the budget is holding up.
+///
+/// A budget shows as a marker on the bar rather than a second bar: the
+/// question is how close the spend is to the line, which two bars make you
+/// measure by eye.
+class _CategoryRankingRow extends StatelessWidget {
+  final _CategoryRow row;
+  final Color color;
+  final double largest;
+  final double total;
+  final String currency;
+  final VoidCallback onTap;
+
+  const _CategoryRankingRow({
+    required this.row,
+    required this.color,
+    required this.largest,
+    required this.total,
+    required this.currency,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.labelSmall
+        ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    final budget = row.budget;
+    final over = budget != null && row.amount > budget;
+    // The average is the better yardstick; the previous period stands in only
+    // while there is no history to average.
+    final reference = row.average ?? row.previous;
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    row.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+                Text(formatCurrency(row.amount, currency),
+                    style: theme.textTheme.bodyMedium),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 38,
+                  child: Text(
+                    total > 0
+                        ? '${(row.amount / total * 100).round()}%'
+                        : '0%',
+                    textAlign: TextAlign.right,
+                    style: muted,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 6,
+              child: Stack(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.dividerColor.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  FractionallySizedBox(
+                    widthFactor: largest > 0
+                        ? (row.amount / largest).clamp(0.0, 1.0)
+                        : 0.0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(3),
+                        border: over
+                            ? Border.all(color: theme.colorScheme.error)
+                            : null,
+                      ),
+                    ),
+                  ),
+                  if (budget != null && budget > 0 && largest > 0)
+                    Align(
+                      // Alignment runs -1..1 across the track.
+                      alignment: Alignment(
+                        ((budget / largest).clamp(0.0, 1.0) * 2 - 1)
+                            .toDouble(),
+                        0,
+                      ),
+                      child: Container(
+                        width: 2,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (reference != null || budget != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const SizedBox(width: 18),
+                  if (reference != null && reference != 0)
+                    Expanded(
+                      child: _Delta(
+                        change: (row.amount - reference) / reference.abs(),
+                        moreIsBetter: false,
+                        suffix: row.average != null ? 'vs avg' : 'vs last',
+                      ),
+                    ),
+                  if (budget != null)
+                    Expanded(
+                      child: Text(
+                        over
+                            ? '${formatCurrency(row.amount - budget, currency)} over budget'
+                            : '${formatCurrency(budget - row.amount, currency)} left of budget',
+                        textAlign: TextAlign.right,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: over
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ],

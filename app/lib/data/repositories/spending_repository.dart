@@ -38,17 +38,23 @@ class SpendingRepository {
 
   SpendingRepository(this._apiClient);
 
-  /// Fetch the month-to-month spending report.
+  /// Fetch the period-to-period spending report.
   ///
   /// [mode] is ``normalized`` (yearly bills amortized across their months) or
-  /// ``actual`` (raw cash flow per month).
+  /// ``actual`` (raw cash flow). [months] counts periods of [granularity]
+  /// ('month', 'quarter' or 'year') — 12 quarters, 3 years.
   Future<SpendingReport> getMonthly({
     required int months,
     required String mode,
+    String granularity = 'month',
   }) async {
     final response = await _apiClient.get(
       ApiConfig.spendingMonthlyPath,
-      queryParameters: {'months': months, 'mode': mode},
+      queryParameters: {
+        'months': months,
+        'mode': mode,
+        'granularity': granularity,
+      },
     );
     return SpendingReport.fromJson(response.data as Map<String, dynamic>);
   }

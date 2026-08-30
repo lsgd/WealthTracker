@@ -32,6 +32,7 @@ _SpendingReport _$SpendingReportFromJson(Map<String, dynamic> json) =>
     _SpendingReport(
       mode: json['mode'] as String,
       baseCurrency: json['base_currency'] as String,
+      granularity: json['granularity'] as String? ?? 'month',
       categories:
           (json['categories'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -42,12 +43,19 @@ _SpendingReport _$SpendingReportFromJson(Map<String, dynamic> json) =>
               ?.map((e) => SpendingMonth.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const <SpendingMonth>[],
+      budgets:
+          (json['budgets'] as Map<String, dynamic>?)?.map(
+            (k, e) => MapEntry(k, (e as num).toDouble()),
+          ) ??
+          const <String, double>{},
     );
 
 Map<String, dynamic> _$SpendingReportToJson(_SpendingReport instance) =>
     <String, dynamic>{
       'mode': instance.mode,
       'base_currency': instance.baseCurrency,
+      'granularity': instance.granularity,
       'categories': instance.categories,
       'months': instance.months,
+      'budgets': instance.budgets,
     };

@@ -29,24 +29,23 @@ abstract class SpendingReport with _$SpendingReport {
   const factory SpendingReport({
     required String mode,
     @JsonKey(name: 'base_currency') required String baseCurrency,
+    // 'month', 'quarter' or 'year'. The entries in [months] are periods of
+    // this size; the field keeps its name for the clients that predate the
+    // other granularities.
+    @Default('month') String granularity,
     @Default(<String>[]) List<String> categories,
     @Default(<SpendingMonth>[]) List<SpendingMonth> months,
+    // Per category, already scaled from the monthly budget to one period of
+    // this granularity. Categories without a budget are absent.
+    @Default(<String, double>{}) Map<String, double> budgets,
   }) = _SpendingReport;
 
   factory SpendingReport.fromJson(Map<String, dynamic> json) =>
       _$SpendingReportFromJson(json);
 }
 
-extension SpendingMonthX on SpendingMonth {
-  /// First day of this month, parsed from the ``YYYY-MM`` label.
-  DateTime get dateTime {
-    final parts = month.split('-');
-    return DateTime(int.parse(parts[0]), int.parse(parts[1]));
-  }
-}
-
 extension SpendingReportX on SpendingReport {
-  /// Average monthly spending, excluding the running (partial) month.
+  /// Average spending per period, excluding the running (partial) one.
   double get averageExpenses {
     if (months.isEmpty) return 0;
     final complete = months.length > 1
