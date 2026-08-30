@@ -67,31 +67,49 @@ function formatCurrencyCompact(value: number, step = 0): string {
   return Math.round(value).toString();
 }
 
-// Round a raw tick spacing up to the next 1/2/5 * 10^n so labels stay readable.
+// Snap a raw tick spacing to the nearest 1/2/5 * 10^n so labels stay readable.
+// Nearest rather than next-up: always rounding up thins a wide range out to
+// three gridlines. Thresholds are the geometric midpoints of 1/2/5/10.
 function niceStep(span: number, targetTicks: number): number {
   if (!(span > 0)) return 1;
   const raw = span / targetTicks;
   const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
   const normalized = raw / magnitude;
-  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const multiplier = normalized < 1.5 ? 1 : normalized < 3.5 ? 2 : normalized < 7.5 ? 5 : 10;
   return multiplier * magnitude;
 }
 
-// Fit the axis to the visible range, leaving the line roughly 80% of the height
-// instead of anchoring the scale at zero.
+// Every multiple of `step` that falls inside [lower, upper].
+function ticksWithin(lower: number, upper: number, step: number): number[] {
+  const first = Math.ceil(lower / step) * step;
+  const ticks: number[] = [];
+  for (let i = 0; ; i++) {
+    const t = first + i * step;
+    if (t > upper + step * 1e-9) break;
+    ticks.push(Math.round(t * 100) / 100);
+  }
+  return ticks;
+}
+
+// Fit the axis to the visible range with exactly 10% padding on each side, so
+// the line uses ~80% of the height instead of the scale being anchored at zero.
+// The domain stays at the padded values and the round-number ticks are placed
+// inside it — snapping the domain itself out to the next step would silently
+// inflate the padding by up to a full step.
 function computeYAxis(values: number[]): { domain: [number, number]; ticks: number[]; step: number } {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min;
   const pad = span > 0 ? span * 0.1 : Math.max(Math.abs(max) * 0.05, 1);
-  const step = niceStep(span + 2 * pad, 5);
-  let lower = Math.floor((min - pad) / step) * step;
-  const upper = Math.ceil((max + pad) / step) * step;
-  if (min >= 0 && lower < 0) lower = 0;
+  const lower = min >= 0 ? Math.max(0, min - pad) : min - pad;
+  const upper = max + pad;
 
-  const ticks: number[] = [];
-  for (let t = lower; t <= upper + step / 2; t += step) {
-    ticks.push(Math.round(t * 100) / 100);
+  let step = niceStep(upper - lower, 5);
+  let ticks = ticksWithin(lower, upper, step);
+  // A step rounded up to the next 1/2/5 can leave too few gridlines to read.
+  if (ticks.length < 3) {
+    step = step / 2;
+    ticks = ticksWithin(lower, upper, step);
   }
   return { domain: [lower, upper], ticks, step };
 }
