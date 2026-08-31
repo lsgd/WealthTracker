@@ -22,6 +22,30 @@ cd frontend && npm run dev
   - JWT tokens expire in ~15 min; mint fresh per sync via `POST /rest/participant/v2/auth/tokens`
   - Auth is fully programmatic (no manual JWT paste needed) — see the "Programmatic Authentication (Solved)" section
 
+## Design Principles
+
+### Build generically, not around one person's accounts
+
+This is a public repo that other people clone and run against their own brokers. Features
+must work for any user's account set-up. The maintainer's personal situation is valid input
+to **what gets built first** — it must not be encoded in the data model, defaults, or UI copy.
+
+When personal context arrives during design, ask whether it changes *priority* or *schema*.
+It should almost always be priority.
+
+- Prefer a user-facing filter or preference over a new taxonomy field. Do not add flags that
+  classify accounts by how the maintainer happens to use them (e.g. "managed vs
+  self-directed") — present the data per account and let users draw the comparison.
+- Broker differences belong in capability flags on the integration, following the existing
+  `supports_positions()` / `supports_transactions()` / `supports_historical_data()` pattern in
+  [backend/brokers/integrations/base.py](backend/brokers/integrations/base.py) — not in
+  per-user configuration.
+- Never special-case a specific ticker, employer, or broker in analytics. Metrics should be
+  stated generically ("largest position as a share of net worth", not "employer stock").
+
+Related: keep personal instance hostnames out of tracked files — use neutral placeholders
+such as `your-server.example.com`.
+
 ## Broker Integrations
 
 ### Morgan Stanley at Work
