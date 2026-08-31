@@ -58,7 +58,7 @@ def get_broker_integration(
         else:
             raise ValueError(
                 "IBKR requires flex_token and query_id credentials. "
-                "Get these from IBKR Client Portal > Reports > Flex Queries."
+                "Get these from IBKR Client Portal > Performance & Reports > Flex Queries."
             )
 
     if broker.code == 'truewealth':

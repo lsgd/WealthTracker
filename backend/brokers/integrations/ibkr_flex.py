@@ -13,7 +13,7 @@ Requirements:
 
 Setup Guide:
 1. Log in to IBKR Client Portal
-2. Go to Reports > Flex Queries
+2. Go to Performance & Reports > Flex Queries
 3. Enable Flex Web Service and generate a token
 4. Create an Activity Flex Query with positions and cash data
 5. Note the Query ID
@@ -96,13 +96,13 @@ class IBKRFlexIntegration(BrokerIntegrationBase):
         if not self.token:
             return AuthResult(
                 success=False,
-                error_message="Flex token is required. Generate one in IBKR Client Portal > Reports > Flex Queries."
+                error_message="Flex token is required. Generate one in IBKR Client Portal > Performance & Reports > Flex Queries."
             )
 
         if not self.query_id:
             return AuthResult(
                 success=False,
-                error_message="Flex Query ID is required. Create a query in IBKR Client Portal > Reports > Flex Queries."
+                error_message="Flex Query ID is required. Create a query in IBKR Client Portal > Performance & Reports > Flex Queries."
             )
 
         # Mark as authenticated based on credentials presence.

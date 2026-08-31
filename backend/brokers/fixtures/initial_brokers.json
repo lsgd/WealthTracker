@@ -267,15 +267,15 @@
             "type": "string",
             "title": "Flex Token",
             "format": "password",
-            "description": "Flex Web Service token (get from Client Portal > Reports > Flex Queries > Enable)"
+            "description": "Flex Web Service token (get from Client Portal > Performance & Reports > Flex Queries > Enable)"
           },
           "query_id": {
             "type": "string",
             "title": "Query ID",
-            "description": "Activity Flex Query ID (create in Client Portal > Reports > Flex Queries)"
+            "description": "Activity Flex Query ID (create in Client Portal > Performance & Reports > Flex Queries)"
           }
         },
-        "description": "Uses IBKR Flex Web Service. Create a Flex Query in Client Portal > Reports > Flex Queries."
+        "description": "Uses IBKR Flex Web Service. Create a Flex Query in Client Portal > Performance & Reports > Flex Queries."
       },
       "created_at": "2026-01-20T00:00:00Z",
       "updated_at": "2026-01-20T00:00:00Z"

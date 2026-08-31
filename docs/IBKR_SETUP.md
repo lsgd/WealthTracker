@@ -27,8 +27,12 @@ The Flex Web Service allows you to fetch account data using a token and pre-conf
 ### Step 1: Enable Flex Web Service
 
 1. Log in to [IBKR Client Portal](https://www.interactivebrokers.com/portal)
-2. Navigate to **Settings** → **Reporting** → **Flex Queries**
+2. Navigate to **Performance & Reports** → **Flex Queries**
 3. If not already enabled, click **Enable Flex Web Service**
+
+> Both the token and the query IDs live on this one page. IBKR has moved it between
+> menus over the years — if **Performance & Reports** does not show it, search the
+> portal for "Flex".
 
 ### Step 2: Generate a Flex Token
 
@@ -37,6 +41,9 @@ The Flex Web Service allows you to fetch account data using a token and pre-conf
 3. Copy and save the token securely
 4. Note: Tokens are valid for up to 1 year
 
+One token covers **all** of your Flex queries — you do not need a separate token per
+query. See [Rotating the token](#rotating-the-token) before regenerating an existing one.
+
 ### Step 3: Create a Flex Query
 
 1. Click **Create** under Activity Flex Queries
@@ -44,20 +51,48 @@ The Flex Web Service allows you to fetch account data using a token and pre-conf
 
 **Query Name**: `WealthTracker` (or any name you prefer)
 
-**Date Period**: Last 7 Calendar Days (or your preference)
-
 **Sections to Include**:
 - ✅ Account Information
 - ✅ Cash Report
 - ✅ Open Positions
-- ✅ Equity Summary (Net Asset Value)
+- ✅ Net Asset Value (NAV) in Base — this is the "Equity Summary"; it carries the daily
+  NAV series the historical backfill imports
+- ✅ Change in NAV
 
 **Delivery Configuration**:
-- Format: XML
-- Include header and trailer records: Yes
+- Format: **XML**
+- Period: **Last 365 Calendar Days**. The sync imports every day the report contains, so a
+  longer period means a deeper wealth history at no extra cost — the data arrives in the
+  same request. A short period (e.g. 7 days) is the usual reason history looks shallow.
+
+**General Configuration**:
+- Date Format: **yyyyMMdd**
+- Time Format: **HHmmss**, Date/Time Separator: **;** (semi-colon)
+- Breakout by Day: **No** — see the warning below
 
 3. Save the query
 4. Note the **Query ID** (visible in the query list)
+
+> **Do not enable "Breakout by Day" on the query used for syncing.** It makes sections
+> report one row per instrument *per day* instead of one as of the period end. The sync
+> ignores `OpenPosition`'s `reportDate` and writes every parsed position onto a single
+> snapshot, so a 365-day report would store each holding hundreds of times over and wildly
+> overstate the account. If you want to explore per-day data, create a **separate** query
+> and point `inspect_ibkr_flex` at it.
+
+#### Optional sections
+
+None of these are read by the sync today. They are listed because they are the sections
+that would carry per-instrument performance data, and because enabling them is harmless:
+
+| Section | What it adds |
+|---|---|
+| Trades | Individual buys and sells — needed for any true per-position return |
+| Cash Transactions | Deposits and withdrawals, i.e. external cash flows |
+| Statement of Funds | Full cash ledger |
+| Realized and Unrealized Performance Summary in Base | Per-symbol P&L |
+| Mark-to-Market Performance Summary in Base | Per-symbol mark-to-market movement |
+| Financial Instrument Information | ISIN/description enrichment for instruments |
 
 ### Step 4: Add IBKR Account to Wealth Tracker
 
@@ -99,10 +134,36 @@ The sync will fetch your latest Flex report and update positions and balances.
 - Historical data limited to configured date range
 - Token expires after 1 year (regenerate as needed)
 
+### Rotating the token
+
+Regenerating replaces the old token immediately, so syncs fail until the stored
+credential is updated. Because one token serves every query, you only ever need to do
+this once, even when adding further queries.
+
+1. Open the account's settings (gear icon in the web accounts table) and note the
+   **Query ID** — it is shown in clear; only the token is masked.
+2. Regenerate the token in **Performance & Reports** → **Flex Queries**.
+3. Paste the new token into the same settings dialog and save. Saving merges rather
+   than replaces: blank and masked (`••••••••`) fields are left untouched, so the
+   query ID survives. The account status resets and the last sync error is cleared.
+
+### Inspecting what a query returns
+
+To see which sections a query actually delivers and how many days each one covers:
+
+```bash
+cd backend && source ../venv/bin/activate
+python manage.py inspect_ibkr_flex --token <flex_token> --query-id <id> --save /tmp/flex.xml
+```
+
+It is read-only and writes nothing to the database. `--file /tmp/flex.xml` re-analyzes a
+saved report without re-fetching. Useful when positions or history look thinner than
+expected — the report will show whether the query is the limiting factor.
+
 ### Troubleshooting Flex Web Service
 
 **"Invalid token" error**:
-- Token may have expired - regenerate in Client Portal
+- Token may have expired - regenerate in Client Portal (see [Rotating the token](#rotating-the-token))
 - Ensure you copied the full token without extra spaces
 
 **"Invalid query" error**:
